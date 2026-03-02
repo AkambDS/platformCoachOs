@@ -65,4 +65,5 @@ databases:
     engine: REDIS
     version: "7"
     size: db-s-1vcpu-1gb
+    production: true
     num_nodes: 1
