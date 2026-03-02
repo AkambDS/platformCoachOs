@@ -1,23 +1,26 @@
 name: coachos
 region: nyc
+
 services:
   # ── Django Backend API ─────────────────────────────────────────────────────
   - name: backend
     source_dir: backend
+    github:
+      repo: AkambDS/platformCoachOs
+      branch: main
+      deploy_on_push: true
     dockerfile_path: backend/Dockerfile
     http_port: 8000
     instance_size_slug: apps-s-1vcpu-1gb
     instance_count: 1
     run_command: >
-      gunicorn config.wsgi:application
-      --bind 0.0.0.0:8000
-      --workers 2
-      --timeout 60
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2 --timeout 60"
     envs:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: SECRET_KEY
-        value: CHANGE_ME
+        value: CHANGE_ME_generate_with_python_secrets
         type: SECRET
       - key: DEBUG
         value: "False"
@@ -46,6 +49,10 @@ services:
   # ── Celery Worker ──────────────────────────────────────────────────────────
   - name: celery-worker
     source_dir: backend
+    github:
+      repo: AkambDS/platformCoachOs
+      branch: main
+      deploy_on_push: true
     dockerfile_path: backend/Dockerfile
     instance_size_slug: apps-s-1vcpu-1gb
     instance_count: 1
@@ -54,7 +61,7 @@ services:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
       - key: SECRET_KEY
-        value: CHANGE_ME
+        value: CHANGE_ME_generate_with_python_secrets
         type: SECRET
       - key: DATABASE_URL
         value: ${db.DATABASE_URL}
@@ -66,17 +73,17 @@ services:
   # ── React Frontend ─────────────────────────────────────────────────────────
   - name: frontend
     source_dir: frontend
+    github:
+      repo: AkambDS/platformCoachOs
+      branch: main
+      deploy_on_push: true
     build_command: npm ci && npm run build
-    output_dir: dist
-    instance_size_slug: apps-s-1vcpu-1gb
     environment_slug: node-js
-    envs:
-      - key: VITE_API_BASE_URL
-        value: ""
+    instance_size_slug: apps-s-1vcpu-1gb
     routes:
       - path: /
 
-# ── Managed PostgreSQL ─────────────────────────────────────────────────────────
+# ── Managed Databases ──────────────────────────────────────────────────────────
 databases:
   - name: db
     engine: PG
