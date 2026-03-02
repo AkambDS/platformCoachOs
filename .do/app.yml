@@ -62,7 +62,7 @@ services:
       - key: CELERY_BROKER_URL
         value: ${redis.REDIS_URL}
 
-# ── React Frontend (static site — served via CDN) ──────────────────────────────
+# ── React Frontend ─────────────────────────────────────────────────────────────
 static_sites:
   - name: frontend
     source_dir: frontend
@@ -76,7 +76,7 @@ static_sites:
     index_document: index.html
     error_document: index.html
 
-# ── Ingress routing ────────────────────────────────────────────────────────────
+# ── Ingress — backend routes only, frontend gets / automatically ───────────────
 ingress:
   rules:
     - component:
@@ -103,11 +103,6 @@ ingress:
       match:
         path:
           prefix: /accounts
-    - component:
-        name: frontend
-      match:
-        path:
-          prefix: /
 
 # ── Managed Databases ──────────────────────────────────────────────────────────
 databases:
