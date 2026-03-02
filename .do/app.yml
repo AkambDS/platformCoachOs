@@ -1,4 +1,4 @@
-name: coachos
+name: coachos-api
 region: nyc
 
 services:
@@ -13,8 +13,6 @@ services:
     instance_size_slug: apps-s-1vcpu-1gb
     instance_count: 1
     run_command: "gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 2"
-    routes:
-      - path: /
     envs:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
@@ -55,19 +53,6 @@ workers:
         value: ${redis.REDIS_URL}
       - key: CELERY_BROKER_URL
         value: ${redis.REDIS_URL}
-
-static_sites:
-  - name: frontend
-    source_dir: frontend
-    github:
-      repo: AkambDS/platformCoachOs
-      branch: main
-      deploy_on_push: true
-    build_command: npm ci && npm run build
-    output_dir: dist
-    environment_slug: node-js
-    index_document: index.html
-    error_document: index.html
 
 databases:
   - name: db
