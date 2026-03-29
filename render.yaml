@@ -1,0 +1,117 @@
+services:
+  # ── Django Backend API ─────────────────────────────────────────────────────
+  - type: web
+    name: backend
+    runtime: python
+    pythonVersion: 3.12
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      gunicorn config.wsgi:application
+      --bind 0.0.0.0:8000
+      --workers 3
+      --worker-class sync
+      --timeout 60
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: "False"
+      - key: ALLOWED_HOSTS
+        value: "*.onrender.com,localhost"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: redis
+          type: pserv
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: redis
+          type: pserv
+          property: connectionString
+      - key: STRIPE_TEST_SECRET_KEY
+        value: sk_test_CHANGE_ME
+      - key: DJSTRIPE_WEBHOOK_SECRET
+        value: whsec_CHANGE_ME
+      - key: SENDGRID_API_KEY
+        value: CHANGE_ME
+      - key: AWS_STORAGE_BUCKET_NAME
+        value: CHANGE_ME
+      - key: AWS_ACCESS_KEY_ID
+        value: CHANGE_ME
+      - key: AWS_SECRET_ACCESS_KEY
+        value: CHANGE_ME
+      - key: AWS_S3_REGION_NAME
+        value: us-east-1
+      - key: SENTRY_DSN
+        value: ""
+    routes:
+      - type: http
+        path: /api
+      - type: http
+        path: /admin
+      - type: http
+        path: /stripe
+      - type: http
+        path: /accounts
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  - type: background
+    name: celery-worker
+    runtime: python
+    pythonVersion: 3.12
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: >
+      celery -A config.celery worker
+      --loglevel=info
+      --concurrency=2
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: SECRET_KEY
+        reference: backend
+      - key: DEBUG
+        value: "False"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: redis
+          type: pserv
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          name: redis
+          type: pserv
+          property: connectionString
+
+  # ── React Frontend ─────────────────────────────────────────────────────────
+  - type: static_site
+    name: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: ""
+    routes:
+      - path: /
+
+# ── Managed Databases ──────────────────────────────────────────────────────────
+databases:
+  - name: db
+    databaseName: coachos
+    user: coachos_user
+    plan: starter
+    postgresSQLVersion: "16"
+  - name: redis
+    plan: starter
+    type: redis
