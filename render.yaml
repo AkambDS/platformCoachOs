@@ -2,10 +2,9 @@ services:
   # ── Django Backend API ─────────────────────────────────────────────────────
   - type: web
     name: backend
-    runtime: python
-    pythonVersion: 3.12
-    rootDir: backend
-    buildCommand: pip install -r requirements.txt
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: .
     startCommand: >
       gunicorn config.wsgi:application
       --bind 0.0.0.0:8000
