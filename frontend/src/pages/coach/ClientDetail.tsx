@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, pipelineApi } from '../../api/client'
@@ -7,6 +7,24 @@ import { PageHeader, Modal, StatusBadge, useToast, EmptyState } from '../../comp
 
 const ACTIVITY_TYPES = ['appointment','task','call','session','training','travel','custom']
 const GOAL_STATUSES  = ['active','completed','paused']
+
+// Type definitions
+type Client = {
+  id?: string
+  first_name: string
+  last_name: string
+  job_title?: string
+  company?: string
+  email: string
+  phone?: string
+  active_flag: boolean
+  portal_access: boolean
+  lead_source?: string
+  birth_date?: string
+  notes?: string
+  tags?: string[]
+  [key: string]: any
+}
 
 function initials(name: string) {
   return name?.split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase() || '?'
@@ -139,27 +157,32 @@ export default function ClientDetail() {
   const [showActivity, setShowActivity] = useState(false)
   const [showGoal, setShowGoal] = useState(false)
   const [editMode, setEditMode] = useState(false)
-  const [editForm, setEditForm] = useState<any>(null)
+  const [editForm, setEditForm] = useState<Client | null>(null)
 
-  const { data: client, isLoading } = useQuery({
+  const { data: client, isLoading } = useQuery<Client, Error>({
     queryKey: ['client', id],
     queryFn: () => clientsApi.get(id!).then(r => r.data),
-    onSuccess: (d: any) => { if (!editForm) setEditForm(d) },
   })
 
-  const { data: activities } = useQuery({
+  useEffect(() => {
+    if (client && !editForm) {
+      setEditForm(client)
+    }
+  }, [client, editForm])
+
+  const { data: activities } = useQuery<any, Error>({
     queryKey: ['client-activities', id],
     queryFn: () => activitiesApi.list({ client: id, page_size: 50 }).then(r => r.data),
     enabled: tab === 'Activities',
   })
 
-  const { data: goals } = useQuery({
+  const { data: goals } = useQuery<any, Error>({
     queryKey: ['client-goals', id],
     queryFn: () => clientsApi.listGoals(id!).then(r => r.data),
     enabled: tab === 'Goals',
   })
 
-  const { data: invoices } = useQuery({
+  const { data: invoices } = useQuery<any, Error>({
     queryKey: ['client-invoices', id],
     queryFn: () => invoicesApi.list({ client: id }).then(r => r.data),
     enabled: tab === 'Invoices',
@@ -186,7 +209,7 @@ export default function ClientDetail() {
   if (isLoading) return <AppShell><div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div></AppShell>
   if (!client) return <AppShell><div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Client not found</div></AppShell>
 
-  const ef = editForm || client
+  const ef: Client = editForm || client!
   const actList: any[] = activities?.results || activities || []
   const goalList: any[] = goals?.results || goals || []
   const invList: any[] = invoices?.results || invoices || []

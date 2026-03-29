@@ -8,6 +8,8 @@ import { activitiesApi, clientsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast } from '../../components/ui'
 
+type EventInfo = { startStr: string; endStr: string; [key: string]: any }
+
 const TYPE_COLOURS: Record<string, string> = {
   session:     '#1a1714',
   appointment: '#c9a84c',
@@ -183,9 +185,9 @@ export default function Calendar() {
             height="auto"
             selectable
             selectMirror
-            datesSet={info => setRange({ start: info.startStr, end: info.endStr })}
-            select={info => { setNewStart(info.startStr.slice(0, 16)); setShowNew(true) }}
-            eventClick={info => setSelectedActivity(info.event.extendedProps)}
+            datesSet={(info: any) => setRange({ start: info.startStr, end: info.endStr })}
+            select={(info: any) => { setNewStart(info.startStr.slice(0, 16)); setShowNew(true) }}
+            eventClick={(info: any) => setSelectedActivity(info.event.extendedProps)}
             eventDisplay="block"
             slotMinTime="07:00:00"
             slotMaxTime="20:00:00"
