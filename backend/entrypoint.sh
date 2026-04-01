@@ -5,10 +5,15 @@ set -e
 export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.production}"
 export RENDER=true
 
+echo "=== Environment Variables ==="
+env | grep -E "(DJANGO|SECRET|DEBUG|DATABASE|REDIS|AWS|STRIPE)" || echo "No matching vars found"
+echo ""
+
 echo "=== Django Setup Check ==="
 echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
 echo "DEBUG: $DEBUG"
 echo "ALLOWED_HOSTS: $ALLOWED_HOSTS"
+echo "SECRET_KEY length: ${#SECRET_KEY}"
 echo ""
 
 echo "=== Running Django Checks ==="
