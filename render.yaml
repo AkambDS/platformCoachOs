@@ -10,7 +10,6 @@ services:
       --workers 3
       --worker-class sync
       --timeout 60
-    preDeployCommand: python manage.py migrate
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production
