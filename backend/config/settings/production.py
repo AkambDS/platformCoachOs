@@ -20,7 +20,7 @@ ALLOWED_HOSTS = env.list(
 
 # ── HTTPS enforcement ─────────────────────────────────────────────────────
 SECURE_PROXY_SSL_HEADER      = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_SSL_REDIRECT          = True
+SECURE_SSL_REDIRECT          = False  # Temporarily disabled for debugging (enable after testing)
 SESSION_COOKIE_SECURE        = True
 CSRF_COOKIE_SECURE           = True
 SECURE_HSTS_SECONDS          = 31536000

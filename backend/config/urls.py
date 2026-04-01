@@ -1,9 +1,15 @@
 """CoachOS — Root URL Configuration"""
 from django.contrib import admin
 from django.urls import path, include
+from django.http import JsonResponse
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 
+# Health check endpoint - doesn't require database
+def health_check(request):
+    return JsonResponse({"status": "ok"}, status=200)
+
 urlpatterns = [
+    path("",                 health_check),  # Root / endpoint for health checks
     path("admin/",           admin.site.urls),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
