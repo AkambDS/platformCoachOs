@@ -4,13 +4,12 @@ Only env vars and storage backend change — all app code identical to local.
 """
 from .base import *  # noqa
 
-DEBUG = True  # Temporarily enabled for debugging HOST issues
+DEBUG = False  # Production mode
 ALLOWED_HOSTS = [
     "platformcoachos.onrender.com",
     "*.onrender.com", 
     "localhost",
     "127.0.0.1",
-    "*"  # Accept all hosts - we'll validate in middleware
 ]
 
 # ── Gunicorn + Uvicorn worker (ASGI) ──────────────────────────────────────

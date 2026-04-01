@@ -91,6 +91,9 @@ services:
     name: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: frontend/dist
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: "https://platformcoachos.onrender.com"
     routes:
       - path: /
 
