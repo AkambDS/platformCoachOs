@@ -3,7 +3,6 @@ CoachOS — Production Settings (Azure / AWS)
 Only env vars and storage backend change — all app code identical to local.
 """
 from .base import *  # noqa
-import sentry_sdk
 
 DEBUG = False
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS")
@@ -43,4 +42,8 @@ DEFAULT_FILE_STORAGE    = "django.core.files.storage.FileSystemStorage"
 # ── Sentry error tracking ─────────────────────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")
 if SENTRY_DSN:
-    sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
+    except ImportError:
+        pass  # sentry_sdk not installed, skip
