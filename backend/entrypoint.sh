@@ -13,8 +13,16 @@ echo "RENDER: $RENDER"
 echo "DEBUG: $DEBUG"
 echo "ALLOWED_HOSTS: $ALLOWED_HOSTS"
 echo "SECRET_KEY length: ${#SECRET_KEY}"
-echo "DATABASE_URL: ${DATABASE_URL:0:30}..."
-echo "REDIS_URL: ${REDIS_URL:0:30}..."
+if [ -z "$DATABASE_URL" ]; then
+  echo "DATABASE_URL: NOT SET (using localhost fallback)"
+else
+  echo "DATABASE_URL set to: ${DATABASE_URL:0:50}..."
+fi
+if [ -z "$REDIS_URL" ]; then
+  echo "REDIS_URL: NOT SET (using localhost fallback)"
+else
+  echo "REDIS_URL set to: ${REDIS_URL:0:50}..."
+fi
 echo ""
 
 echo "=== Running Django Checks ==="
