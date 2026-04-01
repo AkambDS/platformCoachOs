@@ -1,6 +1,10 @@
 #!/bin/bash
 set -e
 
+# Ensure production settings are used
+export DJANGO_SETTINGS_MODULE="${DJANGO_SETTINGS_MODULE:-config.settings.production}"
+export RENDER=true
+
 echo "=== Django Setup Check ==="
 echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
 echo "DEBUG: $DEBUG"
