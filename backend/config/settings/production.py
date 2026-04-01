@@ -26,6 +26,15 @@ CSRF_COOKIE_SECURE           = True
 SECURE_HSTS_SECONDS          = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
+# ── Proxy headers (trust Render's proxy for Host and X-Forwarded headers) ──
+USE_X_FORWARDED_HOST         = True
+
+# ── CSRF trusted origins for Render ─────────────────────────────────────────
+CSRF_TRUSTED_ORIGINS = [
+    "https://platformcoachos.onrender.com",
+    "https://*.onrender.com",
+]
+
 # ── Email: SendGrid ───────────────────────────────────────────────────────
 EMAIL_BACKEND    = "anymail.backends.sendgrid.EmailBackend"
 ANYMAIL          = {"SENDGRID_API_KEY": env("SENDGRID_API_KEY", default="")}
