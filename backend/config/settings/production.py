@@ -21,7 +21,7 @@ SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 
 # ── Email: SendGrid ───────────────────────────────────────────────────────
 EMAIL_BACKEND    = "anymail.backends.sendgrid.EmailBackend"
-ANYMAIL          = {"SENDGRID_API_KEY": env("SENDGRID_API_KEY")}
+ANYMAIL          = {"SENDGRID_API_KEY": env("SENDGRID_API_KEY", default="")}
 
 # ── File Storage: Azure Blob Storage (S3-compat) or AWS S3 ────────────────
 # Azure Blob:
@@ -31,12 +31,14 @@ ANYMAIL          = {"SENDGRID_API_KEY": env("SENDGRID_API_KEY")}
 # AZURE_CONTAINER      = env("AZURE_STORAGE_CONTAINER", default="coachos-files")
 
 # AWS S3 (uncomment to use S3 instead of Azure):
-DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
-AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME")
-AWS_ACCESS_KEY_ID       = env("AWS_ACCESS_KEY_ID")
-AWS_SECRET_ACCESS_KEY   = env("AWS_SECRET_ACCESS_KEY")
-AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
-AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
+# For now, disable S3 until credentials are properly configured
+DEFAULT_FILE_STORAGE    = "django.core.files.storage.FileSystemStorage"
+# DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
+# AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME")
+# AWS_ACCESS_KEY_ID       = env("AWS_ACCESS_KEY_ID")
+# AWS_SECRET_ACCESS_KEY   = env("AWS_SECRET_ACCESS_KEY")
+# AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
+# AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
 
 # ── Sentry error tracking ─────────────────────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")

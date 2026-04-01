@@ -15,7 +15,7 @@ if not SECRET_KEY:
     print("⚠️  WARNING: SECRET_KEY not set! Generating temporary key for this deployment.")
     print("    To fix: Set SECRET_KEY environment variable in Render dashboard")
     SECRET_KEY = token_urlsafe(50)
-DEBUG         = env("DEBUG")
+DEBUG         = env("DEBUG", default="False")
 ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
 
 DJANGO_APPS = [
@@ -90,7 +90,12 @@ TEMPLATES = [{
     ]},
 }]
 
-DATABASES = {"default": env.db("DATABASE_URL")}
+DATABASES = {
+    "default": env.db(
+        "DATABASE_URL",
+        default="postgresql://postgres:postgres@localhost:5432/coachos"
+    )
+}
 DATABASES["default"]["OPTIONS"] = {"connect_timeout": 10}
 
 CACHES = {"default": {
