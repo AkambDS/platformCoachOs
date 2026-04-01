@@ -4,12 +4,6 @@ services:
     name: backend
     runtime: docker
     dockerfilePath: backend/Dockerfile
-    startCommand: >
-      gunicorn config.wsgi:application
-      --bind 0.0.0.0:8000
-      --workers 3
-      --worker-class sync
-      --timeout 60
     envVars:
       - key: DJANGO_SETTINGS_MODULE
         value: config.settings.production

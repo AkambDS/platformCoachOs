@@ -1,0 +1,31 @@
+#!/bin/bash
+set -e
+
+echo "=== Django Setup Check ==="
+echo "DJANGO_SETTINGS_MODULE: $DJANGO_SETTINGS_MODULE"
+echo "DEBUG: $DEBUG"
+echo "ALLOWED_HOSTS: $ALLOWED_HOSTS"
+echo ""
+
+echo "=== Running Django Checks ==="
+python manage.py check || {
+  echo "ERROR: Django check failed!"
+  exit 1
+}
+
+echo ""
+echo "=== Running Django Migrations ==="
+python manage.py migrate --noinput || {
+  echo "ERROR: Migrations failed!"
+  exit 1
+}
+
+echo ""
+echo "=== Starting Gunicorn ==="
+exec gunicorn config.wsgi:application \
+  --bind 0.0.0.0:8000 \
+  --workers 3 \
+  --worker-class sync \
+  --timeout 60 \
+  --access-logfile - \
+  --error-logfile -
