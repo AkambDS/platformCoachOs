@@ -25,8 +25,9 @@ python manage.py check || {
 echo ""
 echo "=== Running Django Migrations ==="
 python manage.py migrate --noinput || {
-  echo "ERROR: Migrations failed!"
-  exit 1
+  echo "⚠️  WARNING: Migrations failed (likely database not ready)"
+  echo "    Continuing anyway - you may need to run migrations manually"
+  echo "    Command: python manage.py migrate"
 }
 
 echo ""
