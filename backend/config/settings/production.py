@@ -5,7 +5,15 @@ Only env vars and storage backend change — all app code identical to local.
 from .base import *  # noqa
 
 DEBUG = False
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["*.onrender.com", "localhost", "127.0.0.1"])
+ALLOWED_HOSTS = env.list(
+    "ALLOWED_HOSTS",
+    default=[
+        "platformcoachos.onrender.com",
+        "*.onrender.com",
+        "localhost",
+        "127.0.0.1"
+    ]
+)
 
 # ── Gunicorn + Uvicorn worker (ASGI) ──────────────────────────────────────
 # Command: gunicorn -k uvicorn.workers.UvicornWorker config.asgi:application
