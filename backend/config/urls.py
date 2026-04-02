@@ -8,8 +8,29 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, Sp
 def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
 
+# API root endpoint
+def api_root(request):
+    return JsonResponse({
+        "status": "ok",
+        "message": "CoachOS API",
+        "docs": "/api/schema/swagger-ui/",
+        "endpoints": {
+            "auth": "/api/auth/",
+            "clients": "/api/clients/",
+            "activities": "/api/activities/",
+            "pipeline": "/api/pipeline/",
+            "invoices": "/api/invoices/",
+            "reports": "/api/reports/",
+            "library": "/api/library/",
+            "settings": "/api/settings/",
+            "portal": "/api/portal/",
+            "stripe": "/api/stripe/",
+        }
+    }, status=200)
+
 urlpatterns = [
     path("",                 health_check),  # Root / endpoint for health checks
+    path("api/",             api_root),      # API root endpoint
     path("admin/",           admin.site.urls),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
