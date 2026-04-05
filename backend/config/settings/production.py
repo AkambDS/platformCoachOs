@@ -6,9 +6,8 @@ from .base import *  # noqa
 
 DEBUG = False  # Production mode
 ALLOWED_HOSTS = [
-    "platformcoachos-1.onrender.com",
-    "platformcoachos.onrender.com",
-    ".onrender.com",          # leading dot = wildcard for ALL *.onrender.com subdomains
+    "platformcoachos.onrender.com",   # backend (Docker service)
+    ".onrender.com",                  # wildcard covers all *.onrender.com subdomains
     "localhost",
     "127.0.0.1",
 ]
