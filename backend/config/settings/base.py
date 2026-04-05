@@ -98,10 +98,16 @@ DATABASES = {
 }
 DATABASES["default"]["OPTIONS"] = {"connect_timeout": 10}
 
-CACHES = {"default": {
-    "BACKEND": "django.core.cache.backends.redis.RedisCache",
-    "LOCATION": env("REDIS_URL", default="redis://localhost:6379/0"),
-}}
+_REDIS_URL = env("REDIS_URL", default="")
+if _REDIS_URL:
+    CACHES = {"default": {
+        "BACKEND": "django.core.cache.backends.redis.RedisCache",
+        "LOCATION": _REDIS_URL,
+    }}
+else:
+    CACHES = {"default": {
+        "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+    }}
 
 AUTH_USER_MODEL   = "accounts.User"
 LANGUAGE_CODE     = "en-us"
@@ -185,7 +191,7 @@ SOCIALACCOUNT_PROVIDERS = {
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="CoachOS <noreply@coachos.app>")
 
 # ── Celery ────────────────────────────────────────────────────────────────
-CELERY_BROKER_URL      = env("REDIS_URL", default="redis://localhost:6379/0")
+CELERY_BROKER_URL      = _REDIS_URL or "memory://"
 CELERY_RESULT_BACKEND  = "django-db"
 CELERY_ACCEPT_CONTENT  = ["json"]
 CELERY_TASK_SERIALIZER = "json"
