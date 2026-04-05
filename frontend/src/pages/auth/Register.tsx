@@ -21,7 +21,11 @@ export default function Register() {
       login({ access: data.access, refresh: data.refresh }, data.user, data.workspace)
       navigate("/dashboard")
     } catch (err: any) {
-      setError(err.response?.data?.email?.[0] || err.response?.data?.detail || "Registration failed.")
+      const d = err.response?.data
+      const msg = d?.email?.[0] || d?.password?.[0] || d?.workspace_name?.[0]
+               || d?.full_name?.[0] || d?.non_field_errors?.[0] || d?.detail
+               || "Registration failed."
+      setError(msg)
     } finally { setLoading(false) }
   }
 
@@ -44,7 +48,7 @@ export default function Register() {
           {field("Workspace Name", "workspace_name")}
           {field("Your Full Name", "full_name")}
           {field("Email", "email", "email")}
-          {field("Password (min 10 chars)", "password", "password")}
+          {field("Password (min 8 chars)", "password", "password")}
           <button type="submit" disabled={loading}
             style={{ width: "100%", padding: "0.75rem", background: "#1B3A6B", color: "#fff", border: "none", borderRadius: "8px", fontWeight: 600, fontSize: "1rem", cursor: "pointer", marginTop: "0.5rem" }}>
             {loading ? "Creating workspace..." : "Create Workspace"}
