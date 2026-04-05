@@ -251,6 +251,7 @@ services:
     name: redis
     plan: free
     maxmemoryPolicy: noeviction
+    ipAllowList: []
 
 # ── Managed PostgreSQL ─────────────────────────────────────────────────────────
 databases:
