@@ -129,7 +129,7 @@ services:
       - key: DEBUG
         value: "False"
       - key: ALLOWED_HOSTS
-        value: "platformcoachos.onrender.com,*.onrender.com,localhost"
+        value: "platformcoachos-1.onrender.com,.onrender.com,localhost"
       - key: DATABASE_URL
         fromDatabase:
           name: db
@@ -161,7 +161,7 @@ services:
       - key: SENTRY_DSN
         value: ""
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://platformcoachos.onrender.com,https://coachos-frontend.onrender.com"
+        value: "https://platformcoachos-1.onrender.com,https://coachos-frontend.onrender.com"
 
   # ── Celery Worker ───────────────────────────────────────────────────────────
   - type: worker
@@ -241,7 +241,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_BASE_URL
-        value: "https://platformcoachos.onrender.com"
+        value: "https://platformcoachos-1.onrender.com"
       - key: NODE_VERSION
         value: "20"
     routes:
