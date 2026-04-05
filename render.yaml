@@ -232,7 +232,7 @@ services:
           property: connectionString
 
   # ── React Frontend ─────────────────────────────────────────────────────────
-  - type: static_site
+  - type: static
     name: frontend
     rootDir: frontend
     buildCommand: npm ci && npm run build
