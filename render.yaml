@@ -233,8 +233,9 @@ services:
           type: pserv
           property: connectionString
 
-  # ── React Frontend ─────────────────────────────────────────────────────────
-  - type: static
+  # ── React Frontend (Static Site) ───────────────────────────────────────────
+  - type: web
+    env: static
     name: frontend
     rootDir: frontend
     buildCommand: npm ci && npm run build
@@ -248,19 +249,6 @@ services:
       - type: rewrite
         source: /*
         destination: /index.html
-
-  # - type: static
-  #   name: frontend
-  #   rootDir: frontend                     # was missing before
-  #   buildCommand: npm ci && npm run build
-  #   staticPublishPath: dist
-  #   envVars:
-  #     - key: VITE_API_BASE_URL
-  #       value: "https://platformcoachos.onrender.com"
-  #   routes:
-  #     - type: rewrite
-  #       source: /*
-  #       destination: /index.html          # fixes React Router on refresh
 
   # ── Redis Private Service ───────────────────────────────────────────────────
   - type: pserv
