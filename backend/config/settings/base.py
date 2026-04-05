@@ -159,6 +159,9 @@ CORS_ALLOWED_ORIGINS  = env.list(
         "http://127.0.0.1:5173",
     ]
 )
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^https://.*\.onrender\.com$",
+]
 CORS_ALLOW_CREDENTIALS = True
 
 # ── Allauth ───────────────────────────────────────────────────────────────
