@@ -115,10 +115,6 @@ services:
     runtime: docker
     rootDir: backend
     dockerfilePath: ./Dockerfile          # relative to rootDir
-    dockerCommand: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py collectstatic --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:10000 --workers 3 --timeout 60"
     envVars:
       - key: PORT
         value: "10000"                    # Render requires 10000
@@ -137,12 +133,12 @@ services:
       - key: REDIS_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
       - key: CELERY_BROKER_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
       - key: STRIPE_TEST_SECRET_KEY
         value: sk_test_CHANGE_ME
@@ -161,7 +157,7 @@ services:
       - key: SENTRY_DSN
         value: ""
       - key: CORS_ALLOWED_ORIGINS
-        value: "https://platformcoachos-1.onrender.com,https://coachos-frontend.onrender.com"
+        value: "https://platformcoachos.onrender.com,https://platformcoachos-1.onrender.com"
 
   # ── Celery Worker ───────────────────────────────────────────────────────────
   - type: worker
@@ -190,12 +186,12 @@ services:
       - key: REDIS_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
       - key: CELERY_BROKER_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
 
   # ── Celery Beat ─────────────────────────────────────────────────────────────
@@ -225,12 +221,12 @@ services:
       - key: REDIS_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
       - key: CELERY_BROKER_URL
         fromService:
           name: redis
-          type: pserv
+          type: redis
           property: connectionString
 
   # ── React Frontend (Static Site) ───────────────────────────────────────────
@@ -250,13 +246,11 @@ services:
         source: /*
         destination: /index.html
 
-  # ── Redis Private Service ───────────────────────────────────────────────────
-  - type: pserv
+  # ── Redis (Render managed) ─────────────────────────────────────────────────
+  - type: redis
     name: redis
-    runtime: docker
-    image:
-      url: docker.io/library/redis:7-alpine
-    dockerCommand: redis-server --appendonly yes
+    plan: free
+    maxmemoryPolicy: noeviction
 
 # ── Managed PostgreSQL ─────────────────────────────────────────────────────────
 databases:
