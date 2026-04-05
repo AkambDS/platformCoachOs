@@ -12,7 +12,9 @@ def send_invite_email(invitation_id: str):
     from apps.accounts.models import WorkspaceInvitation
     try:
         invite = WorkspaceInvitation.objects.select_related("workspace","invited_by").get(id=invitation_id)
-        accept_url = f"http://localhost:5173/accept-invite?token={invite.token}"
+        from django.conf import settings as django_settings
+        frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:5173")
+        accept_url = f"{frontend_url}/accept-invite?token={invite.token}"
         send_mail(
             subject=f"You're invited to join {invite.workspace.name} on CoachOS",
             message=f"Hi,\n\n{invite.invited_by.full_name} has invited you to join "

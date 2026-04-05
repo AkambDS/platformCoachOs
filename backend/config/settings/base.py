@@ -150,6 +150,8 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(
     "CORS_ALLOWED_ORIGINS",

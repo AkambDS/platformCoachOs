@@ -1,6 +1,5 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, LineChart, Line, CartesianGrid } from 'recharts'
+import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts'
 import { reportsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader } from '../../components/ui'
@@ -18,7 +17,7 @@ export default function Reports() {
   })
 
   const revenueData: any[] = revenue?.monthly || []
-  const totalRevenue = revenueData.reduce((s: number, d: any) => s + (Number(d.amount) || 0), 0)
+  const totalRevenue = revenueData.reduce((s: number, d: any) => s + (Number(d.revenue) || 0), 0)
 
   return (
     <AppShell>
@@ -52,7 +51,7 @@ export default function Reports() {
                     <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#8c8279' }} />
                     <YAxis tick={{ fontSize: 11, fill: '#8c8279' }} tickFormatter={v => `$${v}`} />
                     <Tooltip formatter={(v: any) => [`$${Number(v).toFixed(2)}`, 'Revenue']} />
-                    <Bar dataKey="amount" fill="var(--ink)" radius={[2, 2, 0, 0]} />
+                    <Bar dataKey="revenue" fill="var(--ink)" radius={[2, 2, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               )}
