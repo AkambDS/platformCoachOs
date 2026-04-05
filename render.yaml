@@ -263,5 +263,5 @@ databases:
   - name: db
     databaseName: coachos
     user: coachos_user
-    plan: free                            # changed from starter to free
-    postgresSQLVersion: "16"
+    plan: free
+    postgresMajorVersion: 16
