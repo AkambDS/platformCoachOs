@@ -198,6 +198,15 @@ CELERY_TASK_SERIALIZER = "json"
 CELERY_TIMEZONE        = "UTC"
 CELERY_BEAT_SCHEDULER  = "django_celery_beat.schedulers:DatabaseScheduler"
 
+from celery.schedules import crontab
+CELERY_BEAT_SCHEDULE = {
+    # Scan for upcoming activities and fire email/SMS reminders — runs every 15 minutes
+    "dispatch-activity-reminders": {
+        "task": "tasks.reminders.dispatch_activity_reminders",
+        "schedule": crontab(minute="*/15"),
+    },
+}
+
 # ── Stripe ────────────────────────────────────────────────────────────────
 STRIPE_LIVE_MODE          = env.bool("STRIPE_LIVE_MODE", default=False)
 STRIPE_TEST_SECRET_KEY    = env("STRIPE_TEST_SECRET_KEY", default="")

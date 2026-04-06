@@ -47,8 +47,10 @@ export const activitiesApi = {
   list:       (p?: any)            => api.get('/api/activities/', { params: p }),
   create:     (d: any)             => api.post('/api/activities/', d),
   update:     (id: string, d: any) => api.put(`/api/activities/${id}/`, d),
+  patch:      (id: string, d: any) => api.patch(`/api/activities/${id}/`, d),
   delete:     (id: string)         => api.delete(`/api/activities/${id}/`),
   markMissed: (id: string)         => api.post(`/api/activities/${id}/missed/`),
+  cancel:     (id: string)         => api.post(`/api/activities/${id}/cancel/`),
 }
 export const invoicesApi = {
   list:          (p?: any)            => api.get('/api/invoices/', { params: p }),

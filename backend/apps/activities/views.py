@@ -40,3 +40,13 @@ class ActivityViewSet(viewsets.ModelViewSet):
         activity = self.get_object()
         activity.mark_missed(request.user)
         return Response(ActivitySerializer(activity).data)
+
+    @action(detail=True, methods=["post"], url_path="cancel")
+    def cancel(self, request, pk=None):
+        activity = self.get_object()
+        if activity.status == Activity.Status.CANCELLED:
+            return Response({"detail": "Already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
+        serializer = self.get_serializer(activity, data={"status": "cancelled"}, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
