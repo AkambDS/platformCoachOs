@@ -7,7 +7,8 @@ import Dashboard from "./pages/coach/Dashboard"
 import Clients   from "./pages/coach/Clients"
 import ClientDetail from "./pages/coach/ClientDetail"
 import Pipeline  from "./pages/coach/Pipeline"
-import Calendar  from "./pages/coach/Calendar"
+import Calendar    from "./pages/coach/Calendar"
+import Activities  from "./pages/coach/Activities"
 import Invoices  from "./pages/coach/Invoices"
 import Reports   from "./pages/coach/Reports"
 import Settings  from "./pages/coach/Settings"
@@ -43,7 +44,7 @@ export default function App() {
           <Route path="/clients/:id"   element={<PrivateRoute><ClientDetail /></PrivateRoute>} />
           <Route path="/pipeline"      element={<PrivateRoute><Pipeline /></PrivateRoute>} />
           <Route path="/calendar"      element={<PrivateRoute><Calendar /></PrivateRoute>} />
-          <Route path="/activities"    element={<PrivateRoute><Calendar /></PrivateRoute>} />
+          <Route path="/activities"    element={<PrivateRoute><Activities /></PrivateRoute>} />
           <Route path="/invoices"      element={<PrivateRoute><Invoices /></PrivateRoute>} />
           <Route path="/invoices/:id"  element={<PrivateRoute><Invoices /></PrivateRoute>} />
           <Route path="/reports"       element={<PrivateRoute><Reports /></PrivateRoute>} />

@@ -1,12 +1,51 @@
 """CoachOS — Celery email tasks"""
 from celery import shared_task
-from django.core.mail import send_mail
+from django.core.mail import send_mail, EmailMessage
 from django.conf import settings
+from datetime import timezone as dt_timezone
+import uuid
 import logging
 
 logger = logging.getLogger(__name__)
 
 FRONTEND_URL = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
+
+
+def _build_ics(activity) -> bytes:
+    """Build a minimal iCalendar (.ics) bytes payload for a calendar invite."""
+    def fmt_dt(dt):
+        # Convert to UTC and format as iCal YYYYMMDDTHHMMSSZ
+        utc = dt.astimezone(dt_timezone.utc)
+        return utc.strftime("%Y%m%dT%H%M%SZ")
+
+    coach_email = activity.coach.email if activity.coach else settings.DEFAULT_FROM_EMAIL
+    coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
+    client_email = activity.client.email
+    client_name  = activity.client.full_name
+
+    location_line = f"LOCATION:{activity.location}\r\n" if activity.location else ""
+    uid = f"{activity.id}@coachos.app"
+
+    ics = (
+        "BEGIN:VCALENDAR\r\n"
+        "VERSION:2.0\r\n"
+        "PRODID:-//CoachOS//CoachOS//EN\r\n"
+        "METHOD:REQUEST\r\n"
+        "BEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\n"
+        f"DTSTART:{fmt_dt(activity.start_at)}\r\n"
+        f"DTEND:{fmt_dt(activity.end_at or activity.start_at)}\r\n"
+        f"SUMMARY:{activity.title}\r\n"
+        f"DESCRIPTION:{activity.activity_type.capitalize()} with {coach_name}\r\n"
+        f"{location_line}"
+        f"ORGANIZER;CN={coach_name}:mailto:{coach_email}\r\n"
+        f"ATTENDEE;CN={client_name};RSVP=TRUE;ROLE=REQ-PARTICIPANT:mailto:{client_email}\r\n"
+        "STATUS:CONFIRMED\r\n"
+        "SEQUENCE:0\r\n"
+        "END:VEVENT\r\n"
+        "END:VCALENDAR\r\n"
+    )
+    return ics.encode("utf-8")
 
 
 @shared_task(name="tasks.email.send_invite_email")
@@ -53,7 +92,7 @@ def send_invoice_email(invoice_id: str):
 
 @shared_task(name="tasks.email.send_activity_confirmation_email")
 def send_activity_confirmation_email(activity_id: str):
-    """Email the client confirming a newly scheduled activity."""
+    """Email the client confirming a newly scheduled activity, with a .ics calendar invite."""
     from apps.activities.models import Activity
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
@@ -65,22 +104,32 @@ def send_activity_confirmation_email(activity_id: str):
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
-        send_mail(
-            subject=f"Confirmed: {activity.title} with {coach_name}",
-            message=(
-                f"Hi {client.first_name},\n\n"
-                f"Your {activity.activity_type} has been scheduled.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  When:   {dt}{location_line}\n"
-                f"  Coach:  {coach_name}\n\n"
-                f"You will receive a reminder 24 hours before your session.\n\n"
-                f"If you need to reschedule, please contact {coach_name} directly.\n\n"
-                f"— {activity.workspace.name}"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[client.email],
+        body = (
+            f"Hi {client.first_name},\n\n"
+            f"Your {activity.activity_type} has been scheduled.\n\n"
+            f"  What:   {activity.title}\n"
+            f"  When:   {dt}{location_line}\n"
+            f"  Coach:  {coach_name}\n\n"
+            f"A calendar invite is attached — open it to add this session to your calendar.\n\n"
+            f"You will also receive a reminder 24 hours and 1 hour before your session.\n\n"
+            f"If you need to reschedule, please contact {coach_name} directly.\n\n"
+            f"— {activity.workspace.name}"
         )
-        logger.info(f"Confirmation email sent to {client.email} for activity {activity_id}")
+
+        msg = EmailMessage(
+            subject=f"Confirmed: {activity.title} with {coach_name}",
+            body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
+        )
+        # Attach .ics so it appears as "Add to Calendar" in most email clients
+        msg.attach(
+            filename="invite.ics",
+            content=_build_ics(activity),
+            mimetype="text/calendar; method=REQUEST",
+        )
+        msg.send()
+        logger.info(f"Confirmation email (+.ics) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_confirmation_email failed: {e}")
 
@@ -123,7 +172,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
 
 @shared_task(name="tasks.email.send_activity_cancellation_email")
 def send_activity_cancellation_email(activity_id: str):
-    """Email the client when a scheduled activity is cancelled."""
+    """Email the client when a scheduled activity is cancelled, with a METHOD:CANCEL .ics."""
     from apps.activities.models import Activity
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
@@ -134,21 +183,56 @@ def send_activity_cancellation_email(activity_id: str):
         dt = activity.start_at.strftime("%A, %B %-d at %-I:%M %p")
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
 
-        send_mail(
-            subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %-d')}",
-            message=(
-                f"Hi {client.first_name},\n\n"
-                f"Your upcoming {activity.activity_type} has been cancelled.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  Was:    {dt}\n"
-                f"  Coach:  {coach_name}\n\n"
-                f"Please contact {coach_name} to reschedule.\n\n"
-                f"— {activity.workspace.name}"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[client.email],
+        body = (
+            f"Hi {client.first_name},\n\n"
+            f"Your upcoming {activity.activity_type} has been cancelled.\n\n"
+            f"  What:   {activity.title}\n"
+            f"  Was:    {dt}\n"
+            f"  Coach:  {coach_name}\n\n"
+            f"The calendar invite has been cancelled — open the attachment to remove it from your calendar.\n\n"
+            f"Please contact {coach_name} to reschedule.\n\n"
+            f"— {activity.workspace.name}"
         )
-        logger.info(f"Cancellation email sent to {client.email} for activity {activity_id}")
+
+        # Build a CANCEL .ics to remove the event from client's calendar
+        def _build_cancel_ics(act) -> bytes:
+            from datetime import timezone as dt_tz
+            def fmt_dt(d):
+                return d.astimezone(dt_tz.utc).strftime("%Y%m%dT%H%M%SZ")
+            coach_email = act.coach.email if act.coach else settings.DEFAULT_FROM_EMAIL
+            coach_name_ = act.coach.full_name if act.coach else act.workspace.name
+            ics = (
+                "BEGIN:VCALENDAR\r\n"
+                "VERSION:2.0\r\n"
+                "PRODID:-//CoachOS//CoachOS//EN\r\n"
+                "METHOD:CANCEL\r\n"
+                "BEGIN:VEVENT\r\n"
+                f"UID:{act.id}@coachos.app\r\n"
+                f"DTSTART:{fmt_dt(act.start_at)}\r\n"
+                f"DTEND:{fmt_dt(act.end_at or act.start_at)}\r\n"
+                f"SUMMARY:{act.title} (Cancelled)\r\n"
+                f"ORGANIZER;CN={coach_name_}:mailto:{coach_email}\r\n"
+                f"ATTENDEE;CN={act.client.full_name};RSVP=FALSE:mailto:{act.client.email}\r\n"
+                "STATUS:CANCELLED\r\n"
+                "SEQUENCE:1\r\n"
+                "END:VEVENT\r\n"
+                "END:VCALENDAR\r\n"
+            )
+            return ics.encode("utf-8")
+
+        msg = EmailMessage(
+            subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %-d')}",
+            body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
+        )
+        msg.attach(
+            filename="cancel.ics",
+            content=_build_cancel_ics(activity),
+            mimetype="text/calendar; method=CANCEL",
+        )
+        msg.send()
+        logger.info(f"Cancellation email (+.ics) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_cancellation_email failed: {e}")
 

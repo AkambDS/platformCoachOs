@@ -1,5 +1,11 @@
+import threading
 from rest_framework import serializers
 from .models import Activity
+
+
+def _fire(fn, *args):
+    """Run fn(*args) in a daemon thread — works with or without a Celery worker."""
+    threading.Thread(target=fn, args=args, daemon=True).start()
 
 
 class ActivitySerializer(serializers.ModelSerializer):
@@ -23,20 +29,23 @@ class ActivitySerializer(serializers.ModelSerializer):
         validated_data.setdefault("coach", request.user)
         activity = super().create(validated_data)
 
-        # Google Calendar sync
-        from tasks.calendar import sync_to_google_calendar
-        sync_to_google_calendar.delay(str(activity.id), "create")
+        # Google Calendar sync (Celery task — optional, fire-and-forget)
+        try:
+            from tasks.calendar import sync_to_google_calendar
+            sync_to_google_calendar.delay(str(activity.id), "create")
+        except Exception:
+            pass
 
-        # Client confirmation email
+        # Client confirmation email with .ics invite — fire in background thread
         if send_confirmation and activity.client.email:
             from tasks.email import send_activity_confirmation_email
-            send_activity_confirmation_email.delay(str(activity.id))
+            _fire(send_activity_confirmation_email, str(activity.id))
 
         return activity
 
     def update(self, instance, validated_data):
         request = self.context["request"]
-        validated_data.pop("send_confirmation", None)  # not relevant on update
+        validated_data.pop("send_confirmation", None)
 
         # Detect cancellation before saving
         new_status = validated_data.get("status")
@@ -53,12 +62,15 @@ class ActivitySerializer(serializers.ModelSerializer):
         activity = super().update(instance, validated_data)
 
         # Google Calendar sync
-        from tasks.calendar import sync_to_google_calendar
-        sync_to_google_calendar.delay(str(activity.id), "update")
+        try:
+            from tasks.calendar import sync_to_google_calendar
+            sync_to_google_calendar.delay(str(activity.id), "update")
+        except Exception:
+            pass
 
-        # Cancellation email to client
+        # Cancellation email — fire in background thread
         if being_cancelled and activity.client.email:
             from tasks.email import send_activity_cancellation_email
-            send_activity_cancellation_email.delay(str(activity.id))
+            _fire(send_activity_cancellation_email, str(activity.id))
 
         return activity
