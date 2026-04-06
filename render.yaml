@@ -130,16 +130,16 @@ services:
         fromDatabase:
           name: db
           property: connectionString
-      - key: REDIS_URL
-        fromService:
-          name: redis
-          type: redis
-          property: connectionString
-      - key: CELERY_BROKER_URL
-        fromService:
-          name: redis
-          type: redis
-          property: connectionString
+      # - key: REDIS_URL
+      #   fromService:
+      #     name: redis
+      #     type: redis
+      #     property: connectionString
+      # - key: CELERY_BROKER_URL
+      #   fromService:
+      #     name: redis
+      #     type: redis
+      #     property: connectionString
       - key: STRIPE_TEST_SECRET_KEY
         value: sk_test_CHANGE_ME
       - key: DJSTRIPE_WEBHOOK_SECRET

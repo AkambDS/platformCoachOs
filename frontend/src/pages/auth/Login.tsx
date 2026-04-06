@@ -24,30 +24,67 @@ export default function Login() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#F8F6F1' }}>
-      <div style={{ background: '#fff', padding: '2.5rem', borderRadius: '12px', width: '400px', boxShadow: '0 4px 24px rgba(0,0,0,0.08)' }}>
-        <h1 style={{ color: '#1B3A6B', marginBottom: '0.25rem', fontSize: '1.75rem', fontWeight: 700 }}>CoachOS</h1>
-        <p style={{ color: '#6B6976', marginBottom: '2rem' }}>Sign in to your workspace</p>
-        {error && <div style={{ background: '#FAF0EC', color: '#C04E28', padding: '0.75rem', borderRadius: '8px', marginBottom: '1rem', fontSize: '0.9rem' }}>{error}</div>}
-        <form onSubmit={handleSubmit}>
-          <label style={{ display: 'block', marginBottom: '1rem' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#1B3A6B' }}>Email</span>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)} required
-              style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.65rem 0.85rem', border: '1.5px solid #D8D4CC', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }} />
-          </label>
-          <label style={{ display: 'block', marginBottom: '1.5rem' }}>
-            <span style={{ fontSize: '0.85rem', fontWeight: 600, color: '#1B3A6B' }}>Password</span>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)} required
-              style={{ display: 'block', width: '100%', marginTop: '0.35rem', padding: '0.65rem 0.85rem', border: '1.5px solid #D8D4CC', borderRadius: '8px', fontSize: '0.95rem', boxSizing: 'border-box' }} />
-          </label>
-          <button type="submit" disabled={loading}
-            style={{ width: '100%', padding: '0.75rem', background: '#1B3A6B', color: '#fff', border: 'none', borderRadius: '8px', fontWeight: 600, fontSize: '1rem', cursor: 'pointer' }}>
-            {loading ? 'Signing in...' : 'Sign In'}
-          </button>
-        </form>
-        <p style={{ textAlign: 'center', marginTop: '1.5rem', fontSize: '0.85rem', color: '#6B6976' }}>
-          No account? <a href="/register" style={{ color: '#C04E28' }}>Create workspace</a>
-        </p>
+    <div className="auth-split">
+      {/* Brand Panel */}
+      <div className="auth-brand">
+        <div className="auth-brand-logo">Coach<span>OS</span></div>
+        <div className="auth-brand-content">
+          <div className="auth-brand-headline">
+            Your coaching<br />practice, <em>elevated</em>
+          </div>
+          <p className="auth-brand-sub">
+            Everything you need to run a world-class coaching business — clients, sessions, pipeline, and revenue in one place.
+          </p>
+          <ul className="auth-brand-features">
+            <li>Client management &amp; progress tracking</li>
+            <li>Session scheduling &amp; activity logs</li>
+            <li>Pipeline &amp; deal flow management</li>
+            <li>Invoicing &amp; revenue reports</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Form Panel */}
+      <div className="auth-form-area">
+        <div className="auth-form-card">
+          <div className="auth-form-title">Welcome back</div>
+          <p className="auth-form-sub">Sign in to your workspace</p>
+
+          {error && <div className="auth-error">{error}</div>}
+
+          <form onSubmit={handleSubmit}>
+            <label className="auth-label">
+              <span className="auth-label-text">Email</span>
+              <input
+                className="auth-input"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+              />
+            </label>
+            <label className="auth-label">
+              <span className="auth-label-text">Password</span>
+              <input
+                className="auth-input"
+                type="password"
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                placeholder="••••••••"
+                required
+              />
+            </label>
+            <button type="submit" className="auth-btn" disabled={loading}>
+              {loading ? 'Signing in…' : 'Sign In'}
+            </button>
+          </form>
+
+          <p className="auth-footer">
+            No account?{' '}
+            <a href="/register">Create your workspace</a>
+          </p>
+        </div>
       </div>
     </div>
   )

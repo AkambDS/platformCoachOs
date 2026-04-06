@@ -1,22 +1,34 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore } from '../../store/auth'
 import { authApi } from '../../api/client'
+import {
+  LayoutDashboard,
+  Users,
+  Kanban,
+  CalendarDays,
+  CheckSquare,
+  Receipt,
+  BookOpen,
+  BarChart3,
+  Settings,
+  LogOut,
+} from 'lucide-react'
 
 const NAV = [
   { section: 'Workspace' },
-  { to: '/dashboard',  icon: '⬛', label: 'Dashboard'  },
-  { to: '/clients',    icon: '◉',  label: 'Clients'    },
-  { to: '/pipeline',   icon: '▦',  label: 'Pipeline'   },
+  { to: '/dashboard',  Icon: LayoutDashboard, label: 'Dashboard'  },
+  { to: '/clients',    Icon: Users,            label: 'Clients'    },
+  { to: '/pipeline',   Icon: Kanban,           label: 'Pipeline'   },
   { section: 'Schedule' },
-  { to: '/calendar',   icon: '◷',  label: 'Calendar'   },
-  { to: '/activities', icon: '✓',  label: 'Activities' },
+  { to: '/calendar',   Icon: CalendarDays,     label: 'Calendar'   },
+  { to: '/activities', Icon: CheckSquare,      label: 'Activities' },
   { section: 'Finance' },
-  { to: '/invoices',   icon: '$',  label: 'Invoices'   },
+  { to: '/invoices',   Icon: Receipt,          label: 'Invoices'   },
   { section: 'Content' },
-  { to: '/library',    icon: '▤',  label: 'Library'    },
-  { to: '/reports',    icon: '▣',  label: 'Reports'    },
+  { to: '/library',    Icon: BookOpen,         label: 'Library'    },
+  { to: '/reports',    Icon: BarChart3,        label: 'Reports'    },
   { section: 'System' },
-  { to: '/settings',   icon: '⚙',  label: 'Settings'   },
+  { to: '/settings',   Icon: Settings,         label: 'Settings'   },
 ]
 
 export default function Sidebar() {
@@ -42,13 +54,14 @@ export default function Sidebar() {
           if ('section' in item) {
             return <div key={i} className="nav-label">{item.section}</div>
           }
+          const { Icon } = item
           return (
             <NavLink
               key={item.to}
               to={item.to}
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
             >
-              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-icon"><Icon size={14} strokeWidth={1.75} /></span>
               {item.label}
             </NavLink>
           )
@@ -64,8 +77,8 @@ export default function Sidebar() {
             </div>
             <div className="sidebar-user-role">{user?.role?.replace('_', ' ')}</div>
           </div>
-          <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ color: 'rgba(255,255,255,.4)', padding: '4px 6px' }} title="Sign out">
-            ⏻
+          <button onClick={handleLogout} className="btn btn-ghost btn-sm" style={{ color: 'rgba(255,255,255,.35)', padding: '4px 6px' }} title="Sign out">
+            <LogOut size={13} strokeWidth={1.75} />
           </button>
         </div>
       </div>
