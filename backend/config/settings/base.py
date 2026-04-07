@@ -44,7 +44,6 @@ THIRD_PARTY_APPS = [
     "django_celery_results",
     "storages",
     "django_filters",
-    "anymail",
 ]
 
 LOCAL_APPS = [

@@ -32,9 +32,13 @@ CSRF_TRUSTED_ORIGINS = [
     "https://*.onrender.com",
 ]
 
-# ── Email: SendGrid ───────────────────────────────────────────────────────
-EMAIL_BACKEND    = "anymail.backends.sendgrid.EmailBackend"
-ANYMAIL          = {"SENDGRID_API_KEY": env("SENDGRID_API_KEY", default="")}
+# ── Email: Gmail SMTP ─────────────────────────────────────────────────────
+EMAIL_BACKEND       = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST          = env("EMAIL_HOST",          default="smtp.gmail.com")
+EMAIL_PORT          = env.int("EMAIL_PORT",      default=587)
+EMAIL_HOST_USER     = env("EMAIL_HOST_USER",     default="")
+EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+EMAIL_USE_TLS       = True
 
 # ── File Storage: Azure Blob Storage (S3-compat) or AWS S3 ────────────────
 # Azure Blob:
