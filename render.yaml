@@ -20,11 +20,13 @@ services:
         fromDatabase:
           name: db
           property: connectionString
-      # ── Email (required — set these in Render dashboard) ──
-      - key: SENDGRID_API_KEY
-        value: CHANGE_ME
+      # ── Email — Gmail SMTP (set these in Render dashboard) ──
+      - key: EMAIL_HOST_USER
+        value: CHANGE_ME@gmail.com
+      - key: EMAIL_HOST_PASSWORD
+        value: CHANGE_ME          # Gmail App Password (16 chars, no spaces)
       - key: DEFAULT_FROM_EMAIL
-        value: "CoachOS <hello@CHANGE_ME>"
+        value: "CoachOS <CHANGE_ME@gmail.com>"
       # ── App URLs ──
       - key: FRONTEND_URL
         value: "https://platformcoachos-1.onrender.com"
@@ -60,11 +62,16 @@ services:
         fromDatabase:
           name: db
           property: connectionString
-      - key: SENDGRID_API_KEY
+      - key: EMAIL_HOST_USER
         fromService:
           name: backend
           type: web
-          envVarKey: SENDGRID_API_KEY
+          envVarKey: EMAIL_HOST_USER
+      - key: EMAIL_HOST_PASSWORD
+        fromService:
+          name: backend
+          type: web
+          envVarKey: EMAIL_HOST_PASSWORD
       - key: DEFAULT_FROM_EMAIL
         fromService:
           name: backend

@@ -61,7 +61,10 @@ class Command(BaseCommand):
                         total += 1
 
                     # Mark as sent so this cron run doesn't fire again
-                    Activity.objects.filter(pk=activity.pk).update(**{flag_field: True})
+                    sent_at_field = flag_field.replace("_sent", "_sent_at")
+                    Activity.objects.filter(pk=activity.pk).update(
+                        **{flag_field: True, sent_at_field: now}
+                    )
 
                 except Exception as e:
                     logger.error(f"Reminder failed for activity {activity.id}: {e}")

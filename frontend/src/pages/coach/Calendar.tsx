@@ -322,16 +322,19 @@ export default function Calendar() {
   })
   const activities: any[] = activitiesData?.results || activitiesData || []
 
-  const events = activities.map((a: any) => ({
-    id: a.id,
-    title: `${a.client_name || ''} — ${a.title}`,
-    start: a.start_at,
-    end: a.end_at || a.start_at,
-    backgroundColor: TYPE_COLOURS[a.activity_type] || '#8c8279',
-    borderColor: 'transparent',
-    extendedProps: a,
-    opacity: a.status === 'cancelled' || a.status === 'missed' ? 0.4 : 1,
-  }))
+  const events = activities.map((a: any) => {
+    const faded = a.status === 'cancelled' || a.status === 'missed'
+    return {
+      id: a.id,
+      title: a.title,
+      start: a.start_at,
+      end: a.end_at || a.start_at,
+      backgroundColor: faded ? '#ccc' : (TYPE_COLOURS[a.activity_type] || '#8c8279'),
+      borderColor: 'transparent',
+      textColor: '#fff',
+      extendedProps: a,
+    }
+  })
 
   const handleMarkMissed = async (id: string) => {
     try {
@@ -394,10 +397,37 @@ export default function Calendar() {
             select={(info: any) => { setNewStart(info.startStr.slice(0, 16)); setShowNew(true) }}
             eventClick={(info: any) => setSelectedActivity(info.event.extendedProps)}
             eventDisplay="block"
+            eventMinHeight={42}
             slotMinTime="07:00:00"
-            slotMaxTime="20:00:00"
+            slotMaxTime="21:00:00"
+            slotDuration="00:30:00"
             allDaySlot={false}
             eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
+            eventContent={(arg: any) => {
+              const a = arg.event.extendedProps
+              const faded = a.status === 'cancelled' || a.status === 'missed'
+              return (
+                <div style={{
+                  padding: '3px 6px',
+                  overflow: 'hidden',
+                  height: '100%',
+                  opacity: faded ? 0.55 : 1,
+                  cursor: 'pointer',
+                }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', letterSpacing: '.01em' }}>
+                    {a.client_name}
+                  </div>
+                  <div style={{ fontSize: 10, opacity: 0.85, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                    {arg.timeText} · {a.title}
+                  </div>
+                  {a.location && (
+                    <div style={{ fontSize: 9, opacity: 0.7, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginTop: 1 }}>
+                      📍 {a.location}
+                    </div>
+                  )}
+                </div>
+              )
+            }}
           />
         </div>
       </div>

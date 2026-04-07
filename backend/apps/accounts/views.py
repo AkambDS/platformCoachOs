@@ -18,8 +18,21 @@ from .permissions import IsBusinessOwner, IsWorkspaceMember
 
 
 class LoginView(TokenObtainPairView):
-    """POST /api/auth/login/ — returns access + refresh tokens."""
+    """POST /api/auth/login/ — returns access + refresh + user + workspace."""
     serializer_class = CoachOSTokenObtainPairSerializer
+
+    def post(self, request, *args, **kwargs):
+        response = super().post(request, *args, **kwargs)
+        if response.status_code == 200:
+            from rest_framework_simplejwt.tokens import AccessToken
+            token = AccessToken(response.data["access"])
+            try:
+                user = User.objects.select_related("workspace").get(id=token["user_id"])
+                response.data["user"]      = UserSerializer(user).data
+                response.data["workspace"] = WorkspaceSerializer(user.workspace).data
+            except User.DoesNotExist:
+                pass
+        return response
 
 
 class RefreshView(TokenRefreshView):
@@ -129,12 +142,37 @@ def accept_invite(request):
 
 
 class MeView(generics.RetrieveUpdateAPIView):
-    """GET/PUT /api/auth/me/ — current user's profile."""
+    """GET/PATCH /api/auth/me/ — current user profile + workspace."""
     serializer_class = UserSerializer
     permission_classes = [IsAuthenticated]
 
     def get_object(self):
         return self.request.user
+
+    def retrieve(self, request, *args, **kwargs):
+        user = self.get_object()
+        return Response({
+            "user":      UserSerializer(user).data,
+            "workspace": WorkspaceSerializer(user.workspace).data,
+        })
+
+    def partial_update(self, request, *args, **kwargs):
+        user = self.get_object()
+        # Handle password change separately
+        new_password = request.data.get("password")
+        current_password = request.data.get("current_password")
+        if new_password:
+            if not current_password or not user.check_password(current_password):
+                return Response({"current_password": ["Incorrect password."]},
+                                status=status.HTTP_400_BAD_REQUEST)
+            user.set_password(new_password)
+            user.save(update_fields=["password"])
+            return Response({"detail": "Password updated."})
+
+        serializer = UserSerializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
 
 
 class TeamView(generics.ListAPIView):

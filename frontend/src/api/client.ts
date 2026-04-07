@@ -27,11 +27,17 @@ api.interceptors.response.use((res) => res, async (error) => {
 })
 
 export const authApi = {
-  login:    (d: any) => api.post('/api/auth/login/', d),
-  register: (d: any) => api.post('/api/auth/register/', d),
-  logout:   ()       => api.post('/api/auth/logout/'),
-  me:       ()       => api.get('/api/auth/me/'),
-  invite:   (d: any) => api.post('/api/auth/invite/', d),
+  login:       (d: any) => api.post('/api/auth/login/', d),
+  register:    (d: any) => api.post('/api/auth/register/', d),
+  logout:      ()       => api.post('/api/auth/logout/'),
+  me:          ()       => api.get('/api/auth/me/'),
+  updateMe:    (d: any) => api.patch('/api/auth/me/', d),
+  invite:      (d: any) => api.post('/api/auth/invite/', d),
+  team:        ()       => api.get('/api/auth/team/'),
+}
+export const settingsApi = {
+  getWorkspace:    ()       => api.get('/api/settings/workspace/'),
+  updateWorkspace: (d: any) => api.patch('/api/settings/workspace/', d),
 }
 export const clientsApi = {
   list:       (p?: any)              => api.get('/api/clients/', { params: p }),

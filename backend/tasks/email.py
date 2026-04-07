@@ -129,6 +129,8 @@ def send_activity_confirmation_email(activity_id: str):
             mimetype="text/calendar; method=REQUEST",
         )
         msg.send()
+        from django.utils import timezone
+        Activity.objects.filter(pk=activity_id).update(confirmation_sent_at=timezone.now())
         logger.info(f"Confirmation email (+.ics) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_confirmation_email failed: {e}")
@@ -232,6 +234,8 @@ def send_activity_cancellation_email(activity_id: str):
             mimetype="text/calendar; method=CANCEL",
         )
         msg.send()
+        from django.utils import timezone
+        Activity.objects.filter(pk=activity_id).update(cancellation_sent_at=timezone.now())
         logger.info(f"Cancellation email (+.ics) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_cancellation_email failed: {e}")

@@ -19,8 +19,14 @@ class ActivitySerializer(serializers.ModelSerializer):
         fields = ["id", "activity_type", "title", "status", "start_at", "end_at",
                   "location", "notes", "rrule", "recurrence_id",
                   "google_cal_uid", "client", "client_name", "coach", "coach_name",
-                  "deal", "edit_history", "created_at", "send_confirmation"]
-        read_only_fields = ["id", "google_cal_uid", "caldav_uid", "edit_history", "created_at"]
+                  "deal", "edit_history", "created_at", "send_confirmation",
+                  "confirmation_sent_at", "cancellation_sent_at",
+                  "reminder_24h_sent", "reminder_24h_sent_at",
+                  "reminder_1h_sent",  "reminder_1h_sent_at"]
+        read_only_fields = ["id", "google_cal_uid", "caldav_uid", "edit_history", "created_at",
+                            "confirmation_sent_at", "cancellation_sent_at",
+                            "reminder_24h_sent", "reminder_24h_sent_at",
+                            "reminder_1h_sent",  "reminder_1h_sent_at"]
 
     def create(self, validated_data):
         request = self.context["request"]

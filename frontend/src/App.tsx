@@ -1,6 +1,8 @@
+import { useEffect } from "react"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { useAuthStore } from "./store/auth"
+import { authApi } from "./api/client"
 import Login     from "./pages/auth/Login"
 import Register  from "./pages/auth/Register"
 import Dashboard from "./pages/coach/Dashboard"
@@ -30,6 +32,17 @@ const Stub = ({ name }: { name: string }) => (
 )
 
 export default function App() {
+  const { isAuthenticated, user, rehydrate, logout } = useAuthStore()
+
+  useEffect(() => {
+    // If we have a token but no user (e.g. after hard refresh), restore from /api/auth/me/
+    if (isAuthenticated && !user) {
+      authApi.me()
+        .then(({ data }) => rehydrate(data.user, data.workspace))
+        .catch(() => logout())
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

@@ -45,9 +45,14 @@ class Activity(WorkspaceModel):
     caldav_uid     = models.CharField(max_length=500, blank=True)
     # Edit history (FR-ACT-15) — list of {changed_by, changed_at, diff}
     edit_history   = models.JSONField(default=list)
+    # Notification tracking — timestamps show exactly when each email was sent
+    confirmation_sent_at  = models.DateTimeField(null=True, blank=True)
+    cancellation_sent_at  = models.DateTimeField(null=True, blank=True)
     # Reminder tracking — prevents double-firing when cron job runs every 15 min
     reminder_24h_sent = models.BooleanField(default=False)
     reminder_1h_sent  = models.BooleanField(default=False)
+    reminder_24h_sent_at  = models.DateTimeField(null=True, blank=True)
+    reminder_1h_sent_at   = models.DateTimeField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 

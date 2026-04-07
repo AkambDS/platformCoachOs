@@ -5,7 +5,7 @@ import { activitiesApi, clientsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast, ConfirmDialog } from '../../components/ui'
 import {
-  CalendarDays, MapPin, User, Clock, ChevronRight,
+  CalendarDays, MapPin, User, Clock, ChevronRight, Mail, CheckCircle2, Circle, XCircle,
 } from 'lucide-react'
 
 const TYPE_COLOURS: Record<string, string> = {
@@ -155,6 +155,68 @@ function ActivityFormModal({
   )
 }
 
+// ── Notification Status Panel ─────────────────────────────────────────────────
+function fmtShort(d: string | null) {
+  if (!d) return null
+  return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function NRow({ sent, sentAt, label, pending }: { sent: boolean; sentAt: string | null; label: string; pending?: boolean }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', borderBottom: '1px solid var(--border)' }}>
+      {sent
+        ? <CheckCircle2 size={14} color="var(--gold)" strokeWidth={2} />
+        : pending
+          ? <Circle size={14} color="var(--muted)" strokeWidth={1.5} />
+          : <XCircle size={14} color="var(--muted)" strokeWidth={1.5} />}
+      <span style={{ flex: 1, fontSize: 12, color: sent ? 'var(--ink)' : 'var(--muted)' }}>{label}</span>
+      {sent && sentAt && (
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtShort(sentAt)}</span>
+      )}
+      {!sent && pending && (
+        <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>pending</span>
+      )}
+    </div>
+  )
+}
+
+function NotificationStatus({ activity }: { activity: any }) {
+  const isScheduled = activity.status === 'scheduled'
+  const isCancelled = activity.status === 'cancelled'
+  return (
+    <div style={{ marginTop: 16, padding: '12px 14px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+        <Mail size={13} color="var(--muted)" />
+        <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)' }}>Client Notifications</span>
+      </div>
+      <NRow
+        sent={!!activity.confirmation_sent_at}
+        sentAt={activity.confirmation_sent_at}
+        label="Confirmation + calendar invite"
+      />
+      <NRow
+        sent={activity.reminder_24h_sent}
+        sentAt={activity.reminder_24h_sent_at}
+        label="24-hour reminder"
+        pending={isScheduled}
+      />
+      <NRow
+        sent={activity.reminder_1h_sent}
+        sentAt={activity.reminder_1h_sent_at}
+        label="1-hour reminder"
+        pending={isScheduled}
+      />
+      {isCancelled && (
+        <NRow
+          sent={!!activity.cancellation_sent_at}
+          sentAt={activity.cancellation_sent_at}
+          label="Cancellation email"
+        />
+      )}
+    </div>
+  )
+}
+
 // ── Activity Detail Side Panel ─────────────────────────────────────────────────
 function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
   const canAct = activity.status === 'scheduled'
@@ -198,12 +260,7 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
           {activity.notes}
         </div>
       )}
-      {activity.status === 'scheduled' && (
-        <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(201,168,76,0.07)', border: '1px solid rgba(201,168,76,0.2)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-          Client will receive automatic reminders <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and{' '}
-          <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before this session.
-        </div>
-      )}
+      <NotificationStatus activity={activity} />
     </Modal>
   )
 }
