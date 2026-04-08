@@ -111,6 +111,11 @@ def send_invoice_email(invoice_id: str):
         logger.error(f"send_invoice_email failed: {e}")
 
 
+def _fmt_dt_human(dt) -> str:
+    """Format datetime for email body — cross-platform safe."""
+    return dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
+
+
 @shared_task(name="tasks.email.send_activity_confirmation_email")
 def send_activity_confirmation_email(activity_id: str):
     """Email the client confirming a newly scheduled activity, with a .ics calendar invite."""
@@ -119,9 +124,10 @@ def send_activity_confirmation_email(activity_id: str):
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         client = activity.client
         if not client.email:
+            logger.warning(f"send_activity_confirmation_email: no email for client on activity {activity_id}")
             return
 
-        dt = activity.start_at.strftime("%A, %B %-d at %-I:%M %p")
+        dt = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
@@ -169,7 +175,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         if activity.status != "scheduled":
             return  # don't remind for cancelled/missed activities
 
-        dt = activity.start_at.strftime("%A, %B %-d at %-I:%M %p")
+        dt = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
         time_label = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
@@ -203,7 +209,7 @@ def send_activity_cancellation_email(activity_id: str):
         if not client.email:
             return
 
-        dt = activity.start_at.strftime("%A, %B %-d at %-I:%M %p")
+        dt = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
 
         body = (
@@ -218,7 +224,7 @@ def send_activity_cancellation_email(activity_id: str):
         )
 
         msg = EmailMessage(
-            subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %-d')}",
+            subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %d').replace(' 0', ' ')}",
             body=body,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
