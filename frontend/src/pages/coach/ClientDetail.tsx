@@ -45,6 +45,7 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
   const [form, setForm] = useState({
     activity_type: 'session', title: '', start_at: '', end_at: '', location: '', notes: '',
   })
+  const [sendConfirmation, setSendConfirmation] = useState(true)
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -52,17 +53,17 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
     if (!form.title || !form.start_at) return
     setSaving(true)
     try {
-      await activitiesApi.create({ ...form, client: clientId })
+      await activitiesApi.create({ ...form, client: clientId, send_confirmation: sendConfirmation })
       qc.invalidateQueries({ queryKey: ['client-activities', clientId] })
-      onSaved()
+      onSaved(sendConfirmation)
     } catch { } finally { setSaving(false) }
   }
 
   return (
-    <Modal title="Schedule Activity" onClose={onClose} footer={
+    <Modal title="Schedule Session" onClose={onClose} footer={
       <>
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Schedule'}</button>
+        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Schedule Session'}</button>
       </>
     }>
       <div className="fgroup">
@@ -72,12 +73,12 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
         </select>
       </div>
       <div className="fgroup">
-        <label className="flabel">Title</label>
+        <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Q1 Coaching Session" />
       </div>
       <div className="fgrid">
         <div className="fgroup">
-          <label className="flabel">Start</label>
+          <label className="flabel">Start *</label>
           <input className="finput" type="datetime-local" value={form.start_at} onChange={e => set('start_at', e.target.value)} />
         </div>
         <div className="fgroup">
@@ -91,7 +92,22 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
       </div>
       <div className="fgroup">
         <label className="flabel">Notes (internal)</label>
-        <textarea className="ftextarea" rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} />
+        <textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
+      </div>
+      <div style={{
+        marginTop: 16, padding: '12px 14px',
+        background: 'var(--paper)', border: '1px solid var(--border)',
+        borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 12,
+      }}>
+        <input id="cd_send_conf" type="checkbox" checked={sendConfirmation}
+          onChange={e => setSendConfirmation(e.target.checked)}
+          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--gold)' }} />
+        <label htmlFor="cd_send_conf" style={{ fontSize: 13, cursor: 'pointer', lineHeight: 1.4 }}>
+          <span style={{ fontWeight: 500, color: 'var(--ink)' }}>Send confirmation email + calendar invite</span>
+          <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
+            Client gets a .ics file, plus 24h and 1h reminders.
+          </span>
+        </label>
       </div>
     </Modal>
   )
@@ -247,7 +263,7 @@ export default function ClientDetail() {
               ) : (
                 <button className="btn btn-outline btn-sm" onClick={() => { setEditForm(client); setEditMode(true) }}>Edit</button>
               )}
-              <button className="btn btn-gold btn-sm" onClick={() => setShowActivity(true)}>+ Schedule</button>
+              <button className="btn btn-gold btn-sm" onClick={() => setShowActivity(true)}>+ Schedule Session</button>
             </div>
           </div>
 
@@ -320,7 +336,6 @@ export default function ClientDetail() {
               <div className="card" style={{ marginBottom: 16 }}>
                 <div className="card-hdr">Quick Actions</div>
                 <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button className="btn btn-dark" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setShowActivity(true)}>Schedule Session</button>
                   <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setTab('Goals')}>Add Goal</button>
                   <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setTab('Invoices')}>Create Invoice</button>
                 </div>
@@ -434,7 +449,7 @@ export default function ClientDetail() {
         )}
       </div>
 
-      {showActivity && <NewActivityModal clientId={id} onClose={() => setShowActivity(false)} onSaved={() => { setShowActivity(false); showToast('Activity scheduled') }} />}
+      {showActivity && <NewActivityModal clientId={id} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
       {showGoal && <NewGoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
       {toastEl}
     </AppShell>

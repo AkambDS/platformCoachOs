@@ -37,46 +37,12 @@ services:
         value: ""
       - key: DJSTRIPE_WEBHOOK_SECRET
         value: ""
+      # ── Cron secret (used by cron-job.org to call /api/internal/reminders/) ──
+      - key: CRON_SECRET
+        generateValue: true
       # ── Sentry (optional) ──
       - key: SENTRY_DSN
         value: ""
-
-  # ── Reminder Cron Job (free — runs every 15 min, no Redis needed) ──────────
-  # Sends 24h and 1h email/SMS reminders to clients before their sessions.
-  - type: cron
-    name: reminders
-    runtime: docker
-    rootDir: backend
-    dockerfilePath: ./Dockerfile
-    schedule: "*/15 * * * *"
-    dockerCommand: python manage.py dispatch_reminders
-    envVars:
-      - key: DJANGO_SETTINGS_MODULE
-        value: config.settings.production
-      - key: SECRET_KEY
-        fromService:
-          name: backend
-          type: web
-          envVarKey: SECRET_KEY
-      - key: DATABASE_URL
-        fromDatabase:
-          name: db
-          property: connectionString
-      - key: EMAIL_HOST_USER
-        fromService:
-          name: backend
-          type: web
-          envVarKey: EMAIL_HOST_USER
-      - key: EMAIL_HOST_PASSWORD
-        fromService:
-          name: backend
-          type: web
-          envVarKey: EMAIL_HOST_PASSWORD
-      - key: DEFAULT_FROM_EMAIL
-        fromService:
-          name: backend
-          type: web
-          envVarKey: DEFAULT_FROM_EMAIL
 
   # ── React Frontend (Static Site) ───────────────────────────────────────────
   - type: web

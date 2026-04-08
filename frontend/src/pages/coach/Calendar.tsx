@@ -398,7 +398,7 @@ export default function Calendar() {
             eventClick={(info: any) => setSelectedActivity(info.event.extendedProps)}
             eventDisplay="block"
             eventMinHeight={42}
-            slotMinTime="07:00:00"
+            slotMinTime="06:00:00"
             slotMaxTime="21:00:00"
             slotDuration="00:30:00"
             allDaySlot={false}

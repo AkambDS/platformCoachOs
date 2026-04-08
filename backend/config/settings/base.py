@@ -157,6 +157,7 @@ SPECTACULAR_SETTINGS = {
 }
 
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+CRON_SECRET  = env("CRON_SECRET",  default="")
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(
