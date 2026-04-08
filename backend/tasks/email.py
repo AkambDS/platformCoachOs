@@ -29,7 +29,12 @@ def _build_ics(activity, method: str = "REQUEST", cancelled: bool = False) -> by
         utc = dt.astimezone(dt_timezone.utc)
         return utc.strftime("%Y%m%dT%H%M%SZ")
 
-    coach_email  = activity.coach.email     if activity.coach  else settings.DEFAULT_FROM_EMAIL
+    # ORGANIZER must match the FROM address (DEFAULT_FROM_EMAIL) for Gmail to
+    # auto-process the invite. Using the coach's DB email causes a mismatch.
+    import re
+    _from = settings.DEFAULT_FROM_EMAIL
+    _from_match = re.search(r'<(.+?)>', _from)
+    coach_email  = _from_match.group(1) if _from_match else _from
     coach_name   = activity.coach.full_name if activity.coach  else activity.workspace.name
     client_email = activity.client.email
     client_name  = activity.client.full_name
@@ -143,18 +148,28 @@ def send_activity_confirmation_email(activity_id: str):
             f"— {activity.workspace.name}"
         )
 
+        ics_bytes = _build_ics(activity, method="REQUEST")
+
+        # Primary message: plain text body
         msg = EmailMessage(
             subject=f"Confirmed: {activity.title} with {coach_name}",
             body=body,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
         )
-        # Attach .ics so it appears as "Add to Calendar" in most email clients
+        # Attach ics as file (opens Google Calendar on click/download)
         msg.attach(
             filename="invite.ics",
-            content=_build_ics(activity, method="REQUEST"),
+            content=ics_bytes,
             mimetype="text/calendar; method=REQUEST; charset=utf-8",
         )
+        # Also embed ics as inline body part — triggers Gmail's native
+        # "Add to Calendar" button without needing to download
+        from email.mime.text import MIMEText
+        cal_part = MIMEText(ics_bytes.decode("utf-8"), "calendar", "utf-8")
+        cal_part["Content-Disposition"] = "inline"
+        cal_part.set_param("method", "REQUEST")
+        msg.attach(cal_part)
         msg.send()
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(confirmation_sent_at=timezone.now())
