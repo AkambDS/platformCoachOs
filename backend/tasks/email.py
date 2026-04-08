@@ -11,41 +11,62 @@ logger = logging.getLogger(__name__)
 FRONTEND_URL = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
 
 
-def _build_ics(activity) -> bytes:
-    """Build a minimal iCalendar (.ics) bytes payload for a calendar invite."""
+def _ics_escape(text: str) -> str:
+    """Escape special characters per RFC 5545."""
+    return text.replace("\\", "\\\\").replace(";", "\\;").replace(",", "\\,").replace("\n", "\\n")
+
+
+def _build_ics(activity, method: str = "REQUEST", cancelled: bool = False) -> bytes:
+    """
+    Build a valid iCalendar (.ics) payload per RFC 5545.
+    - method="REQUEST"  → new/updated invite  (Add to Calendar)
+    - method="CANCEL"   → cancellation        (Remove from Calendar)
+    """
+    from datetime import timedelta
+    from django.utils import timezone as dj_tz
+
     def fmt_dt(dt):
-        # Convert to UTC and format as iCal YYYYMMDDTHHMMSSZ
         utc = dt.astimezone(dt_timezone.utc)
         return utc.strftime("%Y%m%dT%H%M%SZ")
 
-    coach_email = activity.coach.email if activity.coach else settings.DEFAULT_FROM_EMAIL
-    coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
+    coach_email  = activity.coach.email     if activity.coach  else settings.DEFAULT_FROM_EMAIL
+    coach_name   = activity.coach.full_name if activity.coach  else activity.workspace.name
     client_email = activity.client.email
     client_name  = activity.client.full_name
 
-    location_line = f"LOCATION:{activity.location}\r\n" if activity.location else ""
-    uid = f"{activity.id}@coachos.app"
+    # Default duration: 1 hour if no end_at set
+    end_at = activity.end_at or (activity.start_at + timedelta(hours=1))
 
-    ics = (
-        "BEGIN:VCALENDAR\r\n"
-        "VERSION:2.0\r\n"
-        "PRODID:-//CoachOS//CoachOS//EN\r\n"
-        "METHOD:REQUEST\r\n"
-        "BEGIN:VEVENT\r\n"
-        f"UID:{uid}\r\n"
-        f"DTSTART:{fmt_dt(activity.start_at)}\r\n"
-        f"DTEND:{fmt_dt(activity.end_at or activity.start_at)}\r\n"
-        f"SUMMARY:{activity.title}\r\n"
-        f"DESCRIPTION:{activity.activity_type.capitalize()} with {coach_name}\r\n"
-        f"{location_line}"
-        f"ORGANIZER;CN={coach_name}:mailto:{coach_email}\r\n"
-        f"ATTENDEE;CN={client_name};RSVP=TRUE;ROLE=REQ-PARTICIPANT:mailto:{client_email}\r\n"
-        "STATUS:CONFIRMED\r\n"
-        "SEQUENCE:0\r\n"
-        "END:VEVENT\r\n"
-        "END:VCALENDAR\r\n"
-    )
-    return ics.encode("utf-8")
+    uid     = f"{activity.id}@coachos.app"
+    now_str = fmt_dt(dj_tz.now())
+    summary = _ics_escape(activity.title + (" (Cancelled)" if cancelled else ""))
+    desc    = _ics_escape(f"{activity.activity_type.capitalize()} with {coach_name}")
+
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//CoachOS//CoachOS//EN",
+        f"METHOD:{method}",
+        "CALSCALE:GREGORIAN",
+        "BEGIN:VEVENT",
+        f"UID:{uid}",
+        f"DTSTAMP:{now_str}",          # required by RFC 5545
+        f"DTSTART:{fmt_dt(activity.start_at)}",
+        f"DTEND:{fmt_dt(end_at)}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{desc}",
+    ]
+    if activity.location:
+        lines.append(f"LOCATION:{_ics_escape(activity.location)}")
+    lines += [
+        f"ORGANIZER;CN=\"{coach_name}\":mailto:{coach_email}",
+        f"ATTENDEE;CN=\"{client_name}\";RSVP=TRUE;ROLE=REQ-PARTICIPANT:mailto:{client_email}",
+        f"STATUS:{'CANCELLED' if cancelled else 'CONFIRMED'}",
+        f"SEQUENCE:{'1' if cancelled else '0'}",
+        "END:VEVENT",
+        "END:VCALENDAR",
+    ]
+    return "\r\n".join(lines).encode("utf-8")
 
 
 @shared_task(name="tasks.email.send_invite_email")
@@ -125,8 +146,8 @@ def send_activity_confirmation_email(activity_id: str):
         # Attach .ics so it appears as "Add to Calendar" in most email clients
         msg.attach(
             filename="invite.ics",
-            content=_build_ics(activity),
-            mimetype="text/calendar; method=REQUEST",
+            content=_build_ics(activity, method="REQUEST"),
+            mimetype="text/calendar; method=REQUEST; charset=utf-8",
         )
         msg.send()
         from django.utils import timezone
@@ -196,32 +217,6 @@ def send_activity_cancellation_email(activity_id: str):
             f"— {activity.workspace.name}"
         )
 
-        # Build a CANCEL .ics to remove the event from client's calendar
-        def _build_cancel_ics(act) -> bytes:
-            from datetime import timezone as dt_tz
-            def fmt_dt(d):
-                return d.astimezone(dt_tz.utc).strftime("%Y%m%dT%H%M%SZ")
-            coach_email = act.coach.email if act.coach else settings.DEFAULT_FROM_EMAIL
-            coach_name_ = act.coach.full_name if act.coach else act.workspace.name
-            ics = (
-                "BEGIN:VCALENDAR\r\n"
-                "VERSION:2.0\r\n"
-                "PRODID:-//CoachOS//CoachOS//EN\r\n"
-                "METHOD:CANCEL\r\n"
-                "BEGIN:VEVENT\r\n"
-                f"UID:{act.id}@coachos.app\r\n"
-                f"DTSTART:{fmt_dt(act.start_at)}\r\n"
-                f"DTEND:{fmt_dt(act.end_at or act.start_at)}\r\n"
-                f"SUMMARY:{act.title} (Cancelled)\r\n"
-                f"ORGANIZER;CN={coach_name_}:mailto:{coach_email}\r\n"
-                f"ATTENDEE;CN={act.client.full_name};RSVP=FALSE:mailto:{act.client.email}\r\n"
-                "STATUS:CANCELLED\r\n"
-                "SEQUENCE:1\r\n"
-                "END:VEVENT\r\n"
-                "END:VCALENDAR\r\n"
-            )
-            return ics.encode("utf-8")
-
         msg = EmailMessage(
             subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %-d')}",
             body=body,
@@ -230,8 +225,8 @@ def send_activity_cancellation_email(activity_id: str):
         )
         msg.attach(
             filename="cancel.ics",
-            content=_build_cancel_ics(activity),
-            mimetype="text/calendar; method=CANCEL",
+            content=_build_ics(activity, method="CANCEL", cancelled=True),
+            mimetype="text/calendar; method=CANCEL; charset=utf-8",
         )
         msg.send()
         from django.utils import timezone
