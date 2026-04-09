@@ -89,9 +89,14 @@ def invite_user(request):
         expires_at=timezone.now() + timedelta(hours=48),
     )
 
-    # Send invite email via Celery task
+    # Send invite email — call directly (synchronous) so it works without a Celery worker
     from tasks.email import send_invite_email
-    send_invite_email.delay(str(invitation.id))
+    try:
+        send_invite_email(str(invitation.id))
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).error("send_invite_email failed: %s", exc)
+        # Invitation record is already created; don't block the response
 
     return Response({"detail": "Invitation sent.", "token": str(invitation.token)},
                     status=status.HTTP_201_CREATED)
