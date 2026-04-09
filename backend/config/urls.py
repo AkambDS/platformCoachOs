@@ -21,11 +21,16 @@ def run_reminders(request):
     expected = getattr(django_settings, "CRON_SECRET", "")
     if not expected or secret != expected:
         return Response({"detail": "Forbidden"}, status=403)
+    import threading
     from django.core.management import call_command
     import io
-    out = io.StringIO()
-    call_command("dispatch_reminders", stdout=out)
-    return Response({"detail": "ok", "output": out.getvalue()})
+
+    def _run():
+        out = io.StringIO()
+        call_command("dispatch_reminders", stdout=out)
+
+    threading.Thread(target=_run, daemon=True).start()
+    return Response({"detail": "ok"})
 
 
 @api_view(["POST"])
@@ -34,6 +39,8 @@ def run_pending_invites(request):
     """
     POST /api/internal/invites/
     Called by cron-job.org every 5 min. Retries any invite emails that failed on creation.
+    Responds immediately then processes in a background thread to avoid cron-job.org timeout.
+    Uses the same CRON_SECRET as the reminders endpoint.
     """
     secret = request.headers.get("X-Cron-Secret", "")
     expected = getattr(django_settings, "CRON_SECRET", "")
@@ -43,26 +50,32 @@ def run_pending_invites(request):
     from apps.accounts.models import WorkspaceInvitation
     from tasks.email import send_invite_email
     from django.utils import timezone
+    import threading
     import logging
     logger = logging.getLogger(__name__)
 
-    pending = WorkspaceInvitation.objects.filter(
-        email_sent=False,
-        accepted=False,
-        expires_at__gt=timezone.now(),
+    pending_ids = list(
+        WorkspaceInvitation.objects.filter(
+            email_sent=False,
+            accepted=False,
+            expires_at__gt=timezone.now(),
+        ).values_list("id", flat=True)
     )
-    sent = 0
-    for invite in pending:
-        try:
-            send_invite_email(str(invite.id))
-            invite.email_sent = True
-            invite.save(update_fields=["email_sent"])
-            sent += 1
-            logger.info(f"Pending invite email sent to {invite.email}")
-        except Exception as e:
-            logger.error(f"Pending invite email failed for {invite.email}: {e}")
 
-    return Response({"detail": "ok", "sent": sent})
+    if not pending_ids:
+        return Response({"detail": "ok", "sent": 0})
+
+    def _send_all():
+        for invite_id in pending_ids:
+            try:
+                send_invite_email(str(invite_id))
+                WorkspaceInvitation.objects.filter(pk=invite_id).update(email_sent=True)
+                logger.info(f"Pending invite email sent: {invite_id}")
+            except Exception as e:
+                logger.error(f"Pending invite email failed {invite_id}: {e}")
+
+    threading.Thread(target=_send_all, daemon=True).start()
+    return Response({"detail": "ok", "queued": len(pending_ids)})
 
 # Health check endpoint - doesn't require database
 def health_check(request):

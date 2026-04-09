@@ -22,6 +22,7 @@ class Workspace(models.Model):
     stripe_customer_id = models.CharField(max_length=100, blank=True)
     # Branding
     logo_s3_key        = models.CharField(max_length=500, blank=True)
+    logo_data          = models.TextField(blank=True)   # base64 data-URL, persists in DB
     primary_colour     = models.CharField(max_length=7, default="#1B3A6B")
     # Scheduling defaults
     workspace_timezone      = models.CharField(max_length=64, default="America/New_York")

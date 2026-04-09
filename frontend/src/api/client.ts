@@ -37,8 +37,13 @@ export const authApi = {
   team:        ()       => api.get('/api/auth/team/'),
 }
 export const settingsApi = {
-  getWorkspace:    ()       => api.get('/api/settings/workspace/'),
-  updateWorkspace: (d: any) => api.patch('/api/settings/workspace/', d),
+  getWorkspace:    ()          => api.get('/api/settings/workspace/'),
+  updateWorkspace: (d: any)    => api.patch('/api/settings/workspace/', d),
+  uploadLogo:      (file: File) => {
+    const fd = new FormData(); fd.append('logo', file)
+    return api.post('/api/settings/logo/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+  },
+  removeLogo:      ()          => api.delete('/api/settings/logo/'),
 }
 export const clientsApi = {
   list:       (p?: any)              => api.get('/api/clients/', { params: p }),

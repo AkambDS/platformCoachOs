@@ -34,23 +34,101 @@ function WorkspaceTab() {
     buffer_minutes:     workspace?.buffer_minutes      ?? 15,
   })
   const [saving, setSaving] = useState(false)
+  const [logoUploading, setLogoUploading] = useState(false)
+  const [logoData, setLogoData] = useState<string>((workspace as any)?.logo_data || '')
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
+  const isOwner = user?.role === 'business_owner'
 
   const handleSave = async () => {
     setSaving(true)
     try {
       const { data } = await settingsApi.updateWorkspace(form)
-      // Refresh user+workspace in store
       if (user) rehydrate(user, data)
       show('Workspace settings saved')
     } catch { show('Failed to save', 'error') }
     finally { setSaving(false) }
   }
 
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 2 * 1024 * 1024) { show('Logo must be under 2 MB', 'error'); return }
+    setLogoUploading(true)
+    try {
+      const { data } = await settingsApi.uploadLogo(file)
+      setLogoData(data.logo_data)
+      if (user && workspace) rehydrate(user, { ...workspace, logo_data: data.logo_data })
+      show('Logo updated')
+    } catch { show('Failed to upload logo', 'error') }
+    finally { setLogoUploading(false); e.target.value = '' }
+  }
+
+  const handleRemoveLogo = async () => {
+    setLogoUploading(true)
+    try {
+      await settingsApi.removeLogo()
+      setLogoData('')
+      if (user && workspace) rehydrate(user, { ...workspace, logo_data: '' })
+      show('Logo removed')
+    } catch { show('Failed to remove logo', 'error') }
+    finally { setLogoUploading(false) }
+  }
+
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div style={{ maxWidth: 600, display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+      {/* Logo */}
       <div className="card">
-        <div className="card-hdr"><Building2 size={14} /> Workspace</div>
+        <div className="card-hdr"><Building2 size={14} /> Workspace Logo</div>
+        <div className="card-body">
+          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
+            {/* Preview */}
+            <div style={{
+              width: 96, height: 64, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+              background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              overflow: 'hidden', flexShrink: 0,
+            }}>
+              {logoData
+                ? <img src={logoData} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, color: '#f7f4ef', letterSpacing: '.04em' }}>
+                    {form.name || 'Logo'}
+                  </span>
+              }
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 4 }}>
+                {logoData ? 'Logo uploaded' : 'No logo uploaded'}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>
+                PNG or SVG recommended. Max 2 MB. Appears in emails sent to clients.
+              </div>
+              {isOwner && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <label style={{
+                    display: 'inline-flex', alignItems: 'center', gap: 6,
+                    padding: '6px 14px', background: 'var(--ink)', color: 'var(--paper)',
+                    fontSize: 11, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
+                    borderRadius: 'var(--radius-sm)', cursor: logoUploading ? 'not-allowed' : 'pointer',
+                    opacity: logoUploading ? 0.6 : 1,
+                  }}>
+                    <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoChange} disabled={logoUploading} />
+                    {logoUploading ? 'Uploading…' : logoData ? 'Replace' : 'Upload Logo'}
+                  </label>
+                  {logoData && (
+                    <button className="btn btn-outline btn-sm" onClick={handleRemoveLogo} disabled={logoUploading}>
+                      Remove
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Settings */}
+      <div className="card">
+        <div className="card-hdr"><Building2 size={14} /> Workspace Settings</div>
         <div className="card-body">
           <div className="fgroup">
             <label className="flabel">Workspace Name</label>
@@ -93,6 +171,7 @@ function WorkspaceTab() {
           </div>
         </div>
       </div>
+
     </div>
   )
 }

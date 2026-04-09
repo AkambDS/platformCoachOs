@@ -1,6 +1,6 @@
 """CoachOS — Celery email tasks"""
 from celery import shared_task
-from django.core.mail import send_mail, EmailMessage
+from django.core.mail import send_mail, EmailMessage, EmailMultiAlternatives
 from django.conf import settings
 from datetime import timezone as dt_timezone
 import uuid
@@ -77,22 +77,40 @@ def _build_ics(activity, method: str = "REQUEST", cancelled: bool = False) -> by
 @shared_task(name="tasks.email.send_invite_email")
 def send_invite_email(invitation_id: str):
     from apps.accounts.models import WorkspaceInvitation
+    from tasks.email_html import build_invite_email
     try:
-        invite = WorkspaceInvitation.objects.select_related("workspace","invited_by").get(id=invitation_id)
-        from django.conf import settings as django_settings
-        frontend_url = getattr(django_settings, "FRONTEND_URL", "http://localhost:5173")
+        invite = WorkspaceInvitation.objects.select_related("workspace", "invited_by").get(id=invitation_id)
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
         accept_url = f"{frontend_url}/accept-invite?token={invite.token}"
-        send_mail(
-            subject=f"You're invited to join {invite.workspace.name} on CoachOS",
-            message=f"Hi,\n\n{invite.invited_by.full_name} has invited you to join "
-                    f"{invite.workspace.name} as {invite.get_role_display()}.\n\n"
-                    f"Accept here: {accept_url}\n\nThis link expires in 48 hours.",
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[invite.email],
+        workspace = invite.workspace
+        logo_data = getattr(workspace, "logo_data", "")
+
+        plain = (
+            f"Hi,\n\n"
+            f"{invite.invited_by.full_name} has invited you to join {workspace.name} "
+            f"as {invite.get_role_display()}.\n\n"
+            f"Accept here: {accept_url}\n\n"
+            f"This link expires in 48 hours."
         )
+        html = build_invite_email(
+            invited_by_name=invite.invited_by.full_name,
+            workspace_name=workspace.name,
+            role_display=invite.get_role_display(),
+            accept_url=accept_url,
+            logo_data=logo_data,
+        )
+        msg = EmailMultiAlternatives(
+            subject=f"You're invited to join {workspace.name} on CoachOS",
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[invite.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
         logger.info(f"Invite email sent to {invite.email}")
     except Exception as e:
         logger.error(f"send_invite_email failed: {e}")
+        raise
 
 
 @shared_task(name="tasks.email.send_invoice_email")
@@ -125,6 +143,7 @@ def _fmt_dt_human(dt) -> str:
 def send_activity_confirmation_email(activity_id: str):
     """Email the client confirming a newly scheduled activity, with a .ics calendar invite."""
     from apps.activities.models import Activity
+    from tasks.email_html import build_confirmation_email
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         client = activity.client
@@ -134,9 +153,11 @@ def send_activity_confirmation_email(activity_id: str):
 
         dt = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
+        workspace = activity.workspace
+        logo_data = getattr(workspace, "logo_data", "")
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
-        body = (
+        plain = (
             f"Hi {client.first_name},\n\n"
             f"Your {activity.activity_type} has been scheduled.\n\n"
             f"  What:   {activity.title}\n"
@@ -145,32 +166,39 @@ def send_activity_confirmation_email(activity_id: str):
             f"A calendar invite is attached — open it to add this session to your calendar.\n\n"
             f"You will also receive a reminder 24 hours and 1 hour before your session.\n\n"
             f"If you need to reschedule, please contact {coach_name} directly.\n\n"
-            f"— {activity.workspace.name}"
+            f"— {workspace.name}"
+        )
+        html = build_confirmation_email(
+            activity=activity,
+            workspace_name=workspace.name,
+            logo_data=logo_data,
+            coach_name=coach_name,
+            dt_human=dt,
         )
 
         ics_bytes = _build_ics(activity, method="REQUEST")
 
-        # Primary message: plain text body
-        msg = EmailMessage(
+        msg = EmailMultiAlternatives(
             subject=f"Confirmed: {activity.title} with {coach_name}",
-            body=body,
+            body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
         )
-        # Attach ics as file (opens Google Calendar on click/download)
+        msg.attach_alternative(html, "text/html")
+        # Attach ics as downloadable file
         msg.attach(
             filename="invite.ics",
             content=ics_bytes,
             mimetype="text/calendar; method=REQUEST; charset=utf-8",
         )
-        # Also embed ics as inline body part — triggers Gmail's native
-        # "Add to Calendar" button without needing to download
+        # Also embed ics inline — triggers Gmail "Add to Calendar" button
         from email.mime.text import MIMEText
         cal_part = MIMEText(ics_bytes.decode("utf-8"), "calendar", "utf-8")
         cal_part["Content-Disposition"] = "inline"
         cal_part.set_param("method", "REQUEST")
         msg.attach(cal_part)
         msg.send()
+
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(confirmation_sent_at=timezone.now())
         logger.info(f"Confirmation email (+.ics) sent to {client.email} for activity {activity_id}")
@@ -182,33 +210,47 @@ def send_activity_confirmation_email(activity_id: str):
 def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
     """Email the client a reminder before their session."""
     from apps.activities.models import Activity
+    from tasks.email_html import build_reminder_email
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         client = activity.client
         if not client.email:
             return
         if activity.status != "scheduled":
-            return  # don't remind for cancelled/missed activities
+            return
 
         dt = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
+        workspace = activity.workspace
+        logo_data = getattr(workspace, "logo_data", "")
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
         time_label = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
 
-        send_mail(
-            subject=f"Reminder: {activity.title} in {time_label}",
-            message=(
-                f"Hi {client.first_name},\n\n"
-                f"This is a reminder that you have a {activity.activity_type} in {time_label}.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  When:   {dt}{location_line}\n"
-                f"  Coach:  {coach_name}\n\n"
-                f"If you need to reschedule, please contact {coach_name} as soon as possible.\n\n"
-                f"— {activity.workspace.name}"
-            ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[client.email],
+        plain = (
+            f"Hi {client.first_name},\n\n"
+            f"This is a reminder that you have a {activity.activity_type} in {time_label}.\n\n"
+            f"  What:   {activity.title}\n"
+            f"  When:   {dt}{location_line}\n"
+            f"  Coach:  {coach_name}\n\n"
+            f"If you need to reschedule, please contact {coach_name} as soon as possible.\n\n"
+            f"— {workspace.name}"
         )
+        html = build_reminder_email(
+            activity=activity,
+            workspace_name=workspace.name,
+            logo_data=logo_data,
+            coach_name=coach_name,
+            dt_human=dt,
+            time_label=time_label,
+        )
+        msg = EmailMultiAlternatives(
+            subject=f"Reminder: {activity.title} in {time_label}",
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
