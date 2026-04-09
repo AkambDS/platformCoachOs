@@ -5,6 +5,7 @@ import { useAuthStore } from "./store/auth"
 import { authApi } from "./api/client"
 import Login     from "./pages/auth/Login"
 import Register  from "./pages/auth/Register"
+import AcceptInvite from "./pages/auth/AcceptInvite"
 import Dashboard from "./pages/coach/Dashboard"
 import Clients   from "./pages/coach/Clients"
 import ClientDetail from "./pages/coach/ClientDetail"
@@ -48,8 +49,9 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public */}
-          <Route path="/login"    element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/login"         element={<Login />} />
+          <Route path="/register"      element={<Register />} />
+          <Route path="/accept-invite" element={<AcceptInvite />} />
 
           {/* Coach App */}
           <Route path="/dashboard"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />

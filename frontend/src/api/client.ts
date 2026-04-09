@@ -33,6 +33,7 @@ export const authApi = {
   me:          ()       => api.get('/api/auth/me/'),
   updateMe:    (d: any) => api.patch('/api/auth/me/', d),
   invite:      (d: any) => api.post('/api/auth/invite/', d),
+  acceptInvite:(d: any) => api.post('/api/auth/accept-invite/', d),
   team:        ()       => api.get('/api/auth/team/'),
 }
 export const settingsApi = {

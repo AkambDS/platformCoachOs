@@ -191,8 +191,8 @@ export default function Pipeline() {
                     />
                   ))}
                   {stageDeals.length === 0 && (
-                    <div style={{ padding: '20px 0', textAlign: 'center', fontSize: 12, color: 'var(--border)', borderTop: '1px dashed var(--border)' }}>
-                      empty
+                    <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 12, color: 'var(--muted-faint)', borderTop: '1px dashed var(--border)', letterSpacing: '.06em', textTransform: 'uppercase', fontWeight: 500 }}>
+                      No deals
                     </div>
                   )}
                 </div>
