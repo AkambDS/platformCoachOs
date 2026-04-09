@@ -114,6 +114,7 @@ class WorkspaceInvitation(models.Model):
     role       = models.CharField(max_length=20, choices=User.Role.choices, default=User.Role.COACH)
     token      = models.UUIDField(default=uuid.uuid4, unique=True)
     accepted   = models.BooleanField(default=False)
+    email_sent = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
 

@@ -27,6 +27,43 @@ def run_reminders(request):
     call_command("dispatch_reminders", stdout=out)
     return Response({"detail": "ok", "output": out.getvalue()})
 
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def run_pending_invites(request):
+    """
+    POST /api/internal/invites/
+    Called by cron-job.org every 5 min. Retries any invite emails that failed on creation.
+    """
+    secret = request.headers.get("X-Cron-Secret", "")
+    expected = getattr(django_settings, "CRON_SECRET", "")
+    if not expected or secret != expected:
+        return Response({"detail": "Forbidden"}, status=403)
+
+    from apps.accounts.models import WorkspaceInvitation
+    from tasks.email import send_invite_email
+    from django.utils import timezone
+    import logging
+    logger = logging.getLogger(__name__)
+
+    pending = WorkspaceInvitation.objects.filter(
+        email_sent=False,
+        accepted=False,
+        expires_at__gt=timezone.now(),
+    )
+    sent = 0
+    for invite in pending:
+        try:
+            send_invite_email(str(invite.id))
+            invite.email_sent = True
+            invite.save(update_fields=["email_sent"])
+            sent += 1
+            logger.info(f"Pending invite email sent to {invite.email}")
+        except Exception as e:
+            logger.error(f"Pending invite email failed for {invite.email}: {e}")
+
+    return Response({"detail": "ok", "sent": sent})
+
 # Health check endpoint - doesn't require database
 def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
@@ -66,6 +103,7 @@ urlpatterns = [
     path("api/portal/",      include("apps.portal.urls")),
     path("api/stripe/",      include("djstripe.urls", namespace="djstripe")),
     path("api/internal/reminders/", run_reminders),
+    path("api/internal/invites/",   run_pending_invites),
     path("accounts/",        include("allauth.urls")),
     # OpenAPI
     path("api/schema/",            SpectacularAPIView.as_view(), name="schema"),

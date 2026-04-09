@@ -89,14 +89,16 @@ def invite_user(request):
         expires_at=timezone.now() + timedelta(hours=48),
     )
 
-    # Send invite email — call directly (synchronous) so it works without a Celery worker
+    # Send invite email synchronously (no Celery worker needed)
     from tasks.email import send_invite_email
     try:
         send_invite_email(str(invitation.id))
+        invitation.email_sent = True
+        invitation.save(update_fields=["email_sent"])
     except Exception as exc:
         import logging
         logging.getLogger(__name__).error("send_invite_email failed: %s", exc)
-        # Invitation record is already created; don't block the response
+        # email_sent stays False — cron job will retry
 
     return Response({"detail": "Invitation sent.", "token": str(invitation.token)},
                     status=status.HTTP_201_CREATED)
