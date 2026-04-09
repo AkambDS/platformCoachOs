@@ -169,7 +169,7 @@ export default function Pipeline() {
         action={<button className="btn btn-dark" onClick={() => setShowNew(true)}>+ New Deal</button>}
       />
 
-      <div style={{ overflowX: 'auto', padding: '20px 36px 36px' }}>
+      <div style={{ padding: '20px 28px 36px' }}>
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading…</div>
         ) : (

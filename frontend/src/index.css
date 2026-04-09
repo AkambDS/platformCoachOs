@@ -328,8 +328,8 @@ body {
 .empty p { font-size: 13px; }
 
 /* ── Pipeline ── */
-.pipeline-board { display: flex; gap: 16px; min-width: max-content; }
-.pcol { width: 240px; flex-shrink: 0; }
+.pipeline-board { display: flex; gap: 12px; width: 100%; }
+.pcol { flex: 1; min-width: 0; }
 .pcol-hdr {
   padding: 10px 14px; display: flex; justify-content: space-between; align-items: center;
   margin-bottom: 12px; border-bottom: 2px solid var(--border);
@@ -351,15 +351,16 @@ body {
 .pcol.win .pcol-count { background: rgba(61,110,74,.1); color: var(--success); border-color: rgba(61,110,74,.2); }
 .deal-card {
   background: var(--white); border: 1px solid var(--border);
-  padding: 15px 14px; margin-bottom: 10px; cursor: pointer; transition: all .18s;
+  padding: 13px 12px; margin-bottom: 8px; cursor: pointer; transition: all .18s;
   border-radius: var(--radius-sm);
   box-shadow: var(--shadow-sm);
+  word-break: break-word;
 }
 .deal-card:hover { border-color: var(--gold); transform: translateY(-2px); box-shadow: var(--shadow-md); }
 .deal-card.new { border-left: 3px solid var(--gold); }
 .deal-card.won { border-left: 3px solid var(--success); }
-.deal-name { font-size: 14px; font-weight: 600; margin-bottom: 3px; color: var(--ink); letter-spacing: -.01em; }
-.deal-co { font-size: 12px; color: var(--muted); margin-bottom: 11px; }
+.deal-name { font-size: 13.5px; font-weight: 600; margin-bottom: 3px; color: var(--ink); letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.deal-co { font-size: 12px; color: var(--muted); margin-bottom: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .deal-foot { display: flex; justify-content: space-between; align-items: center; }
 .deal-val { font-family: 'Cormorant Garamond', serif; font-size: 18px; font-weight: 600; color: var(--ink); }
 .deal-age { font-size: 11px; color: var(--muted-faint); font-weight: 500; }
