@@ -1,44 +1,12 @@
-"""CoachOS — email tasks using Resend HTTP API.
-
-Resend uses port 443 (HTTPS) so it works on Render free tier.
-SMTP (port 587) is blocked by Render — that's why Gmail/SES SMTP failed.
-"""
-import base64
+"""CoachOS — email tasks using Django mail (Gmail SMTP)."""
 import logging
 import re
 from celery import shared_task
+from django.core.mail import EmailMultiAlternatives, EmailMessage
 from django.conf import settings
 from datetime import timezone as dt_timezone
 
 logger = logging.getLogger(__name__)
-
-
-# ── Resend helper ──────────────────────────────────────────────────────────────
-
-def _send(*, to: str, subject: str, html: str, plain: str,
-          attachments: list | None = None) -> None:
-    """
-    Send via Resend HTTP API. Works on Render free tier.
-    Raises on failure so callers can log/retry.
-    """
-    import resend  # type: ignore
-    resend.api_key = getattr(settings, "RESEND_API_KEY", "")
-    if not resend.api_key:
-        raise RuntimeError("RESEND_API_KEY is not set")
-
-    from_addr = getattr(settings, "DEFAULT_FROM_EMAIL", "CoachOS <onboarding@resend.dev>")
-
-    params: dict = {
-        "from":    from_addr,
-        "to":      [to],
-        "subject": subject,
-        "html":    html,
-        "text":    plain,
-    }
-    if attachments:
-        params["attachments"] = attachments  # [{"filename": "x.ics", "content": <bytes>}]
-
-    resend.Emails.send(params)
 
 
 # ── ICS builder ────────────────────────────────────────────────────────────────
@@ -112,12 +80,14 @@ def send_invite_email(invitation_id: str):
             accept_url=accept_url,
             logo_data=getattr(workspace, "logo_data", ""),
         )
-        _send(
-            to=invite.email,
+        msg = EmailMultiAlternatives(
             subject=f"You're invited to join {workspace.name} on CoachOS",
-            html=html,
-            plain=plain,
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[invite.email],
         )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
         logger.info(f"Invite email sent to {invite.email}")
     except Exception as e:
         logger.error(f"send_invite_email failed: {e}")
@@ -156,16 +126,22 @@ def send_activity_confirmation_email(activity_id: str):
         )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
-        _send(
-            to=client.email,
+        msg = EmailMultiAlternatives(
             subject=f"Confirmed: {activity.title} with {coach_name}",
-            html=html,
-            plain=plain,
-            attachments=[{
-                "filename": "invite.ics",
-                "content":  list(ics_bytes),   # Resend expects list of ints
-            }],
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
         )
+        msg.attach_alternative(html, "text/html")
+        msg.attach("invite.ics", ics_bytes, "text/calendar")
+        # Inline ics — triggers Gmail "Add to Calendar" button
+        from email.mime.text import MIMEText
+        cal_part = MIMEText(ics_bytes.decode("utf-8"), "calendar", "utf-8")
+        cal_part["Content-Disposition"] = "inline"
+        cal_part.set_param("method", "REQUEST")
+        msg.attach(cal_part)
+        msg.send()
+
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(confirmation_sent_at=timezone.now())
         logger.info(f"Confirmation email sent to {client.email} for activity {activity_id}")
@@ -203,12 +179,14 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             dt_human=dt,
             time_label=time_label,
         )
-        _send(
-            to=client.email,
+        msg = EmailMultiAlternatives(
             subject=f"Reminder: {activity.title} in {time_label}",
-            html=html,
-            plain=plain,
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
         )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
@@ -232,16 +210,15 @@ def send_activity_cancellation_email(activity_id: str):
             f"  What:   {activity.title}\n  Was:    {dt}\n  Coach:  {coach_name}\n\n"
             f"Please contact {coach_name} to reschedule.\n\n— {activity.workspace.name}"
         )
-        _send(
-            to=client.email,
+        msg = EmailMessage(
             subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %d').replace(' 0', ' ')}",
-            html=f"<pre style='font-family:sans-serif'>{plain}</pre>",
-            plain=plain,
-            attachments=[{
-                "filename": "cancel.ics",
-                "content":  list(ics_bytes),
-            }],
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
         )
+        msg.attach("cancel.ics", ics_bytes, "text/calendar")
+        msg.send()
+
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(cancellation_sent_at=timezone.now())
         logger.info(f"Cancellation email sent to {client.email} for activity {activity_id}")
@@ -254,18 +231,18 @@ def send_invoice_email(invoice_id: str):
     from apps.invoicing.models import Invoice
     try:
         invoice = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
-        plain = (
-            f"Hi {invoice.client.first_name},\n\n"
-            f"Please find attached invoice #{invoice.number} for ${invoice.total}.\n\n"
-            f"Due: {invoice.due_date}\n\n"
-            f"{'Pay online: ' + invoice.stripe_payment_link if invoice.stripe_payment_link else ''}"
-        )
-        _send(
-            to=invoice.client.email,
+        msg = EmailMessage(
             subject=f"Invoice #{invoice.number} from {invoice.workspace.name}",
-            html=f"<pre style='font-family:sans-serif'>{plain}</pre>",
-            plain=plain,
+            body=(
+                f"Hi {invoice.client.first_name},\n\n"
+                f"Please find attached invoice #{invoice.number} for ${invoice.total}.\n\n"
+                f"Due: {invoice.due_date}\n\n"
+                f"{'Pay online: ' + invoice.stripe_payment_link if invoice.stripe_payment_link else ''}"
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[invoice.client.email],
         )
+        msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")
     except Exception as e:
         logger.error(f"send_invoice_email failed: {e}")
@@ -276,15 +253,15 @@ def send_payment_failed_email(invoice_id: str):
     from apps.invoicing.models import Invoice
     try:
         invoice = Invoice.objects.select_related("client", "coach").get(id=invoice_id)
-        plain = (
-            f"Payment failed for invoice #{invoice.number} (${invoice.total}) "
-            f"for {invoice.client.full_name}."
-        )
-        _send(
-            to=invoice.coach.email,
+        msg = EmailMessage(
             subject=f"Payment failed — Invoice #{invoice.number}",
-            html=f"<p>{plain}</p>",
-            plain=plain,
+            body=(
+                f"Payment failed for invoice #{invoice.number} (${invoice.total}) "
+                f"for {invoice.client.full_name}."
+            ),
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[invoice.coach.email],
         )
+        msg.send()
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
