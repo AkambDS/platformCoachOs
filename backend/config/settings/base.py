@@ -190,6 +190,8 @@ SOCIALACCOUNT_PROVIDERS = {
 }
 
 # ── Email ─────────────────────────────────────────────────────────────────
+# Default to console backend in dev — overridden to SMTP in production.py
+EMAIL_BACKEND      = "django.core.mail.backends.console.EmailBackend"
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="CoachOS <noreply@coachos.app>")
 
 # ── Celery ────────────────────────────────────────────────────────────────

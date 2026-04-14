@@ -40,6 +40,12 @@ EMAIL_HOST_USER     = env("EMAIL_HOST_USER",     default="")
 EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 EMAIL_USE_TLS       = True
 
+if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
+    import logging
+    logging.getLogger(__name__).critical(
+        "EMAIL_HOST_USER or EMAIL_HOST_PASSWORD is not set — emails will fail silently!"
+    )
+
 # ── File Storage: Azure Blob Storage (S3-compat) or AWS S3 ────────────────
 # Azure Blob:
 # DEFAULT_FILE_STORAGE = "storages.backends.azure_storage.AzureStorage"
