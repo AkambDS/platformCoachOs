@@ -156,8 +156,9 @@ SPECTACULAR_SETTINGS = {
     "SERVE_INCLUDE_SCHEMA": False,
 }
 
-FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
-CRON_SECRET  = env("CRON_SECRET",  default="")
+FRONTEND_URL   = env("FRONTEND_URL",   default="http://localhost:5173")
+CRON_SECRET    = env("CRON_SECRET",    default="")
+RESEND_API_KEY = env("RESEND_API_KEY", default="")
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(
