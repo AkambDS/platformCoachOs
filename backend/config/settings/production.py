@@ -32,19 +32,11 @@ CSRF_TRUSTED_ORIGINS = [
     "https://*.onrender.com",
 ]
 
-# ── Email: Gmail SMTP ─────────────────────────────────────────────────────
-EMAIL_BACKEND       = "django.core.mail.backends.smtp.EmailBackend"
-EMAIL_HOST          = "smtp.gmail.com"
-EMAIL_PORT          = 587
-EMAIL_HOST_USER     = env("EMAIL_HOST_USER",     default="")
-EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
-EMAIL_USE_TLS       = True
-
-if not EMAIL_HOST_USER or not EMAIL_HOST_PASSWORD:
-    import logging
-    logging.getLogger(__name__).critical(
-        "EMAIL_HOST_USER or EMAIL_HOST_PASSWORD is not set — emails will fail silently!"
-    )
+# ── Email: Brevo HTTP API (SMTP port 587 blocked on Render free tier) ─────
+EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
+ANYMAIL = {
+    "BREVO_API_KEY": env("BREVO_API_KEY", default=""),
+}
 
 # ── File Storage: Azure Blob Storage (S3-compat) or AWS S3 ────────────────
 # Azure Blob:
