@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { reportsApi, clientsApi, activitiesApi, pipelineApi } from "../../api/client"
+import { reportsApi, invoicesApi, clientsApi, activitiesApi, pipelineApi } from "../../api/client"
 import { useAuthStore } from "../../store/auth"
 import AppShell from "../../components/layout/AppShell"
 import { PageHeader, StatusBadge } from "../../components/ui"
@@ -19,7 +19,9 @@ export default function Dashboard() {
   const { data: clients }     = useQuery({ queryKey: ["clients-summary"], queryFn: () => clientsApi.list({ page_size: 1 }).then(r => r.data) })
   const { data: upcoming }    = useQuery({ queryKey: ["activities-upcoming"], queryFn: () => activitiesApi.list({ start: today, status: "scheduled", page_size: 5 }).then(r => r.data) })
   const { data: dealsData }   = useQuery({ queryKey: ["pipeline-summary"], queryFn: () => pipelineApi.deals({ page_size: 100 }).then(r => r.data) })
+  const { data: invoiceData } = useQuery({ queryKey: ["invoices-summary"], queryFn: () => invoicesApi.list({ page_size: 200 }).then(r => r.data) })
 
+  const allInvoices: any[] = invoiceData?.results || invoiceData || []
   const outstandingList: any[] = outstanding || []
   const upcomingList: any[] = upcoming?.results || upcoming || []
   const deals: any[] = dealsData?.results || dealsData || []
@@ -48,7 +50,7 @@ export default function Dashboard() {
             { lbl: "Active Clients",    val: clients?.count          ?? "—", link: "/clients"  },
             { lbl: "Pipeline Value",    val: `$${pipelineValue.toLocaleString()}`, link: "/pipeline" },
             { lbl: "Upcoming Sessions", val: upcomingList.length     ?? "—", link: "/calendar" },
-            { lbl: "Outstanding",       val: outstandingList.length  ?? "—", link: "/invoices" },
+            { lbl: "Outstanding",       val: allInvoices.filter((i: any) => ["sent","overdue","partially_paid"].includes(i.status)).length, link: "/invoices" },
           ].map(s => (
             <div key={s.lbl} className="stat-card" onClick={() => navigate(s.link)} style={{ cursor: "pointer" }}>
               <div className="stat-val">{s.val}</div>

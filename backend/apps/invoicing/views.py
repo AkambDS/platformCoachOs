@@ -14,6 +14,15 @@ from apps.accounts.permissions import IsCoachOrAbove
 class InvoiceViewSet(viewsets.ModelViewSet):
     permission_classes = [IsCoachOrAbove]
 
+    def perform_create(self, serializer):
+        workspace = self.request.user.workspace
+        count     = Invoice.objects.filter(workspace=workspace).count() + 1
+        serializer.save(
+            workspace=workspace,
+            coach=self.request.user,
+            number=f"INV-{count:04d}",
+        )
+
     def get_queryset(self):
         qs = Invoice.objects.filter(workspace=self.request.user.workspace) \
                             .select_related("client", "coach") \
@@ -32,7 +41,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if invoice.status not in (Invoice.Status.DRAFT, Invoice.Status.SENT):
             return Response({"detail": "Can only send Draft or Sent invoices."}, status=400)
         from tasks.email import send_invoice_email
-        send_invoice_email.delay(str(invoice.id))
+        send_invoice_email(str(invoice.id))
         invoice.status  = Invoice.Status.SENT
         invoice.sent_at = timezone.now()
         invoice.save()
@@ -90,7 +99,7 @@ def on_payment_failed(sender, event, **kwargs):
             invoice.status = Invoice.Status.OVERDUE
             invoice.save()
         from tasks.email import send_payment_failed_email
-        send_payment_failed_email.delay(str(invoice.id))
+        send_payment_failed_email(str(invoice.id))
     except Invoice.DoesNotExist:
         pass
 

@@ -47,7 +47,14 @@ function NewInvoiceModal({ onClose, onSaved }: any) {
       qc.invalidateQueries({ queryKey: ['invoices'] })
       onSaved()
     } catch (e: any) {
-      setError(e.response?.data?.detail || 'Failed to create invoice')
+      const d = e.response?.data
+      if (!d) { setError('Network error — please try again'); return }
+      // DRF returns field errors as {field: [msg, ...]} or {detail: msg}
+      if (d.detail) { setError(d.detail); return }
+      const fieldErrors = Object.entries(d)
+        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`)
+        .join('; ')
+      setError(fieldErrors || 'Failed to create invoice')
     } finally { setSaving(false) }
   }
 

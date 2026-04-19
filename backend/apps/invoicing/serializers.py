@@ -37,14 +37,6 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
-        request    = self.context["request"]
-        # Auto-generate invoice number
-        import uuid
-        workspace = request.user.workspace
-        count     = Invoice.objects.filter(workspace=workspace).count() + 1
-        validated_data["number"]    = f"INV-{count:04d}"
-        validated_data["workspace"] = workspace
-        validated_data.setdefault("coach", request.user)
         invoice = super().create(validated_data)
         for item in items_data:
             InvoiceItem.objects.create(invoice=invoice, **item)
