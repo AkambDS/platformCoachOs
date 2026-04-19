@@ -2,6 +2,7 @@ import base64
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
@@ -81,6 +82,33 @@ def logo_upload(request):
     workspace.logo_data = data_url
     workspace.save(update_fields=["logo_data"])
     return Response({"logo_data": data_url})
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_branding(request):
+    """
+    GET /api/settings/public-branding/ — no auth required.
+    Returns the first workspace's name and logo URL for the login/register pages.
+    """
+    try:
+        workspace = Workspace.objects.filter(is_active=True).order_by("created_at").first()
+        if not workspace:
+            return Response({"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"})
+        from django.conf import settings as dj_settings
+        backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
+        if not backend_base:
+            allowed = getattr(dj_settings, "ALLOWED_HOSTS", [])
+            host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
+            backend_base = f"https://{host}" if host else "http://localhost:8000"
+        logo_url = f"{backend_base}/api/settings/logo/{workspace.id}/" if workspace.logo_data else ""
+        return Response({
+            "name": workspace.name,
+            "logo_url": logo_url,
+            "primary_colour": workspace.primary_colour or "#1B3A6B",
+        })
+    except Exception:
+        return Response({"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"})
 
 
 def serve_workspace_logo(request, workspace_id):

@@ -7,4 +7,5 @@ urlpatterns = [
     path("workspace/",             views.WorkspaceSettingsView.as_view(),  name="settings-workspace"),
     path("logo/",                  views.logo_upload,                      name="settings-logo"),
     path("logo/<uuid:workspace_id>/", views.serve_workspace_logo,          name="settings-logo-public"),
+    path("public-branding/",       views.public_branding,                  name="settings-public-branding"),
 ]

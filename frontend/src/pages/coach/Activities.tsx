@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi } from '../../api/client'
@@ -217,20 +217,75 @@ function NotificationStatus({ activity }: { activity: any }) {
   )
 }
 
+// ── Email Preview Modal ────────────────────────────────────────────────────────
+function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }: any) {
+  const [type, setType] = useState<string>(defaultType)
+  const [html, setHtml] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+
+  const loadPreview = async (t: string) => {
+    setLoading(true)
+    try {
+      const { data } = await activitiesApi.emailPreview(activityId, t)
+      setHtml(data.html || '')
+    } catch { setHtml('') }
+    finally { setLoading(false) }
+  }
+
+  useEffect(() => { loadPreview(type) }, [activityId, type])
+
+  const EMAIL_TYPES = [
+    { value: 'confirmation', label: 'Confirmation' },
+    { value: 'reminder',     label: 'Reminder (24h)' },
+    { value: 'cancellation', label: 'Cancellation' },
+  ]
+
+  return (
+    <Modal title="Email Preview" onClose={onClose} size="lg"
+      footer={<button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>}>
+      <div style={{ display: 'flex', gap: 6, marginBottom: 16 }}>
+        {EMAIL_TYPES.map(t => (
+          <button key={t.value}
+            className={`filter-pill${type === t.value ? ' active' : ''}`}
+            onClick={() => setType(t.value)}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {loading ? (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading preview…</div>
+      ) : html ? (
+        <iframe srcDoc={html} title="Email Preview"
+          style={{ width: '100%', height: 580, border: '1px solid var(--border)', borderRadius: 4 }}
+          sandbox="allow-same-origin" />
+      ) : (
+        <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Preview not available</div>
+      )}
+    </Modal>
+  )
+}
+
 // ── Activity Detail Side Panel ─────────────────────────────────────────────────
 function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
   const canAct = activity.status === 'scheduled'
+  const [showEmailPreview, setShowEmailPreview] = useState(false)
+
   return (
+    <>
     <Modal
       title={activity.title}
       onClose={onClose}
       footer={
-        <div style={{ display: 'flex', gap: 8, width: '100%' }}>
+        <div style={{ display: 'flex', gap: 8, width: '100%', flexWrap: 'wrap' }}>
           {canAct && (
             <button className="btn btn-sm btn-outline" onClick={() => onEdit(activity)} style={{ marginRight: 'auto' }}>
               Edit
             </button>
           )}
+          <button className="btn btn-outline btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+            onClick={() => setShowEmailPreview(true)}>
+            <Mail size={12} /> Emails
+          </button>
           <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
           {canAct && (
             <button
@@ -262,6 +317,10 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
       )}
       <NotificationStatus activity={activity} />
     </Modal>
+    {showEmailPreview && (
+      <EmailPreviewModal activityId={activity.id} onClose={() => setShowEmailPreview(false)} />
+    )}
+    </>
   )
 }
 

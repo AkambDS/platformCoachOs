@@ -305,6 +305,9 @@ function TeamTab() {
   const [inviteForm, setInviteForm] = useState({ email: '', role: 'coach' })
   const [inviting, setInviting] = useState(false)
   const [inviteError, setInviteError] = useState('')
+  const [showEmailPreview, setShowEmailPreview] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
 
   const { data, isLoading } = useQuery({
     queryKey: ['team'],
@@ -399,14 +402,15 @@ function TeamTab() {
       {showInvite && (
         <Modal
           title="Invite Team Member"
-          onClose={() => { setShowInvite(false); setInviteError('') }}
+          onClose={() => { setShowInvite(false); setInviteError(''); setShowEmailPreview(false) }}
+          size="lg"
           footer={
-            <>
+            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
               <button className="btn btn-outline btn-sm" onClick={() => setShowInvite(false)}>Cancel</button>
               <button className="btn btn-dark btn-sm" onClick={handleInvite} disabled={inviting}>
                 {inviting ? 'Sending…' : 'Send Invite'}
               </button>
-            </>
+            </div>
           }
         >
           {inviteError && (
@@ -414,27 +418,64 @@ function TeamTab() {
               {inviteError}
             </div>
           )}
-          <div className="fgroup">
-            <label className="flabel">Email Address</label>
-            <input
-              className="finput"
-              type="email"
-              value={inviteForm.email}
-              onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
-              placeholder="colleague@example.com"
-              autoFocus
-            />
+
+          {/* Tabs: Form / Email Preview */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
+            {(['form', 'email'] as const).map(t => (
+              <button key={t} onClick={() => {
+                setShowEmailPreview(t === 'email')
+                if (t === 'email' && !previewLoading) {
+                  setPreviewLoading(true)
+                  authApi.inviteEmailPreview(inviteForm.email || 'colleague@example.com', inviteForm.role)
+                    .then(r => setPreviewHtml(r.data.html || ''))
+                    .catch(() => setPreviewHtml(''))
+                    .finally(() => setPreviewLoading(false))
+                }
+              }}
+                style={{ padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer',
+                         borderBottom: (t === 'email' ? showEmailPreview : !showEmailPreview) ? '2px solid var(--ink)' : '2px solid transparent',
+                         fontWeight: (t === 'email' ? showEmailPreview : !showEmailPreview) ? 600 : 400,
+                         fontSize: 13, color: (t === 'email' ? showEmailPreview : !showEmailPreview) ? 'var(--ink)' : 'var(--muted)' }}>
+                {t === 'email' ? 'Email Preview' : 'Invite Details'}
+              </button>
+            ))}
           </div>
-          <div className="fgroup">
-            <label className="flabel">Role</label>
-            <select className="fselect" value={inviteForm.role} onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}>
-              <option value="coach">Coach — manage clients &amp; sessions</option>
-              <option value="assistant">Assistant — scheduling &amp; view only</option>
-            </select>
-          </div>
-          <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--muted)' }}>
-            They will receive an email with a link to set their password and join your workspace.
-          </div>
+
+          {!showEmailPreview ? (
+            <>
+              <div className="fgroup">
+                <label className="flabel">Email Address</label>
+                <input
+                  className="finput"
+                  type="email"
+                  value={inviteForm.email}
+                  onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
+                  placeholder="colleague@example.com"
+                  autoFocus
+                />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Role</label>
+                <select className="fselect" value={inviteForm.role} onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}>
+                  <option value="coach">Coach — manage clients &amp; sessions</option>
+                  <option value="assistant">Assistant — scheduling &amp; view only</option>
+                </select>
+              </div>
+              <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--muted)' }}>
+                They will receive an email with a link to set their password and join your workspace.
+              </div>
+            </>
+          ) : (
+            previewLoading ? (
+              <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading preview…</div>
+            ) : previewHtml ? (
+              <iframe srcDoc={previewHtml} title="Invite Email Preview"
+                style={{ width: '100%', height: 560, border: '1px solid var(--border)', borderRadius: 4 }}
+                sandbox="allow-same-origin" />
+            ) : (
+              <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Preview not available</div>
+            )
+          )}
         </Modal>
       )}
     </div>

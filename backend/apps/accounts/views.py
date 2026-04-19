@@ -104,6 +104,37 @@ def invite_user(request):
                     status=status.HTTP_201_CREATED)
 
 
+@api_view(["GET"])
+@permission_classes([IsBusinessOwner])
+def invite_email_preview(request):
+    """
+    GET /api/auth/invite-email-preview/?email=x&role=coach
+    Returns HTML preview of the invite email.
+    """
+    from tasks.email import _logo_url, _owner_info
+    from tasks.email_html import build_invite_email
+    from django.conf import settings as dj_settings
+
+    email = request.query_params.get("email", "colleague@example.com")
+    role  = request.query_params.get("role", "coach")
+    workspace = request.user.workspace
+
+    role_labels = {"business_owner": "Business Owner", "coach": "Coach", "assistant": "Assistant"}
+    frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
+    owner_email, owner_name = _owner_info(workspace)
+
+    html = build_invite_email(
+        invited_by_name=request.user.full_name,
+        workspace_name=workspace.name,
+        role_display=role_labels.get(role, role.capitalize()),
+        accept_url=f"{frontend_url}/accept-invite?token=preview-token",
+        logo_url=_logo_url(workspace),
+        invited_email=email,
+        owner_email=owner_email,
+    )
+    return Response({"html": html})
+
+
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def accept_invite(request):

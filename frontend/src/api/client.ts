@@ -27,14 +27,16 @@ api.interceptors.response.use((res) => res, async (error) => {
 })
 
 export const authApi = {
-  login:       (d: any) => api.post('/api/auth/login/', d),
-  register:    (d: any) => api.post('/api/auth/register/', d),
-  logout:      ()       => api.post('/api/auth/logout/'),
-  me:          ()       => api.get('/api/auth/me/'),
-  updateMe:    (d: any) => api.patch('/api/auth/me/', d),
-  invite:      (d: any) => api.post('/api/auth/invite/', d),
-  acceptInvite:(d: any) => api.post('/api/auth/accept-invite/', d),
-  team:        ()       => api.get('/api/auth/team/'),
+  login:              (d: any) => api.post('/api/auth/login/', d),
+  register:           (d: any) => api.post('/api/auth/register/', d),
+  logout:             ()       => api.post('/api/auth/logout/'),
+  me:                 ()       => api.get('/api/auth/me/'),
+  updateMe:           (d: any) => api.patch('/api/auth/me/', d),
+  invite:             (d: any) => api.post('/api/auth/invite/', d),
+  inviteEmailPreview: (email: string, role: string) =>
+    api.get('/api/auth/invite-email-preview/', { params: { email, role } }),
+  acceptInvite:       (d: any) => api.post('/api/auth/accept-invite/', d),
+  team:               ()       => api.get('/api/auth/team/'),
 }
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),
@@ -56,13 +58,15 @@ export const clientsApi = {
   createGoal: (id: string, d: any)   => api.post(`/api/clients/${id}/goals/`, d),
 }
 export const activitiesApi = {
-  list:       (p?: any)            => api.get('/api/activities/', { params: p }),
-  create:     (d: any)             => api.post('/api/activities/', d),
-  update:     (id: string, d: any) => api.put(`/api/activities/${id}/`, d),
-  patch:      (id: string, d: any) => api.patch(`/api/activities/${id}/`, d),
-  delete:     (id: string)         => api.delete(`/api/activities/${id}/`),
-  markMissed: (id: string)         => api.post(`/api/activities/${id}/missed/`),
-  cancel:     (id: string)         => api.post(`/api/activities/${id}/cancel/`),
+  list:         (p?: any)            => api.get('/api/activities/', { params: p }),
+  create:       (d: any)             => api.post('/api/activities/', d),
+  update:       (id: string, d: any) => api.put(`/api/activities/${id}/`, d),
+  patch:        (id: string, d: any) => api.patch(`/api/activities/${id}/`, d),
+  delete:       (id: string)         => api.delete(`/api/activities/${id}/`),
+  markMissed:   (id: string)         => api.post(`/api/activities/${id}/missed/`),
+  cancel:       (id: string)         => api.post(`/api/activities/${id}/cancel/`),
+  emailPreview: (id: string, type: string) =>
+    api.get(`/api/activities/${id}/email-preview/`, { params: { type } }),
 }
 export const invoicesApi = {
   list:          (p?: any)            => api.get('/api/invoices/', { params: p }),

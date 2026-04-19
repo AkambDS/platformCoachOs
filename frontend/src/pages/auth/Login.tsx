@@ -1,15 +1,25 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
+
+interface PublicBranding { name: string; logo_url: string; primary_colour: string }
 
 export default function Login() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+  const [branding, setBranding] = useState<PublicBranding | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    fetch('/api/settings/public-branding/')
+      .then(r => r.json())
+      .then(d => setBranding(d))
+      .catch(() => {})
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -27,19 +37,32 @@ export default function Login() {
     <div className="auth-split">
       {/* Brand Panel */}
       <div className="auth-brand">
-        <div className="auth-brand-logo">Coach<span>OS</span></div>
+        {/* Logo */}
+        <div className="auth-brand-logo">
+          {branding?.logo_url ? (
+            <img src={branding.logo_url} alt={branding.name}
+              style={{ maxHeight: 52, maxWidth: 180, objectFit: 'contain', display: 'block' }} />
+          ) : (
+            <>Coach<span>OS</span></>
+          )}
+        </div>
+
         <div className="auth-brand-content">
           <div className="auth-brand-headline">
-            Your coaching<br />practice, <em>elevated</em>
+            {branding?.name ? (
+              <>{branding.name}<br /><em>coaching platform</em></>
+            ) : (
+              <>Your coaching<br />practice, <em>elevated</em></>
+            )}
           </div>
           <p className="auth-brand-sub">
             Everything you need to run a world-class coaching business — clients, sessions, pipeline, and revenue in one place.
           </p>
           <ul className="auth-brand-features">
             <li>Client management &amp; progress tracking</li>
-            <li>Session scheduling &amp; activity logs</li>
+            <li>Session scheduling &amp; automated reminders</li>
             <li>Pipeline &amp; deal flow management</li>
-            <li>Invoicing &amp; revenue reports</li>
+            <li>Professional invoicing &amp; revenue reports</li>
           </ul>
         </div>
       </div>
@@ -80,9 +103,14 @@ export default function Login() {
             </button>
           </form>
 
-          <p className="auth-footer">
-            No account?{' '}
-            <a href="/register">Create your workspace</a>
+          <p className="auth-footer" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 24 }}>
+            Coaches &amp; assistants — use the invite link sent to your email.
+          </p>
+          <p className="auth-footer" style={{ fontSize: 11, marginTop: 8 }}>
+            Business owner?{' '}
+            <a href="/register" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>
+              Create your workspace
+            </a>
           </p>
         </div>
       </div>
