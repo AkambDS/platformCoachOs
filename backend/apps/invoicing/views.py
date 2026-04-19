@@ -8,11 +8,11 @@ from djstripe.signals import WEBHOOK_SIGNALS
 
 from .models import Invoice, Payment
 from .serializers import InvoiceListSerializer, InvoiceDetailSerializer, PaymentSerializer
-from apps.accounts.permissions import IsAssistantOrAbove
+from apps.accounts.permissions import IsCoachOrAbove
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsAssistantOrAbove]
+    permission_classes = [IsCoachOrAbove]
 
     def get_queryset(self):
         qs = Invoice.objects.filter(workspace=self.request.user.workspace) \

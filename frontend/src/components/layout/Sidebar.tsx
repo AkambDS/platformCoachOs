@@ -14,7 +14,11 @@ import {
   LogOut,
 } from 'lucide-react'
 
-const NAV = [
+type NavItem =
+  | { section: string; roles?: string[] }
+  | { to: string; Icon: React.ElementType; label: string; roles?: string[] }
+
+const NAV: NavItem[] = [
   { section: 'Workspace' },
   { to: '/dashboard',  Icon: LayoutDashboard, label: 'Dashboard'  },
   { to: '/clients',    Icon: Users,            label: 'Clients'    },
@@ -22,11 +26,11 @@ const NAV = [
   { section: 'Schedule' },
   { to: '/calendar',   Icon: CalendarDays,     label: 'Calendar'   },
   { to: '/activities', Icon: CheckSquare,      label: 'Activities' },
-  { section: 'Finance' },
-  { to: '/invoices',   Icon: Receipt,          label: 'Invoices'   },
+  { section: 'Finance', roles: ['business_owner', 'coach'] },
+  { to: '/invoices',   Icon: Receipt,          label: 'Invoices',  roles: ['business_owner', 'coach'] },
   { section: 'Content' },
   { to: '/library',    Icon: BookOpen,         label: 'Library'    },
-  { to: '/reports',    Icon: BarChart3,        label: 'Reports'    },
+  { to: '/reports',    Icon: BarChart3,        label: 'Reports',   roles: ['business_owner', 'coach'] },
   { section: 'System' },
   { to: '/settings',   Icon: Settings,         label: 'Settings'   },
 ]
@@ -52,8 +56,11 @@ export default function Sidebar() {
       <div className="nav-section" style={{ flex: 1, overflowY: 'auto' }}>
         {NAV.map((item, i) => {
           if ('section' in item) {
+            // Hide section header if user doesn't have access to any item in it
+            if (item.roles && !item.roles.includes(user?.role || '')) return null
             return <div key={i} className="nav-label">{item.section}</div>
           }
+          if (item.roles && !item.roles.includes(user?.role || '')) return null
           const { Icon } = item
           return (
             <NavLink

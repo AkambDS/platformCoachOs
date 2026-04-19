@@ -25,6 +25,14 @@ function PrivateRoute({ children }: { children: JSX.Element }) {
   return isAuthenticated ? children : <Navigate to="/login" replace />
 }
 
+/** Blocks assistant role from pages they can't access */
+function RoleRoute({ children, allow }: { children: JSX.Element; allow: string[] }) {
+  const user = useAuthStore((s) => s.user)
+  if (!user) return <Navigate to="/login" replace />
+  if (!allow.includes(user.role)) return <Navigate to="/dashboard" replace />
+  return children
+}
+
 const Stub = ({ name }: { name: string }) => (
   <div style={{ padding: "2rem", fontFamily: "'DM Sans', sans-serif" }}>
     <h2 style={{ color: "#1B3A6B", fontFamily: "'Cormorant Garamond', serif", fontWeight: 300 }}>{name}</h2>
@@ -60,9 +68,9 @@ export default function App() {
           <Route path="/pipeline"      element={<PrivateRoute><Pipeline /></PrivateRoute>} />
           <Route path="/calendar"      element={<PrivateRoute><Calendar /></PrivateRoute>} />
           <Route path="/activities"    element={<PrivateRoute><Activities /></PrivateRoute>} />
-          <Route path="/invoices"      element={<PrivateRoute><Invoices /></PrivateRoute>} />
-          <Route path="/invoices/:id"  element={<PrivateRoute><Invoices /></PrivateRoute>} />
-          <Route path="/reports"       element={<PrivateRoute><Reports /></PrivateRoute>} />
+          <Route path="/invoices"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />
+          <Route path="/invoices/:id"  element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />
+          <Route path="/reports"       element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Reports /></RoleRoute></PrivateRoute>} />
           <Route path="/library"       element={<PrivateRoute><Stub name="Library" /></PrivateRoute>} />
           <Route path="/settings"      element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"        element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />
