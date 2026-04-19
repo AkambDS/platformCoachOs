@@ -126,7 +126,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_data: str,
 
 
 def build_invite_email(invited_by_name: str, workspace_name: str, role_display: str,
-                       accept_url: str, logo_data: str) -> str:
+                       accept_url: str, logo_data: str, invited_email: str = "") -> str:
     role_color = {
         "Coach": "#2d6a9f",
         "Assistant": "#4a7c59",
@@ -179,7 +179,8 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
       <div style="padding:14px 16px;background:#f7f4ef;border-radius:4px;">
         <p style="margin:0;font-size:12px;color:#9c948c;line-height:1.6;">
           ⏱ &nbsp;This invitation expires in <strong style="color:#6e6560;">48 hours</strong>.<br/>
-          🔒 &nbsp;You'll set your password when you accept.
+          🔒 &nbsp;You'll set your password when you accept.<br/>
+          {'📧 &nbsp;Your login email will be: <strong style="color:#6e6560;">' + invited_email + '</strong>' if invited_email else ''}
         </p>
       </div>
     """

@@ -79,6 +79,7 @@ def send_invite_email(invitation_id: str):
             role_display=invite.get_role_display(),
             accept_url=accept_url,
             logo_data=getattr(workspace, "logo_data", ""),
+            invited_email=invite.email,
         )
         msg = EmailMultiAlternatives(
             subject=f"You're invited to join {workspace.name} on CoachOS",
