@@ -26,7 +26,7 @@ class Invoice(WorkspaceModel):
     coach             = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     invoice_type      = models.CharField(max_length=20, choices=InvoiceType.choices, default=InvoiceType.ONE_TIME)
     status            = models.CharField(max_length=20, choices=Status.choices, default=Status.DRAFT)
-    number            = models.CharField(max_length=50, unique=True)
+    number            = models.CharField(max_length=50)
     currency          = models.CharField(max_length=3, default="USD")
     subtotal          = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     discount_type     = models.CharField(max_length=10, default="percent",
@@ -51,6 +51,7 @@ class Invoice(WorkspaceModel):
     class Meta:
         db_table = "invoicing_invoice"
         ordering = ["-created_at"]
+        unique_together = [("workspace", "number")]
 
     def __str__(self):
         return f"Invoice #{self.number} — {self.client}"
