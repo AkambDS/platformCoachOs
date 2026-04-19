@@ -7,7 +7,7 @@ export default function AcceptInvite() {
   const [searchParams] = useSearchParams()
   const token = searchParams.get("token") || ""
   const navigate = useNavigate()
-  const { login, rehydrate } = useAuthStore()
+  const { login } = useAuthStore()
 
   const [form, setForm] = useState({ full_name: "", password: "", confirm: "" })
   const [error, setError] = useState("")
@@ -34,8 +34,14 @@ export default function AcceptInvite() {
       navigate("/dashboard")
     } catch (err: any) {
       const d = err.response?.data
-      const msg = d?.detail || d?.token?.[0] || d?.password?.[0] || d?.full_name?.[0]
-               || d?.non_field_errors?.[0] || "Failed to accept invite. The link may be expired."
+      if (!d) { setError("Network error — please try again."); return }
+      const msg = d?.detail
+               || d?.token?.[0]
+               || d?.password?.[0]
+               || d?.full_name?.[0]
+               || d?.non_field_errors?.[0]
+               || (typeof d === 'string' ? d : null)
+               || "Failed to accept invite. The link may have expired — ask the workspace owner to resend it."
       setError(msg)
     } finally { setLoading(false) }
   }

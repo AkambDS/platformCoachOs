@@ -125,15 +125,29 @@ def accept_invite(request):
         return Response({"detail": "Invalid or expired invitation."},
                         status=status.HTTP_400_BAD_REQUEST)
 
-    user = User.objects.create_user(
-        email=invitation.email,
-        password=serializer.validated_data["password"],
-        full_name=serializer.validated_data["full_name"],
-        workspace=invitation.workspace,
-        role=invitation.role,
-    )
-    invitation.accepted = True
-    invitation.save()
+    # Check if user already exists (e.g. re-invite or previous failed attempt)
+    existing = User.objects.filter(email=invitation.email).first()
+    if existing:
+        # If already in this workspace, just mark accepted and return tokens
+        if existing.workspace_id == invitation.workspace_id:
+            invitation.accepted = True
+            invitation.save()
+        else:
+            return Response(
+                {"detail": f"An account with email {invitation.email} already exists. Please sign in instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        user = existing
+    else:
+        user = User.objects.create_user(
+            email=invitation.email,
+            password=serializer.validated_data["password"],
+            full_name=serializer.validated_data["full_name"],
+            workspace=invitation.workspace,
+            role=invitation.role,
+        )
+        invitation.accepted = True
+        invitation.save()
 
     from rest_framework_simplejwt.tokens import RefreshToken
     refresh = RefreshToken.for_user(user)
