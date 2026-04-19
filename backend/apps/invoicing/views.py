@@ -1,4 +1,5 @@
 """CoachOS — invoicing/views.py"""
+import logging
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,6 +10,8 @@ from djstripe.signals import WEBHOOK_SIGNALS
 from .models import Invoice, Payment
 from .serializers import InvoiceListSerializer, InvoiceDetailSerializer, PaymentSerializer
 from apps.accounts.permissions import IsCoachOrAbove
+
+logger = logging.getLogger(__name__)
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
@@ -22,6 +25,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             coach=self.request.user,
             number=f"INV-{count:04d}",
         )
+
+    def create(self, request, *args, **kwargs):
+        try:
+            return super().create(request, *args, **kwargs)
+        except Exception as exc:
+            logger.exception("Invoice create failed: %s", exc)
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
         qs = Invoice.objects.filter(workspace=self.request.user.workspace) \

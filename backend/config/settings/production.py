@@ -56,6 +56,26 @@ DEFAULT_FILE_STORAGE    = "django.core.files.storage.FileSystemStorage"
 # AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
 # AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
 
+# ── Logging — write all ERROR+ tracebacks to Render's stdout/stderr ───────
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "verbose": {"format": "[%(levelname)s %(asctime)s %(name)s] %(message)s"},
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "verbose",
+        },
+    },
+    "root": {"handlers": ["console"], "level": "WARNING"},
+    "loggers": {
+        "django": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+    },
+}
+
 # ── Sentry error tracking ─────────────────────────────────────────────────
 SENTRY_DSN = env("SENTRY_DSN", default="")
 if SENTRY_DSN:
