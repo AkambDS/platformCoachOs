@@ -443,12 +443,17 @@ function TeamTab() {
 
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function Settings() {
-  const [tab, setTab] = useState('Workspace')
-  const TABS = [
-    { key: 'Workspace', icon: <Building2 size={13} /> },
-    { key: 'Profile',   icon: <User size={13} /> },
-    { key: 'Team',      icon: <Mail size={13} /> },
+  const { user } = useAuthStore()
+  const isOwner = user?.role === 'business_owner'
+
+  const ALL_TABS = [
+    { key: 'Workspace', icon: <Building2 size={13} />, ownerOnly: true },
+    { key: 'Profile',   icon: <User size={13} />,      ownerOnly: false },
+    { key: 'Team',      icon: <Mail size={13} />,      ownerOnly: true },
   ]
+  const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
+
+  const [tab, setTab] = useState(isOwner ? 'Workspace' : 'Profile')
 
   return (
     <AppShell>
@@ -469,9 +474,9 @@ export default function Settings() {
       </div>
 
       <div className="page-body">
-        {tab === 'Workspace' && <WorkspaceTab />}
+        {tab === 'Workspace' && isOwner && <WorkspaceTab />}
         {tab === 'Profile'   && <ProfileTab />}
-        {tab === 'Team'      && <TeamTab />}
+        {tab === 'Team'      && isOwner && <TeamTab />}
       </div>
     </AppShell>
   )

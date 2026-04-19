@@ -18,13 +18,19 @@ from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove
 class ClientViewSet(viewsets.ModelViewSet):
     """
     GET    /api/clients/         — list (filterable by tags, active_flag, coach)
-    POST   /api/clients/         — create new client
+    POST   /api/clients/         — create new client  [Coach+]
     GET    /api/clients/{id}/    — full client detail + engagement history
-    PUT    /api/clients/{id}/    — update
-    DELETE /api/clients/{id}/    — permanent delete (FR-CRM-08: no soft delete)
-    POST   /api/clients/import/  — CSV bulk import (FR-CRM-07)
+    PUT    /api/clients/{id}/    — update  [Coach+]
+    DELETE /api/clients/{id}/    — permanent delete  [Coach+]
+    POST   /api/clients/import/  — CSV bulk import  [Coach+]
     """
     permission_classes = [IsAssistantOrAbove]
+
+    def get_permissions(self):
+        # Assistants can only read — all writes require Coach+
+        if self.action in ("create", "update", "partial_update", "destroy", "csv_import"):
+            return [IsCoachOrAbove()]
+        return [IsAssistantOrAbove()]
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields   = ["active_flag", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]

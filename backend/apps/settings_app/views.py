@@ -12,7 +12,11 @@ from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
 class BrandingSettingsView(RetrieveUpdateAPIView):
     """GET/PUT /api/settings/branding/"""
     serializer_class   = BrandingSerializer
-    permission_classes = [IsWorkspaceMember]
+
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsBusinessOwner()]
+        return [IsWorkspaceMember()]
 
     def get_object(self):
         return self.request.user.workspace
@@ -21,7 +25,11 @@ class BrandingSettingsView(RetrieveUpdateAPIView):
 class SchedulingSettingsView(RetrieveUpdateAPIView):
     """GET/PUT /api/settings/scheduling/"""
     serializer_class   = SchedulingSerializer
-    permission_classes = [IsWorkspaceMember]
+
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsBusinessOwner()]
+        return [IsWorkspaceMember()]
 
     def get_object(self):
         return self.request.user.workspace
@@ -30,8 +38,12 @@ class SchedulingSettingsView(RetrieveUpdateAPIView):
 class WorkspaceSettingsView(RetrieveUpdateAPIView):
     """GET/PATCH /api/settings/workspace/ — combined settings used by the frontend"""
     serializer_class   = WorkspaceSerializer
-    permission_classes = [IsWorkspaceMember]
     http_method_names  = ["get", "patch", "put", "head", "options"]
+
+    def get_permissions(self):
+        if self.request.method in ("PUT", "PATCH"):
+            return [IsBusinessOwner()]
+        return [IsWorkspaceMember()]
 
     def get_object(self):
         return self.request.user.workspace
