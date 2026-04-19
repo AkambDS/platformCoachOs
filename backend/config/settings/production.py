@@ -33,6 +33,7 @@ CSRF_TRUSTED_ORIGINS = [
 ]
 
 # ── Email: Brevo HTTP API (SMTP port 587 blocked on Render free tier) ─────
+INSTALLED_APPS += ["anymail"]  # noqa: F405 — only needed in production
 EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
 ANYMAIL = {
     "BREVO_API_KEY": env("BREVO_API_KEY", default=""),

@@ -13,15 +13,24 @@ def _logo_url(workspace) -> str:
     """Return a public HTTP URL for the workspace logo, or empty string if none."""
     if not getattr(workspace, "logo_data", ""):
         return ""
-    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
-    # Derive backend URL from FRONTEND_URL or use a known base
     backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/")
     if not backend_base:
-        # Fall back to the Render backend URL set in env, or derive from allowed hosts
         allowed = getattr(settings, "ALLOWED_HOSTS", [])
         host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
         backend_base = f"https://{host}" if host else "http://localhost:8000"
     return f"{backend_base}/api/settings/logo/{workspace.id}/"
+
+
+def _owner_info(workspace) -> tuple:
+    """Return (owner_email, owner_name) for the business owner of the workspace."""
+    try:
+        from apps.accounts.models import User
+        owner = workspace.users.filter(role=User.Role.BUSINESS_OWNER).first()
+        if owner:
+            return owner.email, owner.full_name
+    except Exception:
+        pass
+    return "", ""
 
 
 # ── ICS builder ────────────────────────────────────────────────────────────────
@@ -88,6 +97,7 @@ def send_invite_email(invitation_id: str):
             f"{workspace.name} as {invite.get_role_display()}.\n\n"
             f"Accept here: {accept_url}\n\nThis link expires in 48 hours."
         )
+        owner_email, owner_name = _owner_info(workspace)
         html = build_invite_email(
             invited_by_name=invite.invited_by.full_name,
             workspace_name=workspace.name,
@@ -95,6 +105,7 @@ def send_invite_email(invitation_id: str):
             accept_url=accept_url,
             logo_url=_logo_url(workspace),
             invited_email=invite.email,
+            owner_email=owner_email,
         )
         msg = EmailMultiAlternatives(
             subject=f"You're invited to join {workspace.name} on CoachOS",
@@ -123,13 +134,15 @@ def send_activity_confirmation_email(activity_id: str):
 
         dt         = _fmt_dt_human(activity.start_at)
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
+        coach_email = activity.coach.email if activity.coach else ""
         workspace  = activity.workspace
+        owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
         plain = (
             f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
             f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A calendar invite is attached — open it to add this session to your calendar.\n\n"
+            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
             f"You will also receive a reminder 24 hours and 1 hour before your session.\n\n"
             f"If you need to reschedule, please contact {coach_name} directly.\n\n— {workspace.name}"
         )
@@ -138,7 +151,10 @@ def send_activity_confirmation_email(activity_id: str):
             workspace_name=workspace.name,
             logo_url=_logo_url(workspace),
             coach_name=coach_name,
+            coach_email=coach_email,
             dt_human=dt,
+            owner_email=owner_email,
+            owner_name=owner_name,
         )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
@@ -171,9 +187,11 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             return
 
         dt         = _fmt_dt_human(activity.start_at)
-        coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
-        workspace  = activity.workspace
-        time_label = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
+        coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
+        coach_email = activity.coach.email if activity.coach else ""
+        workspace   = activity.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        time_label  = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
         plain = (
@@ -187,8 +205,11 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             workspace_name=workspace.name,
             logo_url=_logo_url(workspace),
             coach_name=coach_name,
+            coach_email=coach_email,
             dt_human=dt,
             time_label=time_label,
+            owner_email=owner_email,
+            owner_name=owner_name,
         )
         msg = EmailMultiAlternatives(
             subject=f"Reminder: {activity.title} in {time_label}",
@@ -206,27 +227,42 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
 @shared_task(name="tasks.email.send_activity_cancellation_email")
 def send_activity_cancellation_email(activity_id: str):
     from apps.activities.models import Activity
+    from tasks.email_html import build_cancellation_email
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         client = activity.client
         if not client.email:
             return
 
-        dt         = _fmt_dt_human(activity.start_at)
-        coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
-        ics_bytes  = _build_ics(activity, method="CANCEL", cancelled=True)
+        dt          = _fmt_dt_human(activity.start_at)
+        coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
+        coach_email = activity.coach.email if activity.coach else ""
+        workspace   = activity.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        ics_bytes   = _build_ics(activity, method="CANCEL", cancelled=True)
 
         plain = (
             f"Hi {client.first_name},\n\nYour upcoming {activity.activity_type} has been cancelled.\n\n"
             f"  What:   {activity.title}\n  Was:    {dt}\n  Coach:  {coach_name}\n\n"
-            f"Please contact {coach_name} to reschedule.\n\n— {activity.workspace.name}"
+            f"Please contact {coach_name} to reschedule.\n\n— {workspace.name}"
         )
-        msg = EmailMessage(
+        html = build_cancellation_email(
+            activity=activity,
+            workspace_name=workspace.name,
+            logo_url=_logo_url(workspace),
+            coach_name=coach_name,
+            coach_email=coach_email,
+            dt_human=dt,
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+        msg = EmailMultiAlternatives(
             subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %d').replace(' 0', ' ')}",
             body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
         )
+        msg.attach_alternative(html, "text/html")
         msg.attach("cancel.ics", ics_bytes, "text/calendar")
         msg.send()
 
@@ -240,19 +276,35 @@ def send_activity_cancellation_email(activity_id: str):
 @shared_task(name="tasks.email.send_invoice_email")
 def send_invoice_email(invoice_id: str):
     from apps.invoicing.models import Invoice
+    from tasks.email_html import build_invoice_email
     try:
-        invoice = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
-        msg = EmailMessage(
-            subject=f"Invoice #{invoice.number} from {invoice.workspace.name}",
-            body=(
-                f"Hi {invoice.client.first_name},\n\n"
-                f"Please find attached invoice #{invoice.number} for ${invoice.total}.\n\n"
-                f"Due: {invoice.due_date}\n\n"
-                f"{'Pay online: ' + invoice.stripe_payment_link if invoice.stripe_payment_link else ''}"
-            ),
+        invoice   = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
+        workspace = invoice.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+
+        plain = (
+            f"Hi {invoice.client.first_name},\n\n"
+            f"Please find attached invoice #{invoice.number} for ${invoice.total}.\n\n"
+            f"{'Due: ' + due_str + chr(10) + chr(10) if due_str else ''}"
+            f"{'Pay online: ' + invoice.stripe_payment_link + chr(10) + chr(10) if invoice.stripe_payment_link else ''}"
+            f"— {workspace.name}"
+        )
+        html = build_invoice_email(
+            invoice=invoice,
+            workspace_name=workspace.name,
+            logo_url=_logo_url(workspace),
+            due_str=due_str,
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+        msg = EmailMultiAlternatives(
+            subject=f"Invoice #{invoice.number} from {workspace.name}",
+            body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[invoice.client.email],
         )
+        msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")
     except Exception as e:

@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoicesApi, clientsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
@@ -8,6 +7,139 @@ import { PageHeader, Modal, StatusBadge, EmptyState, useToast } from '../../comp
 function fmtDate(d: string) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function InvoiceDetailModal({ invoiceId, onClose, onAction }: any) {
+  const qc = useQueryClient()
+  const { show: showToast } = useToast()
+  const [tab, setTab] = useState<'details' | 'email'>('details')
+  const { data: inv, isLoading } = useQuery({
+    queryKey: ['invoice', invoiceId],
+    queryFn: () => invoicesApi.get(invoiceId).then(r => r.data),
+  })
+
+  const handleSend = async () => {
+    try {
+      await invoicesApi.send(invoiceId)
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] })
+      showToast('Invoice sent to client')
+      onAction?.()
+    } catch { showToast('Failed to send', 'error') }
+  }
+
+  const handleVoid = async () => {
+    if (!confirm('Void this invoice?')) return
+    try {
+      await invoicesApi.void(invoiceId)
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] })
+      showToast('Invoice voided')
+      onAction?.()
+    } catch { showToast('Failed to void', 'error') }
+  }
+
+  return (
+    <Modal title={inv ? `Invoice ${inv.number}` : 'Invoice'} onClose={onClose} size="lg"
+      footer={
+        inv && (
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', width: '100%' }}>
+            {inv.status === 'draft' && <button className="btn btn-gold btn-sm" onClick={handleSend}>Send to Client</button>}
+            {!['paid','void','refunded'].includes(inv.status) && <button className="btn btn-outline btn-sm" onClick={handleVoid}>Void</button>}
+            <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
+          </div>
+        )
+      }>
+      {isLoading ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading…</div>
+      ) : inv ? (
+        <>
+          {/* Tabs */}
+          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
+            {(['details', 'email'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                style={{ padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer',
+                         borderBottom: tab === t ? '2px solid var(--ink)' : '2px solid transparent',
+                         fontWeight: tab === t ? 600 : 400, fontSize: 13, textTransform: 'capitalize',
+                         color: tab === t ? 'var(--ink)' : 'var(--muted)' }}>
+                {t === 'email' ? 'Email Preview' : 'Details'}
+              </button>
+            ))}
+          </div>
+
+          {tab === 'details' && (
+            <>
+              <div style={{ display: 'flex', gap: 24, marginBottom: 20, flexWrap: 'wrap' }}>
+                {[
+                  ['Status', <StatusBadge status={inv.status} />],
+                  ['Client', inv.client_name],
+                  ['Type', inv.invoice_type?.replace('_', '-')],
+                  ['Due', fmtDate(inv.due_date)],
+                  ['Currency', inv.currency],
+                ].map(([l, v]: any) => (
+                  <div key={l}><div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 2 }}>{l}</div><div style={{ fontWeight: 500 }}>{v}</div></div>
+                ))}
+              </div>
+
+              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
+                <thead>
+                  <tr style={{ borderBottom: '2px solid var(--ink)' }}>
+                    {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
+                      <th key={h} style={{ textAlign: 'left', padding: '6px 8px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--muted)' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(inv.items || []).map((item: any) => (
+                    <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 8px' }}>{item.description}</td>
+                      <td style={{ padding: '8px 8px', color: 'var(--muted)' }}>{item.quantity}</td>
+                      <td style={{ padding: '8px 8px' }}>${Number(item.unit_price).toFixed(2)}</td>
+                      <td style={{ padding: '8px 8px', fontWeight: 600 }}>${Number(item.line_total).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', marginBottom: 16 }}>
+                {[
+                  ['Subtotal', `$${Number(inv.subtotal).toFixed(2)}`],
+                  ['Discount', inv.discount_type === 'percent' ? `${inv.discount_value}%` : `-$${Number(inv.discount_value).toFixed(2)}`],
+                  ['Tax', `${inv.tax_percent}%`],
+                ].map(([l, v]) => (
+                  <div key={l} style={{ display: 'flex', gap: 24, fontSize: 13, color: 'var(--muted)' }}>
+                    <span>{l}</span><span>{v}</span>
+                  </div>
+                ))}
+                <div style={{ display: 'flex', gap: 24, fontWeight: 700, fontSize: 18, borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4, fontFamily: 'Cormorant Garamond, serif' }}>
+                  <span>Total</span><span>${Number(inv.total).toFixed(2)}</span>
+                </div>
+              </div>
+
+              {inv.notes && (
+                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', padding: '10px 14px', fontSize: 13, color: 'var(--muted)', borderRadius: 4 }}>
+                  {inv.notes}
+                </div>
+              )}
+            </>
+          )}
+
+          {tab === 'email' && (
+            inv.email_html ? (
+              <iframe
+                srcDoc={inv.email_html}
+                title="Email Preview"
+                style={{ width: '100%', height: 600, border: '1px solid var(--border)', borderRadius: 4 }}
+                sandbox="allow-same-origin"
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Email preview not available</div>
+            )
+          )}
+        </>
+      ) : null}
+    </Modal>
+  )
 }
 
 function NewInvoiceModal({ onClose, onSaved }: any) {
@@ -40,6 +172,7 @@ function NewInvoiceModal({ onClose, onSaved }: any) {
     try {
       await invoicesApi.create({
         ...form,
+        due_date: form.due_date || null,
         discount_value: Number(form.discount_value),
         tax_percent: Number(form.tax_percent),
         items: items.map(it => ({ ...it, quantity: Number(it.quantity), unit_price: Number(it.unit_price) })),
@@ -48,8 +181,7 @@ function NewInvoiceModal({ onClose, onSaved }: any) {
       onSaved()
     } catch (e: any) {
       const d = e.response?.data
-      if (!d) { setError('Network error — please try again'); return }
-      // DRF returns field errors as {field: [msg, ...]} or {detail: msg}
+      if (!d || typeof d !== 'object') { setError('Server error — please try again'); return }
       if (d.detail) { setError(d.detail); return }
       const fieldErrors = Object.entries(d)
         .map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`)
@@ -204,11 +336,11 @@ function RecordPaymentModal({ invoiceId, onClose, onSaved }: any) {
 }
 
 export default function Invoices() {
-  const navigate = useNavigate()
   const qc = useQueryClient()
   const { show: showToast, el: toastEl } = useToast()
   const [statusFilter, setStatusFilter] = useState('')
   const [showNew, setShowNew] = useState(false)
+  const [detailId, setDetailId] = useState<string | null>(null)
   const [payingId, setPayingId] = useState<string | null>(null)
 
   const { data, isLoading } = useQuery({
@@ -281,7 +413,7 @@ export default function Invoices() {
             </thead>
             <tbody>
               {invoices.map((inv: any) => (
-                <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)}>
+                <tr key={inv.id} onClick={() => setDetailId(inv.id)} style={{ cursor: 'pointer' }}>
                   <td style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</td>
                   <td>{inv.client_name || inv.client}</td>
                   <td style={{ fontSize: 12, textTransform: 'capitalize' }}>{inv.invoice_type?.replace('_', '-')}</td>
@@ -311,6 +443,7 @@ export default function Invoices() {
       </div>
 
       {showNew && <NewInvoiceModal onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); showToast('Invoice created') }} />}
+      {detailId && <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} onAction={() => { setDetailId(null); qc.invalidateQueries({ queryKey: ['invoices'] }) }} />}
       {payingId && <RecordPaymentModal invoiceId={payingId} onClose={() => setPayingId(null)} onSaved={() => { setPayingId(null); showToast('Payment recorded') }} />}
       {toastEl}
     </AppShell>

@@ -1,21 +1,38 @@
 """
 CoachOS — HTML email builder.
-Single source of truth for all transactional email HTML.
+Professional transactional email templates.
 """
 
 
-def _email_shell(workspace_name: str, logo_url: str, body_html: str) -> str:
-    """Wrap body_html in the CoachOS branded email shell."""
+# ── Shell ───────────────────────────────────────────────────────────────────────
+
+def _email_shell(workspace_name: str, logo_url: str, body_html: str,
+                 owner_email: str = "", owner_name: str = "") -> str:
     if logo_url:
-        header_content = (
+        brand = (
             f'<img src="{logo_url}" alt="{workspace_name}" '
             f'style="max-height:48px;max-width:180px;object-fit:contain;display:block;" />'
         )
     else:
-        header_content = (
+        brand = (
             f'<span style="font-family:Georgia,\'Times New Roman\',serif;'
-            f'font-size:22px;font-weight:400;letter-spacing:.04em;color:#f7f4ef;">'
+            f'font-size:22px;font-weight:400;letter-spacing:.05em;color:#f5f0e8;">'
             f'{workspace_name}</span>'
+        )
+
+    if owner_email:
+        contact_line = (
+            f'Questions? Contact us at '
+            f'<a href="mailto:{owner_email}" '
+            f'style="color:#c9a84c;text-decoration:none;font-weight:600;">'
+            f'{owner_name or owner_email}</a>'
+            f' &mdash; <a href="mailto:{owner_email}" '
+            f'style="color:#b5afa6;text-decoration:none;font-size:11px;">'
+            f'{owner_email}</a>'
+        )
+    else:
+        contact_line = (
+            f'Sent by <strong style="color:#9e9890;">{workspace_name}</strong> via CoachOS'
         )
 
     return f"""<!DOCTYPE html>
@@ -23,199 +40,486 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str) -> str:
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
   <title>{workspace_name}</title>
 </head>
-<body style="margin:0;padding:0;background:#f7f4ef;font-family:'Helvetica Neue',Arial,sans-serif;-webkit-font-smoothing:antialiased;">
-  <table width="100%" cellpadding="0" cellspacing="0" style="background:#f7f4ef;padding:40px 20px;">
-    <tr><td align="center">
-      <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+<body style="margin:0;padding:0;background:#eeebe5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="max-width:600px;">
 
-        <!-- Header -->
-        <tr><td style="background:#1a1714;padding:28px 36px;border-radius:6px 6px 0 0;">
-          <table width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              <td>{header_content}</td>
-            </tr>
-          </table>
-        </td></tr>
+    <!-- ── Header ── -->
+    <tr>
+      <td style="background:#16130f;padding:24px 40px;border-radius:8px 8px 0 0;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+          <tr>
+            <td>{brand}</td>
+            <td align="right">
+              <span style="font-family:Georgia,'Times New Roman',serif;
+                           font-size:10px;letter-spacing:.18em;text-transform:uppercase;
+                           color:#6e6560;">Coaching Platform</span>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
 
-        <!-- Gold rule -->
-        <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d4b06a);"></td></tr>
+    <!-- ── Gold accent bar ── -->
+    <tr>
+      <td style="height:3px;background:linear-gradient(90deg,#b8922e 0%,#d9b96a 50%,#b8922e 100%);"></td>
+    </tr>
 
-        <!-- Body -->
-        <tr><td style="background:#ffffff;padding:36px 36px 28px;border-radius:0 0 6px 6px;">
-          {body_html}
-        </td></tr>
+    <!-- ── Body ── -->
+    <tr>
+      <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;
+                 font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+        {body_html}
+      </td>
+    </tr>
 
-        <!-- Footer -->
-        <tr><td style="padding:24px 0 0;text-align:center;">
-          <p style="margin:0;font-size:12px;color:#9c948c;line-height:1.6;">
-            Sent by <strong style="color:#6e6560;">{workspace_name}</strong> via CoachOS
-          </p>
-          <p style="margin:6px 0 0;font-size:11px;color:#b8b0a6;">
-            This is an automated message — please do not reply directly.
-          </p>
-        </td></tr>
+    <!-- ── Footer ── -->
+    <tr>
+      <td style="padding:28px 0 0;text-align:center;">
+        <p style="margin:0 0 8px;font-size:13px;color:#9e9890;
+                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.7;">
+          {contact_line}
+        </p>
+        <p style="margin:0 0 6px;font-size:11px;color:#b5afa6;
+                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+          This is an automated notification &mdash; please do not reply directly to this email.
+        </p>
+        <p style="margin:0;font-size:10px;color:#c8c2ba;
+                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                  letter-spacing:.06em;text-transform:uppercase;">
+          Powered by CoachOS
+        </p>
+      </td>
+    </tr>
 
-      </table>
-    </td></tr>
   </table>
+  </td></tr>
+</table>
 </body>
 </html>"""
 
 
+# ── Helpers ─────────────────────────────────────────────────────────────────────
+
 def _detail_row(label: str, value: str) -> str:
     return (
         f'<tr>'
-        f'<td style="padding:7px 0;font-size:13px;color:#6e6560;width:90px;vertical-align:top;">{label}</td>'
-        f'<td style="padding:7px 0;font-size:13px;color:#1a1714;font-weight:500;">{value}</td>'
+        f'<td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;'
+        f'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;'
+        f'text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;'
+        f'white-space:nowrap;">{label}</td>'
+        f'<td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;'
+        f'font-family:Georgia,\'Times New Roman\',serif;">{value}</td>'
         f'</tr>'
     )
 
 
+def _divider() -> str:
+    return '<tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>'
+
+
+def _cta_button(label: str, url: str, colour: str = "#16130f") -> str:
+    return f"""
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto;">
+      <tr>
+        <td style="background:{colour};border-radius:4px;mso-padding-alt:14px 32px;">
+          <a href="{url}"
+             style="display:inline-block;padding:14px 40px;
+                    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                    font-size:13px;font-weight:700;color:#f5f0e8;
+                    text-decoration:none;letter-spacing:.1em;text-transform:uppercase;">
+            {label}
+          </a>
+        </td>
+      </tr>
+    </table>"""
+
+
+def _calendar_block() -> str:
+    """Prominent 'Add to Calendar' section for the confirmation email."""
+    return """
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:32px;border:2px solid #b8922e;border-radius:8px;
+                  background:#fffdf7;">
+      <tr>
+        <td style="padding:0;border-radius:8px;overflow:hidden;">
+          <!-- Gold top strip -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="background:#b8922e;padding:10px 24px;">
+                <span style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                             font-size:11px;font-weight:700;color:#fff;
+                             text-transform:uppercase;letter-spacing:.1em;">
+                  &#128197;&nbsp; Add This Session to Your Calendar
+                </span>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 24px 22px;">
+                <p style="margin:0 0 10px;font-family:Georgia,'Times New Roman',serif;
+                          font-size:15px;color:#1a1714;line-height:1.5;">
+                  A <strong>calendar invite (.ics file)</strong> is attached to this email.
+                </p>
+                <p style="margin:0 0 14px;font-size:13px;color:#6e6560;line-height:1.7;
+                          font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                  Open the attachment to instantly save this session to your calendar:
+                </p>
+                <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+                  <tr>
+                    <td style="padding:4px 0;font-size:13px;color:#6e6560;
+                               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                      &#9989;&nbsp; <strong style="color:#1a1714;">Google Calendar</strong>
+                    </td>
+                    <td style="padding:4px 0;font-size:13px;color:#6e6560;
+                               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                      &#9989;&nbsp; <strong style="color:#1a1714;">Apple Calendar</strong>
+                    </td>
+                    <td style="padding:4px 0;font-size:13px;color:#6e6560;
+                               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                      &#9989;&nbsp; <strong style="color:#1a1714;">Outlook</strong>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>"""
+
+
+# ── Confirmation email ───────────────────────────────────────────────────────────
+
 def build_confirmation_email(activity, workspace_name: str, logo_url: str,
-                              coach_name: str, dt_human: str) -> str:
-    location_row = _detail_row("Location", activity.location) if activity.location else ""
+                              coach_name: str, coach_email: str, dt_human: str,
+                              owner_email: str = "", owner_name: str = "") -> str:
+    location_row = ""
+    if activity.location:
+        location_row = _divider() + _detail_row("Location", activity.location)
+
     notes_block = ""
     if activity.notes:
-        notes_block = (
-            f'<div style="margin-top:20px;padding:14px 16px;'
-            f'background:#f7f4ef;border-left:3px solid #b8922e;border-radius:0 4px 4px 0;">'
-            f'<p style="margin:0;font-size:13px;color:#6e6560;line-height:1.6;">{activity.notes}</p>'
-            f'</div>'
-        )
+        notes_block = f"""
+        <div style="margin-top:24px;padding:16px 20px;
+                    background:#faf8f4;border-left:3px solid #b8922e;border-radius:0 4px 4px 0;">
+          <p style="margin:0;font-size:13px;color:#6e6560;line-height:1.7;">{activity.notes}</p>
+        </div>"""
+
+    coach_display = (
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
+        f'{coach_name}</a>'
+        if coach_email else coach_name
+    )
 
     body = f"""
-      <h1 style="margin:0 0 6px;font-family:Georgia,'Times New Roman',serif;
-                 font-size:26px;font-weight:400;color:#1a1714;letter-spacing:.01em;">
-        Your session is confirmed
-      </h1>
-      <p style="margin:0 0 24px;font-size:14px;color:#6e6560;line-height:1.6;">
-        Hi {activity.client.first_name}, your {activity.activity_type} has been scheduled.
-      </p>
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-weight:600;">
+      Session Confirmed
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Your session is confirmed
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {activity.client.first_name}, your session with
+      <strong style="color:#1a1714;">{coach_name}</strong> has been scheduled.
+      We look forward to seeing you.
+    </p>
 
-      <!-- Detail table -->
-      <table cellpadding="0" cellspacing="0" width="100%"
-             style="border-top:1px solid #ede9e1;margin-bottom:8px;">
-        {_detail_row("What", activity.title)}
-        {_detail_row("When", dt_human)}
-        {location_row}
-        {_detail_row("Coach", coach_name)}
-      </table>
+    <!-- Details table -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+      {_detail_row("What", activity.title)}
+      {_divider()}
+      {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
+      {location_row}
+      {_divider()}
+      {_detail_row("Coach", coach_display)}
+    </table>
 
-      {notes_block}
+    {notes_block}
+    {_calendar_block()}
 
-      <div style="margin-top:28px;padding:16px;background:#f7f4ef;border-radius:4px;">
-        <p style="margin:0;font-size:13px;color:#6e6560;line-height:1.7;">
-          📅 &nbsp;A <strong>calendar invite (.ics)</strong> is attached — open it to add this session to your calendar.<br/>
-          🔔 &nbsp;You will receive a reminder <strong>24 hours</strong> and <strong>1 hour</strong> before your session.
-        </p>
-      </div>
+    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Need to reschedule or have questions? Contact
+      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
+        {coach_name}
+      </a> directly.
+    </p>
+    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
 
-      <p style="margin:24px 0 0;font-size:13px;color:#9c948c;line-height:1.6;">
-        Need to reschedule? Contact <strong style="color:#1a1714;">{coach_name}</strong> directly.
-      </p>
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
 
-      <div style="margin-top:28px;padding-top:20px;border-top:1px solid #ede9e1;">
-        <p style="margin:0;font-size:13px;color:#6e6560;">
-          — <strong>{workspace_name}</strong>
-        </p>
-      </div>
-    """
-    return _email_shell(workspace_name, logo_url, body)
 
+# ── Team invite email ────────────────────────────────────────────────────────────
 
 def build_invite_email(invited_by_name: str, workspace_name: str, role_display: str,
-                       accept_url: str, logo_url: str, invited_email: str = "") -> str:
+                       accept_url: str, logo_url: str, invited_email: str = "",
+                       owner_email: str = "") -> str:
     role_color = {
-        "Coach": "#2d6a9f",
-        "Assistant": "#4a7c59",
+        "Business Owner": "#b8922e",
+        "Coach":          "#2d6a9f",
+        "Assistant":      "#4a7c59",
     }.get(role_display, "#6e6560")
 
     body = f"""
-      <h1 style="margin:0 0 6px;font-family:Georgia,'Times New Roman',serif;
-                 font-size:26px;font-weight:400;color:#1a1714;letter-spacing:.01em;">
-        You've been invited
-      </h1>
-      <p style="margin:0 0 24px;font-size:14px;color:#6e6560;line-height:1.6;">
-        <strong style="color:#1a1714;">{invited_by_name}</strong> has invited you to join
-        <strong style="color:#1a1714;">{workspace_name}</strong> on CoachOS.
-      </p>
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-weight:600;">
+      Team Invitation
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      You've been invited
+    </h1>
+    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      <strong style="color:#1a1714;">{invited_by_name}</strong> has invited you to join
+      <strong style="color:#1a1714;">{workspace_name}</strong> on CoachOS as a team member.
+    </p>
 
-      <!-- Role badge -->
-      <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-        <tr>
-          <td style="padding:5px 14px;border-radius:20px;
-                     background:{role_color}18;border:1px solid {role_color}30;">
-            <span style="font-size:12px;font-weight:600;color:{role_color};
-                         text-transform:uppercase;letter-spacing:.07em;">
-              {role_display}
-            </span>
-          </td>
-        </tr>
-      </table>
+    <!-- Role badge -->
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
+      <tr>
+        <td style="padding:7px 20px;border-radius:20px;
+                   background:{role_color}18;border:1px solid {role_color}50;">
+          <span style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                       font-size:12px;font-weight:700;color:{role_color};
+                       text-transform:uppercase;letter-spacing:.1em;">
+            {role_display}
+          </span>
+        </td>
+      </tr>
+    </table>
 
-      <!-- CTA button -->
-      <table cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-        <tr>
-          <td style="background:#1a1714;border-radius:4px;">
-            <a href="{accept_url}"
-               style="display:inline-block;padding:14px 32px;
-                      font-size:13px;font-weight:600;color:#f7f4ef;
-                      text-decoration:none;letter-spacing:.08em;text-transform:uppercase;">
-              Accept Invitation
-            </a>
-          </td>
-        </tr>
-      </table>
+    <!-- CTA -->
+    {_cta_button("Accept Invitation &amp; Set Password", accept_url, "#16130f")}
 
-      <p style="margin:0 0 8px;font-size:12px;color:#9c948c;line-height:1.6;">
-        Or copy this link into your browser:
-      </p>
-      <p style="margin:0 0 24px;font-size:12px;word-break:break-all;">
-        <a href="{accept_url}" style="color:#b8922e;text-decoration:none;">{accept_url}</a>
-      </p>
+    <p style="margin:20px 0 6px;font-size:12px;color:#b5afa6;text-align:center;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Or copy and paste this link into your browser:
+    </p>
+    <p style="margin:0 0 32px;font-size:11px;word-break:break-all;text-align:center;">
+      <a href="{accept_url}" style="color:#b8922e;text-decoration:none;">{accept_url}</a>
+    </p>
 
-      <div style="padding:14px 16px;background:#f7f4ef;border-radius:4px;">
-        <p style="margin:0;font-size:12px;color:#9c948c;line-height:1.6;">
-          ⏱ &nbsp;This invitation expires in <strong style="color:#6e6560;">48 hours</strong>.<br/>
-          🔒 &nbsp;You'll set your password when you accept.<br/>
-          {'📧 &nbsp;Your login email will be: <strong style="color:#6e6560;">' + invited_email + '</strong>' if invited_email else ''}
-        </p>
-      </div>
-    """
-    return _email_shell(workspace_name, logo_url, body)
+    <!-- Info box -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="border:1px solid #e4dfd6;border-radius:6px;background:#faf8f4;">
+      <tr>
+        <td style="padding:20px 24px;">
+          <p style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+                    font-size:14px;color:#6e6560;font-weight:400;">Important details</p>
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+            <tr>
+              <td style="padding:5px 0;font-size:13px;color:#9e9890;
+                         font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.6;">
+                &#9201;&nbsp; Invitation expires in <strong style="color:#6e6560;">48 hours</strong>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:5px 0;font-size:13px;color:#9e9890;
+                         font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.6;">
+                &#128274;&nbsp; You will set your own password on the next screen
+              </td>
+            </tr>
+            {'<tr><td style="padding:5px 0;font-size:13px;color:#9e9890;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;line-height:1.6;">&#128231;&nbsp; Your login email: <strong style="color:#6e6560;">' + invited_email + '</strong></td></tr>' if invited_email else ''}
+          </table>
+        </td>
+      </tr>
+    </table>"""
 
+    return _email_shell(workspace_name, logo_url, body, owner_email, invited_by_name)
+
+
+# ── Reminder email ───────────────────────────────────────────────────────────────
 
 def build_reminder_email(activity, workspace_name: str, logo_url: str,
-                         coach_name: str, dt_human: str, time_label: str) -> str:
-    location_row = _detail_row("Location", activity.location) if activity.location else ""
+                         coach_name: str, coach_email: str, dt_human: str,
+                         time_label: str, owner_email: str = "",
+                         owner_name: str = "") -> str:
+    location_row = ""
+    if activity.location:
+        location_row = _divider() + _detail_row("Location", activity.location)
+
+    is_soon = "1 hour" in time_label or ("hour" in time_label.lower() and "24" not in time_label)
+    accent_color = "#c0392b" if is_soon else "#b8922e"
+    label_text = f"Upcoming in {time_label}" if is_soon else f"Reminder \u00b7 {time_label} away"
+
+    coach_display = (
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
+        f'{coach_name}</a>'
+        if coach_email else coach_name
+    )
 
     body = f"""
-      <h1 style="margin:0 0 6px;font-family:Georgia,'Times New Roman',serif;
-                 font-size:26px;font-weight:400;color:#1a1714;letter-spacing:.01em;">
-        Reminder: session in {time_label}
-      </h1>
-      <p style="margin:0 0 24px;font-size:14px;color:#6e6560;line-height:1.6;">
-        Hi {activity.client.first_name}, this is a reminder about your upcoming session.
-      </p>
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+              color:{accent_color};font-weight:600;">
+      {label_text}
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Session reminder
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {activity.client.first_name}, this is a friendly reminder about your upcoming session
+      with <strong style="color:#1a1714;">{coach_name}</strong>.
+    </p>
 
-      <table cellpadding="0" cellspacing="0" width="100%"
-             style="border-top:1px solid #ede9e1;margin-bottom:24px;">
-        {_detail_row("What", activity.title)}
-        {_detail_row("When", dt_human)}
-        {location_row}
-        {_detail_row("Coach", coach_name)}
-      </table>
+    <!-- Details table -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+      {_detail_row("What", activity.title)}
+      {_divider()}
+      {_detail_row("When", f'<strong style="color:{accent_color};">{dt_human}</strong>')}
+      {location_row}
+      {_divider()}
+      {_detail_row("Coach", coach_display)}
+    </table>
 
-      <p style="margin:0 0 0;font-size:13px;color:#9c948c;line-height:1.6;">
-        Need to reschedule? Contact <strong style="color:#1a1714;">{coach_name}</strong> as soon as possible.
-      </p>
+    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Need to reschedule? Please contact
+      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
+        {coach_name}
+      </a> as soon as possible.
+    </p>
+    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
 
-      <div style="margin-top:28px;padding-top:20px;border-top:1px solid #ede9e1;">
-        <p style="margin:0;font-size:13px;color:#6e6560;">
-          — <strong>{workspace_name}</strong>
-        </p>
-      </div>
-    """
-    return _email_shell(workspace_name, logo_url, body)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+
+
+# ── Cancellation email ───────────────────────────────────────────────────────────
+
+def build_cancellation_email(activity, workspace_name: str, logo_url: str,
+                              coach_name: str, coach_email: str, dt_human: str,
+                              owner_email: str = "", owner_name: str = "") -> str:
+    location_row = ""
+    if activity.location:
+        location_row = _divider() + _detail_row("Location", activity.location)
+
+    coach_display = (
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
+        f'{coach_name}</a>'
+        if coach_email else coach_name
+    )
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#c0392b;
+              font-weight:600;">
+      Session Cancelled
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Your session has been cancelled
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {activity.client.first_name}, we're writing to let you know that the following session
+      has been cancelled. A calendar update has been attached to this email.
+    </p>
+
+    <!-- Details table -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #c0392b;border-bottom:1px solid #ede9e1;">
+      {_detail_row("What", f'<span style="text-decoration:line-through;color:#9e9890;">{activity.title}</span>')}
+      {_divider()}
+      {_detail_row("Was", dt_human)}
+      {location_row}
+      {_divider()}
+      {_detail_row("Coach", coach_display)}
+    </table>
+
+    <!-- Reschedule note -->
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:28px;border:1px solid #e4dfd6;border-radius:6px;background:#faf8f4;">
+      <tr>
+        <td style="padding:18px 24px;">
+          <p style="margin:0;font-size:13px;color:#6e6560;line-height:1.7;
+                    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+            To reschedule or book a new session, please contact
+            <a href="mailto:{coach_email or owner_email}"
+               style="color:#b8922e;text-decoration:none;font-weight:600;">{coach_name}</a> directly.
+          </p>
+        </td>
+      </tr>
+    </table>
+
+    <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+
+
+# ── Invoice email ────────────────────────────────────────────────────────────────
+
+def build_invoice_email(invoice, workspace_name: str, logo_url: str,
+                        due_str: str, owner_email: str = "", owner_name: str = "") -> str:
+    amount = f"{invoice.currency} {invoice.total:,.2f}"
+
+    pay_button = ""
+    if invoice.stripe_payment_link:
+        pay_button = f"""
+        <div style="margin-top:28px;text-align:center;">
+          {_cta_button("Pay Invoice Online", invoice.stripe_payment_link, "#b8922e")}
+        </div>"""
+
+    due_row = ""
+    if due_str:
+        due_row = _divider() + _detail_row("Due Date", f'<strong style="color:#c0392b;">{due_str}</strong>')
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-weight:600;">
+      Invoice
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Invoice #{invoice.number}
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {invoice.client.first_name}, please find your invoice from
+      <strong style="color:#1a1714;">{workspace_name}</strong> below.
+    </p>
+
+    <!-- Invoice details -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+      {_detail_row("Invoice #", invoice.number)}
+      {_divider()}
+      {_detail_row("Amount", f'<strong style="color:#1a1714;font-size:18px;">{amount}</strong>')}
+      {due_row}
+    </table>
+
+    {pay_button}
+
+    {'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">Have questions about this invoice? Contact us at <a href="mailto:' + owner_email + '" style="color:#b8922e;text-decoration:none;font-weight:600;">' + (owner_name or owner_email) + '</a>.</p>' if owner_email else ''}
+
+    <p style="margin:{'12px' if owner_email else '28px'} 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
