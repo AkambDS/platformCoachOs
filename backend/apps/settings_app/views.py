@@ -4,6 +4,7 @@ from rest_framework.decorators import api_view, permission_classes, parser_class
 from rest_framework.parsers import MultiPartParser
 from rest_framework.response import Response
 from rest_framework import status
+from django.http import HttpResponse
 from apps.accounts.models import Workspace
 from .serializers import BrandingSerializer, SchedulingSerializer, WorkspaceSerializer
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
@@ -80,3 +81,28 @@ def logo_upload(request):
     workspace.logo_data = data_url
     workspace.save(update_fields=["logo_data"])
     return Response({"logo_data": data_url})
+
+
+def serve_workspace_logo(request, workspace_id):
+    """
+    GET /api/settings/logo/<workspace_id>/ — public endpoint, no auth required.
+    Used in emails so clients' mail apps can load the logo via HTTP (base64 data-URIs
+    are blocked by Gmail/Outlook).
+    """
+    try:
+        workspace = Workspace.objects.get(pk=workspace_id)
+    except Workspace.DoesNotExist:
+        return HttpResponse(status=404)
+
+    logo_data = workspace.logo_data
+    if not logo_data or not logo_data.startswith("data:"):
+        return HttpResponse(status=404)
+
+    # Parse "data:<mime>;base64,<data>"
+    header, encoded = logo_data.split(",", 1)
+    mime = header.split(":")[1].split(";")[0]
+    image_bytes = base64.b64decode(encoded)
+
+    response = HttpResponse(image_bytes, content_type=mime)
+    response["Cache-Control"] = "public, max-age=86400"
+    return response

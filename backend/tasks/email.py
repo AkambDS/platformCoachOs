@@ -9,6 +9,21 @@ from datetime import timezone as dt_timezone
 logger = logging.getLogger(__name__)
 
 
+def _logo_url(workspace) -> str:
+    """Return a public HTTP URL for the workspace logo, or empty string if none."""
+    if not getattr(workspace, "logo_data", ""):
+        return ""
+    frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:5173")
+    # Derive backend URL from FRONTEND_URL or use a known base
+    backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/")
+    if not backend_base:
+        # Fall back to the Render backend URL set in env, or derive from allowed hosts
+        allowed = getattr(settings, "ALLOWED_HOSTS", [])
+        host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
+        backend_base = f"https://{host}" if host else "http://localhost:8000"
+    return f"{backend_base}/api/settings/logo/{workspace.id}/"
+
+
 # ── ICS builder ────────────────────────────────────────────────────────────────
 
 def _ics_escape(text: str) -> str:
@@ -78,7 +93,7 @@ def send_invite_email(invitation_id: str):
             workspace_name=workspace.name,
             role_display=invite.get_role_display(),
             accept_url=accept_url,
-            logo_data=getattr(workspace, "logo_data", ""),
+            logo_url=_logo_url(workspace),
             invited_email=invite.email,
         )
         msg = EmailMultiAlternatives(
@@ -121,7 +136,7 @@ def send_activity_confirmation_email(activity_id: str):
         html = build_confirmation_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_data=getattr(workspace, "logo_data", ""),
+            logo_url=_logo_url(workspace),
             coach_name=coach_name,
             dt_human=dt,
         )
@@ -170,7 +185,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         html = build_reminder_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_data=getattr(workspace, "logo_data", ""),
+            logo_url=_logo_url(workspace),
             coach_name=coach_name,
             dt_human=dt,
             time_label=time_label,

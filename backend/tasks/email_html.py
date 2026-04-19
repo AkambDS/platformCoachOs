@@ -4,17 +4,17 @@ Single source of truth for all transactional email HTML.
 """
 
 
-def _email_shell(workspace_name: str, logo_data: str, body_html: str) -> str:
+def _email_shell(workspace_name: str, logo_url: str, body_html: str) -> str:
     """Wrap body_html in the CoachOS branded email shell."""
-    if logo_data:
+    if logo_url:
         header_content = (
-            f'<img src="{logo_data}" alt="{workspace_name}" '
+            f'<img src="{logo_url}" alt="{workspace_name}" '
             f'style="max-height:48px;max-width:180px;object-fit:contain;display:block;" />'
         )
     else:
         header_content = (
             f'<span style="font-family:Georgia,\'Times New Roman\',serif;'
-            f'font-size:22px;font-weight:400;letter-spacing:.04em;color:#1a1714;">'
+            f'font-size:22px;font-weight:400;letter-spacing:.04em;color:#f7f4ef;">'
             f'{workspace_name}</span>'
         )
 
@@ -73,7 +73,7 @@ def _detail_row(label: str, value: str) -> str:
     )
 
 
-def build_confirmation_email(activity, workspace_name: str, logo_data: str,
+def build_confirmation_email(activity, workspace_name: str, logo_url: str,
                               coach_name: str, dt_human: str) -> str:
     location_row = _detail_row("Location", activity.location) if activity.location else ""
     notes_block = ""
@@ -122,11 +122,11 @@ def build_confirmation_email(activity, workspace_name: str, logo_data: str,
         </p>
       </div>
     """
-    return _email_shell(workspace_name, logo_data, body)
+    return _email_shell(workspace_name, logo_url, body)
 
 
 def build_invite_email(invited_by_name: str, workspace_name: str, role_display: str,
-                       accept_url: str, logo_data: str, invited_email: str = "") -> str:
+                       accept_url: str, logo_url: str, invited_email: str = "") -> str:
     role_color = {
         "Coach": "#2d6a9f",
         "Assistant": "#4a7c59",
@@ -184,10 +184,10 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
         </p>
       </div>
     """
-    return _email_shell(workspace_name, logo_data, body)
+    return _email_shell(workspace_name, logo_url, body)
 
 
-def build_reminder_email(activity, workspace_name: str, logo_data: str,
+def build_reminder_email(activity, workspace_name: str, logo_url: str,
                          coach_name: str, dt_human: str, time_label: str) -> str:
     location_row = _detail_row("Location", activity.location) if activity.location else ""
 
@@ -218,4 +218,4 @@ def build_reminder_email(activity, workspace_name: str, logo_data: str,
         </p>
       </div>
     """
-    return _email_shell(workspace_name, logo_data, body)
+    return _email_shell(workspace_name, logo_url, body)

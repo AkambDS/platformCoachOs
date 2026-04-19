@@ -158,6 +158,7 @@ SPECTACULAR_SETTINGS = {
 }
 
 FRONTEND_URL   = env("FRONTEND_URL",   default="http://localhost:5173")
+BACKEND_URL    = env("BACKEND_URL",    default="http://localhost:8000")
 CRON_SECRET    = env("CRON_SECRET",    default="")
 RESEND_API_KEY = env("RESEND_API_KEY", default="")
 

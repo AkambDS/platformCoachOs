@@ -25,7 +25,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         model  = Workspace
         fields = ["id", "name", "slug", "plan", "primary_colour",
                   "workspace_timezone", "buffer_minutes", "cancellation_hours",
-                  "logo_s3_key", "created_at"]
+                  "logo_s3_key", "logo_data", "created_at"]
         read_only_fields = ["id", "created_at", "slug"]
 
 
