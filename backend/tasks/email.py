@@ -133,13 +133,8 @@ def send_activity_confirmation_email(activity_id: str):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.attach("invite.ics", ics_bytes, "text/calendar")
-        # Inline ics — triggers Gmail "Add to Calendar" button
-        from email.mime.text import MIMEText
-        cal_part = MIMEText(ics_bytes.decode("utf-8"), "calendar", "utf-8")
-        cal_part["Content-Disposition"] = "inline"
-        cal_part.set_param("method", "REQUEST")
-        msg.attach(cal_part)
+        # Attach ICS as a file — triggers "Add to Calendar" in most clients
+        msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
         msg.send()
 
         from django.utils import timezone
