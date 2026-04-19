@@ -395,9 +395,7 @@ export default function Invoices() {
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading…</div>
         ) : invoices.length === 0 ? (
-          <EmptyState icon="$" title="No invoices" message="Create your first invoice" action={
-            <button className="btn btn-dark" onClick={() => setShowNew(true)}>+ New Invoice</button>
-          } />
+          <EmptyState icon="$" title="No invoices" message="Create your first invoice" />
         ) : (
           <table className="tbl">
             <thead>
