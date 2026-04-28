@@ -145,20 +145,30 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     notes: activity.notes || '',
   })
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError('')
     try {
       await activitiesApi.patch(activity.id, form)
       qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved()
-    } catch { } finally { setSaving(false) }
+    } catch (err: any) {
+      const detail = err?.response?.data
+      if (typeof detail === 'string') setSaveError(detail)
+      else if (detail && typeof detail === 'object') setSaveError(Object.values(detail).flat().join(' '))
+      else setSaveError('Failed to save. Please try again.')
+    } finally { setSaving(false) }
   }
 
   return (
     <Modal title="Edit Activity" onClose={onClose} footer={
       <>
+        {saveError && (
+          <span style={{ color: '#c0392b', fontSize: 13, flex: 1, textAlign: 'left' }}>{saveError}</span>
+        )}
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
         <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>
           {saving ? 'Saving…' : 'Save Changes'}

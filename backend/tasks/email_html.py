@@ -59,7 +59,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
             <td align="right">
               <span style="font-family:Georgia,'Times New Roman',serif;
                            font-size:10px;letter-spacing:.18em;text-transform:uppercase;
-                           color:#6e6560;">Coaching Platform</span>
+                           color:#a09888;">Coaching Platform</span>
             </td>
           </tr>
         </table>
@@ -141,15 +141,31 @@ def _cta_button(label: str, url: str, colour: str = "#16130f") -> str:
     </table>"""
 
 
-def _calendar_block() -> str:
+def _calendar_block(google_cal_url: str = "") -> str:
     """Prominent 'Add to Calendar' section for the confirmation email."""
-    return """
+    gcal_button = ""
+    if google_cal_url:
+        gcal_button = f"""
+                <table role="presentation" cellpadding="0" cellspacing="0" style="margin-top:16px;">
+                  <tr>
+                    <td style="border-radius:4px;background:#4285F4;">
+                      <a href="{google_cal_url}"
+                         style="display:inline-block;padding:9px 18px;
+                                font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                                font-size:13px;font-weight:600;color:#ffffff;
+                                text-decoration:none;letter-spacing:.02em;">
+                        + Add to Google Calendar
+                      </a>
+                    </td>
+                  </tr>
+                </table>"""
+
+    return f"""
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            style="margin-top:32px;border:2px solid #b8922e;border-radius:8px;
                   background:#fffdf7;">
       <tr>
         <td style="padding:0;border-radius:8px;overflow:hidden;">
-          <!-- Gold top strip -->
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
             <tr>
               <td style="background:#b8922e;padding:10px 24px;">
@@ -168,14 +184,10 @@ def _calendar_block() -> str:
                 </p>
                 <p style="margin:0 0 14px;font-size:13px;color:#6e6560;line-height:1.7;
                           font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-                  Open the attachment to instantly save this session to your calendar:
+                  Open the attachment to save to Apple Calendar or Outlook. For Google Calendar, use the button below:
                 </p>
                 <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
                   <tr>
-                    <td style="padding:4px 0;font-size:13px;color:#6e6560;
-                               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-                      &#9989;&nbsp; <strong style="color:#1a1714;">Google Calendar</strong>
-                    </td>
                     <td style="padding:4px 0;font-size:13px;color:#6e6560;
                                font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
                       &#9989;&nbsp; <strong style="color:#1a1714;">Apple Calendar</strong>
@@ -186,6 +198,7 @@ def _calendar_block() -> str:
                     </td>
                   </tr>
                 </table>
+                {gcal_button}
               </td>
             </tr>
           </table>
@@ -198,7 +211,8 @@ def _calendar_block() -> str:
 
 def build_confirmation_email(activity, workspace_name: str, logo_url: str,
                               coach_name: str, coach_email: str, dt_human: str,
-                              owner_email: str = "", owner_name: str = "") -> str:
+                              owner_email: str = "", owner_name: str = "",
+                              google_cal_url: str = "") -> str:
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
@@ -246,7 +260,67 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     </table>
 
     {notes_block}
-    {_calendar_block()}
+    {_calendar_block(google_cal_url)}
+
+    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Need to reschedule or have questions? Contact
+      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
+        {coach_name}
+      </a> directly.
+    </p>
+    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+
+
+# ── Reschedule / update email ────────────────────────────────────────────────────
+
+def build_reschedule_email(activity, workspace_name: str, logo_url: str,
+                            coach_name: str, coach_email: str, dt_human: str,
+                            owner_email: str = "", owner_name: str = "",
+                            google_cal_url: str = "") -> str:
+    location_row = ""
+    if activity.location:
+        location_row = _divider() + _detail_row("Location", activity.location)
+
+    coach_display = (
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
+        f'{coach_name}</a>'
+        if coach_email else coach_name
+    )
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-weight:600;">
+      Session Updated
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Your session has been updated
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {activity.client.first_name}, your session with
+      <strong style="color:#1a1714;">{coach_name}</strong> has been updated.
+      Here are your new session details.
+    </p>
+
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+      {_detail_row("What", activity.title)}
+      {_divider()}
+      {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
+      {location_row}
+      {_divider()}
+      {_detail_row("Coach", coach_display)}
+    </table>
+
+    {_calendar_block(google_cal_url)}
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">

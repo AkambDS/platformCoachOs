@@ -9,16 +9,18 @@ from datetime import timezone as dt_timezone
 logger = logging.getLogger(__name__)
 
 
+def _logo_src(workspace) -> str:
+    """Return the logo as a base64 data URI for embedding directly in emails.
+    Using a data URI avoids broken image URLs in email clients that can't reach the backend."""
+    logo_data = getattr(workspace, "logo_data", "")
+    if logo_data and logo_data.startswith("data:"):
+        return logo_data
+    return ""
+
+
 def _logo_url(workspace) -> str:
-    """Return a public HTTP URL for the workspace logo, or empty string if none."""
-    if not getattr(workspace, "logo_data", ""):
-        return ""
-    backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/")
-    if not backend_base:
-        allowed = getattr(settings, "ALLOWED_HOSTS", [])
-        host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
-        backend_base = f"https://{host}" if host else "http://localhost:8000"
-    return f"{backend_base}/api/settings/logo/{workspace.id}/"
+    """Kept for backwards-compat — prefer _logo_src() for email use."""
+    return _logo_src(workspace)
 
 
 def _owner_info(workspace) -> tuple:
@@ -80,6 +82,28 @@ def _fmt_dt_human(dt) -> str:
     return dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
 
 
+def _build_google_cal_url(activity) -> str:
+    """Build a Google Calendar 'add event' URL for the activity."""
+    from urllib.parse import urlencode
+    from datetime import timedelta
+
+    def gcal_fmt(dt):
+        from datetime import timezone as dt_timezone
+        return dt.astimezone(dt_timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    end_at = activity.end_at or (activity.start_at + timedelta(hours=1))
+    coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
+    params = {
+        "action": "TEMPLATE",
+        "text": activity.title,
+        "dates": f"{gcal_fmt(activity.start_at)}/{gcal_fmt(end_at)}",
+        "details": f"{activity.activity_type.capitalize()} with {coach_name}",
+    }
+    if activity.location:
+        params["location"] = activity.location
+    return "https://www.google.com/calendar/render?" + urlencode(params)
+
+
 # ── Email tasks ────────────────────────────────────────────────────────────────
 
 @shared_task(name="tasks.email.send_invite_email")
@@ -103,7 +127,7 @@ def send_invite_email(invitation_id: str):
             workspace_name=workspace.name,
             role_display=invite.get_role_display(),
             accept_url=accept_url,
-            logo_url=_logo_url(workspace),
+            logo_url=_logo_src(workspace),
             invited_email=invite.email,
             owner_email=owner_email,
         )
@@ -149,12 +173,13 @@ def send_activity_confirmation_email(activity_id: str):
         html = build_confirmation_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_url=_logo_url(workspace),
+            logo_url=_logo_src(workspace),
             coach_name=coach_name,
             coach_email=coach_email,
             dt_human=dt,
             owner_email=owner_email,
             owner_name=owner_name,
+            google_cal_url=_build_google_cal_url(activity),
         )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
@@ -203,7 +228,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         html = build_reminder_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_url=_logo_url(workspace),
+            logo_url=_logo_src(workspace),
             coach_name=coach_name,
             coach_email=coach_email,
             dt_human=dt,
@@ -222,6 +247,55 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
+
+
+@shared_task(name="tasks.email.send_activity_reschedule_email")
+def send_activity_reschedule_email(activity_id: str):
+    from apps.activities.models import Activity
+    from tasks.email_html import build_reschedule_email
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        client = activity.client
+        if not client.email:
+            return
+
+        dt          = _fmt_dt_human(activity.start_at)
+        coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
+        coach_email = activity.coach.email if activity.coach else ""
+        workspace   = activity.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        location_line = f"\nLocation: {activity.location}" if activity.location else ""
+
+        plain = (
+            f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
+            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+            f"A new calendar invite is attached. Open it to update your calendar.\n\n— {workspace.name}"
+        )
+        html = build_reschedule_email(
+            activity=activity,
+            workspace_name=workspace.name,
+            logo_url=_logo_src(workspace),
+            coach_name=coach_name,
+            coach_email=coach_email,
+            dt_human=dt,
+            owner_email=owner_email,
+            owner_name=owner_name,
+            google_cal_url=_build_google_cal_url(activity),
+        )
+        ics_bytes = _build_ics(activity, method="REQUEST")
+
+        msg = EmailMultiAlternatives(
+            subject=f"Updated: {activity.title} with {coach_name}",
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+        msg.send()
+        logger.info(f"Reschedule email sent to {client.email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_activity_reschedule_email failed: {e}")
 
 
 @shared_task(name="tasks.email.send_activity_cancellation_email")
@@ -249,7 +323,7 @@ def send_activity_cancellation_email(activity_id: str):
         html = build_cancellation_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_url=_logo_url(workspace),
+            logo_url=_logo_src(workspace),
             coach_name=coach_name,
             coach_email=coach_email,
             dt_human=dt,
@@ -293,7 +367,7 @@ def send_invoice_email(invoice_id: str):
         html = build_invoice_email(
             invoice=invoice,
             workspace_name=workspace.name,
-            logo_url=_logo_url(workspace),
+            logo_url=_logo_src(workspace),
             due_str=due_str,
             owner_email=owner_email,
             owner_name=owner_name,

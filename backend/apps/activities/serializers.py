@@ -13,13 +13,15 @@ class ActivitySerializer(serializers.ModelSerializer):
     coach_name  = serializers.CharField(source="coach.full_name",  read_only=True)
     # Frontend passes send_confirmation=false to suppress confirmation email
     send_confirmation = serializers.BooleanField(write_only=True, required=False, default=True)
+    # Frontend passes send_update=false to suppress reschedule email on edit
+    send_update = serializers.BooleanField(write_only=True, required=False, default=True)
 
     class Meta:
         model  = Activity
         fields = ["id", "activity_type", "title", "status", "start_at", "end_at",
                   "location", "notes", "rrule", "recurrence_id",
                   "google_cal_uid", "client", "client_name", "coach", "coach_name",
-                  "deal", "edit_history", "created_at", "send_confirmation",
+                  "deal", "edit_history", "created_at", "send_confirmation", "send_update",
                   "confirmation_sent_at", "cancellation_sent_at",
                   "reminder_24h_sent", "reminder_24h_sent_at",
                   "reminder_1h_sent",  "reminder_1h_sent_at"]
@@ -52,11 +54,19 @@ class ActivitySerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         request = self.context["request"]
         validated_data.pop("send_confirmation", None)
+        send_update = validated_data.pop("send_update", True)
 
         # Detect cancellation before saving
         new_status = validated_data.get("status")
         was_scheduled = instance.status == Activity.Status.SCHEDULED
         being_cancelled = new_status == Activity.Status.CANCELLED and was_scheduled
+
+        # Detect scheduling changes that warrant a reschedule email
+        scheduling_fields = {"start_at", "end_at", "title", "location"}
+        scheduling_changed = any(
+            k in scheduling_fields and getattr(instance, k) != v
+            for k, v in validated_data.items()
+        )
 
         # Record edit history
         diff = {k: [getattr(instance, k), v]
@@ -78,5 +88,9 @@ class ActivitySerializer(serializers.ModelSerializer):
         if being_cancelled and activity.client.email:
             from tasks.email import send_activity_cancellation_email
             _fire(send_activity_cancellation_email, str(activity.id))
+        # Reschedule/update notification email
+        elif send_update and scheduling_changed and was_scheduled and activity.client.email:
+            from tasks.email import send_activity_reschedule_email
+            _fire(send_activity_reschedule_email, str(activity.id))
 
         return activity
