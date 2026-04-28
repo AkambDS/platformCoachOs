@@ -64,7 +64,7 @@ body {
 }
 .sidebar-logo {
   padding: 24px 24px 22px;
-  border-bottom: 1px solid rgba(255,255,255,.07);
+  border-bottom: 1px solid rgba(255,255,255,.12);
 }
 .sidebar-logo-text {
   font-family: 'Cormorant Garamond', serif;
@@ -81,7 +81,7 @@ body {
   font-weight: 700;
   letter-spacing: .14em;
   text-transform: uppercase;
-  color: rgba(255,255,255,.28);
+  color: rgba(255,255,255,.50);
   margin-bottom: 2px;
 }
 .nav-item {
@@ -90,27 +90,27 @@ body {
   gap: 10px;
   padding: 10px 24px;
   font-size: 13.5px;
-  font-weight: 400;
-  color: rgba(248,245,240,.55);
+  font-weight: 500;
+  color: rgba(248,245,240,.80);
   cursor: pointer;
   transition: all .15s;
   position: relative;
   text-decoration: none;
 }
-.nav-item:hover { color: var(--paper); background: rgba(255,255,255,.05); }
-.nav-item.active { color: var(--paper); background: rgba(201,168,76,.1); }
+.nav-item:hover { color: #ffffff; background: rgba(255,255,255,.09); }
+.nav-item.active { color: #ffffff; background: rgba(201,168,76,.15); }
 .nav-item.active::before {
   content: '';
   position: absolute;
   left: 0; top: 0; bottom: 0;
-  width: 2px;
+  width: 3px;
   background: var(--gold);
 }
 .nav-icon { font-size: 14px; width: 18px; text-align: center; flex-shrink: 0; }
 .sidebar-bottom {
   margin-top: auto;
   padding: 16px 24px;
-  border-top: 1px solid rgba(255,255,255,.07);
+  border-top: 1px solid rgba(255,255,255,.12);
 }
 .sidebar-user { display: flex; align-items: center; gap: 10px; }
 .avatar {
@@ -122,7 +122,7 @@ body {
   flex-shrink: 0;
 }
 .sidebar-user-name { font-size: 12px; color: var(--paper); font-weight: 500; }
-.sidebar-user-role { font-size: 10px; color: var(--muted); }
+.sidebar-user-role { font-size: 10px; color: rgba(248,245,240,.55); }
 
 /* ── Page Header ── */
 .page-header {
