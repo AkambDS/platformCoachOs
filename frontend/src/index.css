@@ -5,6 +5,8 @@
 :root {
   --ink:        #1a1714;
   --ink-soft:   #2e2a26;
+  --navy:       #1a2f4e;
+  --navy-hover: #24405e;
   --paper:      #f7f4ef;
   --cream:      #ede9e1;
   --gold:       #b8922e;
@@ -52,7 +54,7 @@ body {
 
 /* ── Sidebar ── */
 .sidebar {
-  background: var(--ink);
+  background: var(--navy);
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -145,8 +147,8 @@ body {
   display: inline-flex; align-items: center; gap: 6px;
   border-radius: var(--radius-sm);
 }
-.btn-dark  { background: var(--ink);   color: var(--paper); box-shadow: var(--shadow-sm); }
-.btn-dark:hover { background: #2d2820; box-shadow: var(--shadow-md); }
+.btn-dark  { background: var(--navy);  color: var(--paper); box-shadow: var(--shadow-sm); }
+.btn-dark:hover { background: var(--navy-hover); box-shadow: var(--shadow-md); }
 .btn-gold  { background: var(--gold);  color: var(--ink);   box-shadow: var(--shadow-sm); }
 .btn-gold:hover { background: #b8963d; box-shadow: var(--shadow-md); }
 .btn-outline { background: transparent; border: 1px solid var(--border); color: var(--ink); }
@@ -259,7 +261,7 @@ body {
   transition: all .15s;
 }
 .filter-pill:hover { border-color: var(--ink); }
-.filter-pill.active { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.filter-pill.active { background: var(--navy); color: var(--paper); border-color: var(--navy); }
 
 /* ── Tag ── */
 .tag { display: inline-block; background: var(--cream); padding: 2px 8px; font-size: 10px; color: var(--muted); margin: 1px; }
@@ -310,7 +312,7 @@ body {
 /* ── Toast ── */
 .toast {
   position: fixed; bottom: 24px; right: 24px;
-  background: var(--ink); color: var(--paper);
+  background: var(--navy); color: var(--paper);
   padding: 12px 20px; font-size: 13px;
   border-left: 3px solid var(--gold);
   z-index: 999; animation: slideUp .25s ease;
@@ -408,7 +410,7 @@ body {
   .auth-brand { display: none; }
 }
 .auth-brand {
-  background: var(--ink);
+  background: var(--navy);
   padding: 52px 44px;
   display: flex;
   flex-direction: column;
@@ -534,7 +536,7 @@ body {
 .auth-btn {
   width: 100%;
   padding: 13px;
-  background: var(--ink);
+  background: var(--navy);
   color: var(--paper);
   border: none;
   font-family: 'DM Sans', sans-serif;
@@ -548,7 +550,7 @@ body {
   margin-top: 8px;
   box-shadow: var(--shadow-sm);
 }
-.auth-btn:hover { background: #2d2820; box-shadow: var(--shadow-md); }
+.auth-btn:hover { background: var(--navy-hover); box-shadow: var(--shadow-md); }
 .auth-btn:disabled { opacity: .6; cursor: not-allowed; box-shadow: none; }
 .auth-error {
   background: #fdf0eb;
