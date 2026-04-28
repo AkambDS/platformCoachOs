@@ -10,16 +10,21 @@ logger = logging.getLogger(__name__)
 
 
 def _logo_src(workspace) -> str:
-    """Return the logo as a base64 data URI for embedding directly in emails.
-    Using a data URI avoids broken image URLs in email clients that can't reach the backend."""
-    logo_data = getattr(workspace, "logo_data", "")
-    if logo_data and logo_data.startswith("data:"):
-        return logo_data
-    return ""
+    """Return a public HTTPS URL for the workspace logo, or empty string if none.
+    Falls back to empty (not localhost) so broken URLs never appear in emails."""
+    if not getattr(workspace, "logo_data", ""):
+        return ""
+    backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/")
+    if not backend_base:
+        allowed = getattr(settings, "ALLOWED_HOSTS", [])
+        host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
+        backend_base = f"https://{host}" if host else ""
+    if not backend_base:
+        return ""  # No valid public URL — show workspace name text fallback instead
+    return f"{backend_base}/api/settings/logo/{workspace.id}/"
 
 
 def _logo_url(workspace) -> str:
-    """Kept for backwards-compat — prefer _logo_src() for email use."""
     return _logo_src(workspace)
 
 

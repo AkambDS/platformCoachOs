@@ -62,17 +62,30 @@ class ActivitySerializer(serializers.ModelSerializer):
         was_scheduled = instance.status == Activity.Status.SCHEDULED
         being_cancelled = new_status == Activity.Status.CANCELLED and was_scheduled
 
-        # Detect scheduling changes that warrant a reschedule email
+        # Detect scheduling changes that warrant a reschedule email.
+        # Use try/except because comparing tz-aware (DB) vs tz-naive (submitted) datetimes
+        # raises TypeError — treat that as "changed" so the email still fires.
         scheduling_fields = {"start_at", "end_at", "title", "location"}
-        scheduling_changed = any(
-            k in scheduling_fields and getattr(instance, k) != v
-            for k, v in validated_data.items()
-        )
+        scheduling_changed = False
+        for k, v in validated_data.items():
+            if k not in scheduling_fields:
+                continue
+            try:
+                if getattr(instance, k) != v:
+                    scheduling_changed = True
+                    break
+            except TypeError:
+                scheduling_changed = True
+                break
 
         # Record edit history
-        diff = {k: [getattr(instance, k), v]
-                for k, v in validated_data.items()
-                if getattr(instance, k) != v}
+        diff = {}
+        for k, v in validated_data.items():
+            try:
+                if getattr(instance, k) != v:
+                    diff[k] = [getattr(instance, k), v]
+            except TypeError:
+                diff[k] = [str(getattr(instance, k)), str(v)]
         if diff:
             instance._append_edit(request.user, diff)
 

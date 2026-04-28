@@ -52,7 +52,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
 
     <!-- ── Header ── -->
     <tr>
-      <td style="background:#16130f;padding:24px 40px;border-radius:8px 8px 0 0;">
+      <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
             <td>{brand}</td>
@@ -250,7 +250,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
 
     <!-- Details table -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
       {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
@@ -311,7 +311,7 @@ def build_reschedule_email(activity, workspace_name: str, logo_url: str,
     </p>
 
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
       {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
@@ -456,7 +456,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
 
     <!-- Details table -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
       {_detail_row("When", f'<strong style="color:{accent_color};">{dt_human}</strong>')}
@@ -580,7 +580,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     <!-- Invoice details -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #16130f;border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("Invoice #", invoice.number)}
       {_divider()}
       {_detail_row("Amount", f'<strong style="color:#1a1714;font-size:18px;">{amount}</strong>')}
