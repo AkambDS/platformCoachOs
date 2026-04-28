@@ -33,6 +33,7 @@ class ActivitySerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context["request"]
         send_confirmation = validated_data.pop("send_confirmation", True)
+        validated_data.pop("send_update", None)
         validated_data["workspace"] = request.user.workspace
         validated_data.setdefault("coach", request.user)
         activity = super().create(validated_data)
