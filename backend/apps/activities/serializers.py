@@ -78,14 +78,25 @@ class ActivitySerializer(serializers.ModelSerializer):
                 scheduling_changed = True
                 break
 
-        # Record edit history
+        # Record edit history — values must be JSON-safe (datetimes/UUIDs → strings)
+        def _json_safe(val):
+            import datetime, uuid
+            if isinstance(val, (datetime.datetime, datetime.date)):
+                return val.isoformat()
+            if isinstance(val, uuid.UUID):
+                return str(val)
+            return val
+
         diff = {}
         for k, v in validated_data.items():
             try:
-                if getattr(instance, k) != v:
-                    diff[k] = [getattr(instance, k), v]
+                old = getattr(instance, k)
+                changed = old != v
             except TypeError:
-                diff[k] = [str(getattr(instance, k)), str(v)]
+                changed = True
+                old = getattr(instance, k)
+            if changed:
+                diff[k] = [_json_safe(old), _json_safe(v)]
         if diff:
             instance._append_edit(request.user, diff)
 
