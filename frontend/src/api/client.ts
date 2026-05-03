@@ -36,7 +36,9 @@ export const authApi = {
   inviteEmailPreview: (email: string, role: string) =>
     api.get('/api/auth/invite-email-preview/', { params: { email, role } }),
   acceptInvite:       (d: any) => api.post('/api/auth/accept-invite/', d),
-  team:               ()       => api.get('/api/auth/team/'),
+  team:               ()                   => api.get('/api/auth/team/'),
+  updateMember:       (id: string, d: any) => api.patch(`/api/auth/team/${id}/`, d),
+  deleteMember:       (id: string)         => api.delete(`/api/auth/team/${id}/`),
 }
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),

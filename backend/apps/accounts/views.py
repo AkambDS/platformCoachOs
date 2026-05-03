@@ -234,3 +234,38 @@ class TeamView(generics.ListAPIView):
 
     def get_queryset(self):
         return User.objects.filter(workspace=self.request.user.workspace)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def team_member_detail(request, pk):
+    """
+    PATCH /api/auth/team/<pk>/ — change a member's role (coach ↔ assistant).
+    DELETE /api/auth/team/<pk>/ — remove a member from the workspace.
+    Business Owner only. Cannot target yourself or another Business Owner.
+    """
+    try:
+        member = User.objects.get(id=pk, workspace=request.user.workspace)
+    except User.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if member.id == request.user.id:
+        return Response({"detail": "You cannot edit or remove yourself."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if member.role == "business_owner":
+        return Response({"detail": "Business Owner accounts cannot be edited or removed here."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if request.method == "PATCH":
+        role = request.data.get("role")
+        if role not in ("coach", "assistant"):
+            return Response({"detail": "Role must be 'coach' or 'assistant'."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        member.role = role
+        member.save(update_fields=["role"])
+        return Response(UserSerializer(member).data)
+
+    # DELETE
+    member.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

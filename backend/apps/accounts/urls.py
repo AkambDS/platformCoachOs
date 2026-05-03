@@ -12,4 +12,5 @@ urlpatterns = [
     path("accept-invite/",        views.accept_invite,             name="auth-accept-invite"),
     path("me/",            views.MeView.as_view(),          name="auth-me"),
     path("team/",          views.TeamView.as_view(),        name="auth-team"),
+    path("team/<uuid:pk>/", views.team_member_detail,       name="auth-team-member"),
 ]

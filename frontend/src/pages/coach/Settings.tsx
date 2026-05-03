@@ -4,7 +4,7 @@ import { authApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
-import { User, Shield, Building2, Mail, Plus } from 'lucide-react'
+import { User, Shield, Building2, Mail, Plus, Pencil, Trash2 } from 'lucide-react'
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
@@ -309,6 +309,38 @@ function TeamTab() {
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
 
+  const [editTarget, setEditTarget] = useState<any | null>(null)
+  const [editRole, setEditRole] = useState('')
+  const [editSaving, setEditSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  const handleEditSave = async () => {
+    if (!editTarget) return
+    setEditSaving(true)
+    try {
+      await authApi.updateMember(editTarget.id, { role: editRole })
+      qc.invalidateQueries({ queryKey: ['team'] })
+      setEditTarget(null)
+      show(`${editTarget.full_name}'s role updated to ${ROLE_LABELS[editRole]}`)
+    } catch (err: any) {
+      show(err.response?.data?.detail || 'Failed to update role', 'error')
+    } finally { setEditSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await authApi.deleteMember(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: ['team'] })
+      setDeleteTarget(null)
+      show(`${deleteTarget.full_name} removed from team`)
+    } catch (err: any) {
+      show(err.response?.data?.detail || 'Failed to remove member', 'error')
+    } finally { setDeleting(false) }
+  }
+
   const { data, isLoading } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -376,6 +408,28 @@ function TeamTab() {
               }}>
                 {ROLE_LABELS[m.role] || m.role}
               </span>
+              {isOwner && m.id !== currentUser?.id && m.role !== 'business_owner' && (
+                <div style={{ display: 'flex', gap: 4, marginLeft: 4 }}>
+                  <button
+                    onClick={() => { setEditTarget(m); setEditRole(m.role) }}
+                    title="Change role"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--ink)')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+                  >
+                    <Pencil size={13} />
+                  </button>
+                  <button
+                    onClick={() => setDeleteTarget(m)}
+                    title="Remove from team"
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
+                    onMouseEnter={e => (e.currentTarget.style.color = '#b91c1c')}
+                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -397,6 +451,59 @@ function TeamTab() {
           </div>
         ))}
       </div>
+
+      {/* Edit Role Modal */}
+      {editTarget && (
+        <Modal
+          title="Change Role"
+          onClose={() => setEditTarget(null)}
+          footer={
+            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+              <button className="btn btn-dark btn-sm" onClick={handleEditSave} disabled={editSaving}>
+                {editSaving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          }
+        >
+          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
+            Updating role for <strong style={{ color: 'var(--ink)' }}>{editTarget.full_name}</strong>
+          </p>
+          <div className="fgroup">
+            <label className="flabel">Role</label>
+            <select className="fselect" value={editRole} onChange={e => setEditRole(e.target.value)}>
+              <option value="coach">Coach — manage clients &amp; sessions</option>
+              <option value="assistant">Assistant — scheduling &amp; view only</option>
+            </select>
+          </div>
+        </Modal>
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteTarget && (
+        <Modal
+          title="Remove Team Member"
+          onClose={() => setDeleteTarget(null)}
+          footer={
+            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                onClick={handleDelete}
+                disabled={deleting}
+                style={{ background: '#b91c1c', color: '#fff', border: 'none' }}
+              >
+                {deleting ? 'Removing…' : 'Remove'}
+              </button>
+            </div>
+          }
+        >
+          <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+            Remove <strong style={{ color: 'var(--ink)' }}>{deleteTarget.full_name}</strong> ({deleteTarget.email}) from the workspace?
+            They will lose access immediately.
+          </p>
+        </Modal>
+      )}
 
       {/* Invite Modal */}
       {showInvite && (
