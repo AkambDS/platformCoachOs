@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, activitiesApi, invoicesApi, pipelineApi } from '../../api/client'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { clientsApi, activitiesApi, invoicesApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { PageHeader, Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
 
 const ACTIVITY_TYPES = ['appointment','task','call','session','training','travel','custom']
 const GOAL_STATUSES  = ['active','completed','paused']
@@ -345,15 +345,43 @@ export default function ClientDetail() {
                 <div className="card-body">
                   <div className="kv">
                     <span className="kvl">Active Flag</span>
-                    <input type="checkbox" checked={editMode ? ef.active_flag : client.active_flag}
-                      onChange={e => editMode && setEditForm((f: any) => ({ ...f, active_flag: e.target.checked }))}
-                      disabled={!editMode} style={{ accentColor: 'var(--gold)' }} />
+                    <input type="checkbox"
+                      checked={editMode ? ef.active_flag : client.active_flag}
+                      style={{ accentColor: 'var(--gold)', cursor: 'pointer' }}
+                      onChange={async e => {
+                        const val = e.target.checked
+                        if (editMode) {
+                          setEditForm((f: any) => ({ ...f, active_flag: val }))
+                        } else {
+                          try {
+                            await clientsApi.patch(id!, { active_flag: val })
+                            qc.invalidateQueries({ queryKey: ['client', id] })
+                            qc.invalidateQueries({ queryKey: ['clients'] })
+                            showToast(val ? 'Client marked active' : 'Client marked inactive')
+                          } catch { showToast('Failed to update', 'error') }
+                        }
+                      }}
+                    />
                   </div>
                   <div className="kv">
                     <span className="kvl">Portal Access</span>
-                    <input type="checkbox" checked={editMode ? ef.portal_access : client.portal_access}
-                      onChange={e => editMode && setEditForm((f: any) => ({ ...f, portal_access: e.target.checked }))}
-                      disabled={!editMode} style={{ accentColor: 'var(--gold)' }} />
+                    <input type="checkbox"
+                      checked={editMode ? ef.portal_access : client.portal_access}
+                      style={{ accentColor: 'var(--gold)', cursor: 'pointer' }}
+                      onChange={async e => {
+                        const val = e.target.checked
+                        if (editMode) {
+                          setEditForm((f: any) => ({ ...f, portal_access: val }))
+                        } else {
+                          try {
+                            await clientsApi.patch(id!, { portal_access: val })
+                            qc.invalidateQueries({ queryKey: ['client', id] })
+                            qc.invalidateQueries({ queryKey: ['clients'] })
+                            showToast(val ? 'Portal access enabled' : 'Portal access disabled')
+                          } catch { showToast('Failed to update', 'error') }
+                        }
+                      }}
+                    />
                   </div>
                 </div>
               </div>
