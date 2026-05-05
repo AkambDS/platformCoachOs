@@ -13,6 +13,10 @@ class WorkspaceTenantMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # Admin uses session auth and needs unrestricted access to all workspaces
+        if request.path.startswith("/admin/"):
+            return self.get_response(request)
+
         workspace_id = None
         client_id    = None
 

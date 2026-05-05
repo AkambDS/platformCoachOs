@@ -19,7 +19,7 @@ class UserAdmin(BaseUserAdmin):
     ordering       = ["-date_joined"]
     fieldsets      = (
         (None,           {"fields": ("email", "password")}),
-        ("Profile",      {"fields": ("full_name", "timezone", "avatar_url")}),
+        ("Profile",      {"fields": ("full_name", "user_timezone", "avatar_url")}),
         ("Workspace",    {"fields": ("workspace", "role")}),
         ("Permissions",  {"fields": ("is_active", "is_staff", "is_superuser")}),
         ("Dates",        {"fields": ("last_login", "date_joined")}),
