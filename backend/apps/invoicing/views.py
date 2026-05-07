@@ -4,9 +4,6 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.utils import timezone
-from django.dispatch import receiver
-from djstripe.signals import WEBHOOK_SIGNALS
-
 from .models import Invoice, Payment
 from .serializers import InvoiceListSerializer, InvoiceDetailSerializer, PaymentSerializer
 from apps.accounts.permissions import IsCoachOrAbove
@@ -85,43 +82,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(InvoiceDetailSerializer(invoice).data)
 
 
-# ── dj-stripe 2.9+ webhook handlers (Django signals, not djstripe_receiver) ──
-
-@receiver(WEBHOOK_SIGNALS["invoice.payment_succeeded"])
-def on_payment_succeeded(sender, event, **kwargs):
-    stripe_invoice = event.data["object"]
-    try:
-        invoice = Invoice.objects.get(stripe_invoice_id=stripe_invoice["id"])
-        invoice.status      = Invoice.Status.PAID
-        invoice.amount_paid = invoice.total
-        invoice.paid_at     = timezone.now()
-        invoice.save()
-    except Invoice.DoesNotExist:
-        pass
-
-
-@receiver(WEBHOOK_SIGNALS["invoice.payment_failed"])
-def on_payment_failed(sender, event, **kwargs):
-    stripe_invoice = event.data["object"]
-    try:
-        invoice = Invoice.objects.get(stripe_invoice_id=stripe_invoice["id"])
-        if invoice.status not in (Invoice.Status.PAID,):
-            invoice.status = Invoice.Status.OVERDUE
-            invoice.save()
-        from tasks.email import send_payment_failed_email
-        send_payment_failed_email(str(invoice.id))
-    except Invoice.DoesNotExist:
-        pass
-
-
-@receiver(WEBHOOK_SIGNALS["charge.refunded"])
-def on_charge_refunded(sender, event, **kwargs):
-    charge            = event.data["object"]
-    stripe_invoice_id = charge.get("invoice")
-    if stripe_invoice_id:
-        try:
-            invoice        = Invoice.objects.get(stripe_invoice_id=stripe_invoice_id)
-            invoice.status = Invoice.Status.REFUNDED
-            invoice.save()
-        except Invoice.DoesNotExist:
-            pass
+# ── Stripe webhook handlers — disabled (Stripe removed from INSTALLED_APPS)
+# Re-enable when porting to AWS with full Stripe integration
+# on_payment_succeeded, on_payment_failed, on_charge_refunded
