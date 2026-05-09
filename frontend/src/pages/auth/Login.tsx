@@ -106,12 +106,6 @@ export default function Login() {
           <p className="auth-footer" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 24 }}>
             Coaches &amp; assistants — use the invite link sent to your email.
           </p>
-          <p className="auth-footer" style={{ fontSize: 11, marginTop: 8 }}>
-            Business owner?{' '}
-            <a href="/register" style={{ color: 'var(--muted)', textDecoration: 'underline' }}>
-              Create your workspace
-            </a>
-          </p>
         </div>
       </div>
     </div>

@@ -15,8 +15,9 @@ if not SECRET_KEY:
     print("⚠️  WARNING: SECRET_KEY not set! Generating temporary key for this deployment.")
     print("    To fix: Set SECRET_KEY environment variable in Render dashboard")
     SECRET_KEY = token_urlsafe(50)
-DEBUG         = env("DEBUG", default="False")
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+DEBUG               = env("DEBUG", default="False")
+ALLOWED_HOSTS       = env.list("ALLOWED_HOSTS", default=[])
+REGISTRATION_OPEN   = env.bool("REGISTRATION_OPEN", default=False)
 
 DJANGO_APPS = [
     "django.contrib.admin",

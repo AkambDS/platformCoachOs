@@ -46,8 +46,14 @@ def register(request):
     """
     POST /api/auth/register/
     Bootstrap first workspace + Business Owner account.
-    Used for POC setup and Phase 3 self-serve signup.
+    Blocked by default — only open when REGISTRATION_OPEN=True in settings.
     """
+    from django.conf import settings as django_settings
+    if not getattr(django_settings, "REGISTRATION_OPEN", False):
+        return Response(
+            {"detail": "Workspace registration is currently closed. Contact your administrator."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
     serializer = RegisterWorkspaceSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
