@@ -1,25 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
-
-interface PublicBranding { name: string; logo_url: string; primary_colour: string }
 
 export default function Login() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
-  const [branding, setBranding] = useState<PublicBranding | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
-
-  useEffect(() => {
-    fetch('/api/settings/public-branding/')
-      .then(r => r.json())
-      .then(d => setBranding(d))
-      .catch(() => {})
-  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -39,22 +29,13 @@ export default function Login() {
       <div className="auth-brand">
         {/* Logo */}
         <div className="auth-brand-logo">
-          {branding?.logo_url ? (
-            <img src={branding.logo_url} alt={branding.name}
-              style={{ maxHeight: 52, maxWidth: 180, objectFit: 'contain', display: 'block' }} />
-          ) : (
-            <>Coach<span>OS</span></>
-          )}
+          <>Coach<span>OS</span></>
         </div>
         <div className="auth-brand-logo-sub">Coaching Management Platform</div>
 
         <div className="auth-brand-content">
           <div className="auth-brand-headline">
-            {branding?.name ? (
-              <>{branding.name}<br /><em>coaching platform</em></>
-            ) : (
-              <>Your coaching<br />practice, <em>elevated</em></>
-            )}
+            <>Your coaching<br />practice, <em>elevated</em></>
           </div>
           <p className="auth-brand-sub">
             Everything you need to run a world-class coaching business — clients, sessions, pipeline, and revenue in one place.
