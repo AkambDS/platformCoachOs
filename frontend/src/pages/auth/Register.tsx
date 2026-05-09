@@ -52,6 +52,7 @@ export default function Register() {
             <>Coach<span>OS</span></>
           )}
         </div>
+        <div className="auth-brand-logo-sub">Coaching Management Platform</div>
 
         <div className="auth-brand-content">
           <div className="auth-brand-headline">
