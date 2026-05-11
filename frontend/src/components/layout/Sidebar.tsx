@@ -16,23 +16,23 @@ import {
 
 type NavItem =
   | { section: string; roles?: string[] }
-  | { to: string; Icon: React.ElementType; label: string; roles?: string[] }
+  | { to: string; Icon: React.ElementType; label: string; roles?: string[]; tour?: string }
 
 const NAV: NavItem[] = [
   { section: 'Workspace' },
-  { to: '/dashboard',  Icon: LayoutDashboard, label: 'Dashboard'  },
-  { to: '/clients',    Icon: Users,            label: 'Clients'    },
-  { to: '/pipeline',   Icon: Kanban,           label: 'Pipeline'   },
+  { to: '/dashboard',  Icon: LayoutDashboard, label: 'Dashboard',  tour: 'dashboard'  },
+  { to: '/clients',    Icon: Users,            label: 'Clients',    tour: 'clients'    },
+  { to: '/pipeline',   Icon: Kanban,           label: 'Pipeline',   tour: 'pipeline'   },
   { section: 'Schedule' },
   { to: '/calendar',   Icon: CalendarDays,     label: 'Calendar'   },
-  { to: '/activities', Icon: CheckSquare,      label: 'Activities' },
+  { to: '/activities', Icon: CheckSquare,      label: 'Activities', tour: 'activities' },
   { section: 'Finance', roles: ['business_owner', 'coach'] },
-  { to: '/invoices',   Icon: Receipt,          label: 'Invoices',  roles: ['business_owner', 'coach'] },
+  { to: '/invoices',   Icon: Receipt,          label: 'Invoices',   roles: ['business_owner', 'coach'], tour: 'invoices' },
   { section: 'Content' },
   { to: '/library',    Icon: BookOpen,         label: 'Library'    },
-  { to: '/reports',    Icon: BarChart3,        label: 'Reports',   roles: ['business_owner', 'coach'] },
+  { to: '/reports',    Icon: BarChart3,        label: 'Reports',    roles: ['business_owner', 'coach'], tour: 'reports' },
   { section: 'System' },
-  { to: '/settings',   Icon: Settings,         label: 'Settings'   },
+  { to: '/settings',   Icon: Settings,         label: 'Settings',   tour: 'settings'  },
 ]
 
 export default function Sidebar() {
@@ -67,6 +67,7 @@ export default function Sidebar() {
               key={item.to}
               to={item.to}
               className={({ isActive }) => `nav-item${isActive ? ' active' : ''}`}
+              {...(item.tour ? { 'data-tour': item.tour } : {})}
             >
               <span className="nav-icon"><Icon size={14} strokeWidth={1.75} /></span>
               {item.label}

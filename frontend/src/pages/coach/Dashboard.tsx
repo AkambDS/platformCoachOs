@@ -4,6 +4,8 @@ import { reportsApi, invoicesApi, clientsApi, activitiesApi, pipelineApi } from 
 import { useAuthStore } from "../../store/auth"
 import AppShell from "../../components/layout/AppShell"
 import { PageHeader, StatusBadge } from "../../components/ui"
+import WelcomeModal from "../../components/WelcomeModal"
+import { useTour } from "../../hooks/useTour"
 
 function fmtDatetime(d: string) {
   if (!d) return "—"
@@ -28,18 +30,25 @@ export default function Dashboard() {
   const activeDeals = deals.filter((d: any) => !["closed_lost"].includes(d.stage))
   const pipelineValue = activeDeals.reduce((s: number, d: any) => s + Number(d.deal_value || 0), 0)
 
+  const { startTour } = useTour()
   const hour = new Date().getHours()
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
 
   return (
     <AppShell>
+      <WelcomeModal onStartTour={startTour} />
       <PageHeader
         title={`${greeting}, ${user?.full_name?.split(" ")[0]}`}
         subtitle={workspace?.name || ""}
         action={
-          <button className="btn btn-dark" onClick={() => navigate("/clients?new=1")}>
-            + New Client
-          </button>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-ghost btn-sm" onClick={startTour} style={{ fontSize: 12 }}>
+              🗺 Take a Tour
+            </button>
+            <button className="btn btn-dark" onClick={() => navigate("/clients?new=1")}>
+              + New Client
+            </button>
+          </div>
         }
       />
 
