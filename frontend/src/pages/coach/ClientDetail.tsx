@@ -49,11 +49,14 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const toUTC = (local: string) => local ? new Date(local).toISOString() : local
+
   const handleSave = async () => {
     if (!form.title || !form.start_at) return
     setSaving(true)
+    const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
     try {
-      await activitiesApi.create({ ...form, client: clientId, send_confirmation: sendConfirmation })
+      await activitiesApi.create({ ...payload, client: clientId, send_confirmation: sendConfirmation })
       qc.invalidateQueries({ queryKey: ['client-activities', clientId] })
       onSaved(sendConfirmation)
     } catch { } finally { setSaving(false) }

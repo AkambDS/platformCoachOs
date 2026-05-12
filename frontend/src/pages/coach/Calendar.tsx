@@ -20,6 +20,13 @@ const TYPE_COLOURS: Record<string, string> = {
 
 const ACTIVITY_TYPES = ['appointment', 'task', 'call', 'session', 'training', 'travel', 'custom']
 
+function toLocalInput(utc: string) {
+  if (!utc) return ''
+  const d = new Date(utc)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 // ── New Activity Modal ─────────────────────────────────────────────────────────
 function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const qc = useQueryClient()
@@ -37,11 +44,14 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const toUTC = (local: string) => local ? new Date(local).toISOString() : local
+
   const handleSave = async () => {
     if (!form.client || !form.title || !form.start_at) return
     setSaving(true)
+    const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
     try {
-      await activitiesApi.create({ ...form, send_confirmation: sendConfirmation })
+      await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation })
       qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved(sendConfirmation)
     } catch { } finally { setSaving(false) }
@@ -139,8 +149,8 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     client: activity.client || '',
     activity_type: activity.activity_type || 'session',
     title: activity.title || '',
-    start_at: activity.start_at ? activity.start_at.slice(0, 16) : '',
-    end_at: activity.end_at ? activity.end_at.slice(0, 16) : '',
+    start_at: activity.start_at ? toLocalInput(activity.start_at) : '',
+    end_at: activity.end_at ? toLocalInput(activity.end_at) : '',
     location: activity.location || '',
     notes: activity.notes || '',
   })
@@ -148,11 +158,14 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
   const [saveError, setSaveError] = useState('')
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const toUTC = (local: string) => local ? new Date(local).toISOString() : local
+
   const handleSave = async () => {
     setSaving(true)
     setSaveError('')
+    const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
     try {
-      await activitiesApi.patch(activity.id, form)
+      await activitiesApi.patch(activity.id, payload)
       qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved()
     } catch (err: any) {

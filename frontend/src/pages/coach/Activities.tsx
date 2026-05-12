@@ -27,6 +27,13 @@ const STATUS_TABS = [
   { label: 'Cancelled', value: 'cancelled' },
 ]
 
+function toLocalInput(utc: string) {
+  if (!utc) return ''
+  const d = new Date(utc)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
 function fmt(d: string) {
   if (!d) return '—'
   return new Date(d).toLocaleString('en-US', {
@@ -52,8 +59,8 @@ function ActivityFormModal({
     client:        initial?.client        || '',
     activity_type: initial?.activity_type || 'session',
     title:         initial?.title         || '',
-    start_at:      initial?.start_at ? initial.start_at.slice(0, 16) : '',
-    end_at:        initial?.end_at   ? initial.end_at.slice(0, 16)   : '',
+    start_at:      initial?.start_at ? toLocalInput(initial.start_at) : '',
+    end_at:        initial?.end_at   ? toLocalInput(initial.end_at)   : '',
     location:      initial?.location      || '',
     notes:         initial?.notes         || '',
   })
@@ -61,15 +68,18 @@ function ActivityFormModal({
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
+  const toUTC = (local: string) => local ? new Date(local).toISOString() : local
+
   const handleSave = async () => {
     if (!form.client || !form.title || !form.start_at) return
     setSaving(true)
+    const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
     try {
       if (isEdit) {
-        await activitiesApi.patch(initial.id, form)
+        await activitiesApi.patch(initial.id, payload)
         onSaved()
       } else {
-        await activitiesApi.create({ ...form, send_confirmation: sendConfirmation })
+        await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation })
         onSaved(sendConfirmation)
       }
     } catch { } finally { setSaving(false) }
