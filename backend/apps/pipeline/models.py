@@ -21,8 +21,9 @@ class Deal(WorkspaceModel):
     id               = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client           = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="deals")
     coach            = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="deals")
-    stage            = models.CharField(max_length=30, choices=Stage.choices, default=Stage.LEAD_NEW)
-    stage_changed_at = models.DateTimeField(auto_now_add=True)
+    stage            = models.CharField(max_length=50, default=Stage.LEAD_NEW)
+    stage_changed_at    = models.DateTimeField(auto_now_add=True)
+    pipeline_alert_sent_at = models.DateTimeField(null=True, blank=True)
     deal_value       = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
     source           = models.CharField(max_length=100, blank=True)
     notes            = models.TextField(blank=True)
@@ -36,11 +37,32 @@ class Deal(WorkspaceModel):
 
     def advance_stage(self, new_stage):
         from django.utils import timezone
-        self.stage            = new_stage
-        self.stage_changed_at = timezone.now()
+        self.stage                  = new_stage
+        self.stage_changed_at       = timezone.now()
+        self.pipeline_alert_sent_at = None
         if new_stage == self.Stage.CLOSED_LOST:
             self.closed_at = timezone.now()
         self.save()
+
+
+class PipelineStageConfig(WorkspaceModel):
+    """Workspace-configurable pipeline stage definitions + follow-up timeline."""
+    slug           = models.CharField(max_length=50)
+    label          = models.CharField(max_length=50)
+    color          = models.CharField(max_length=7, default="#1e3a5f")
+    order          = models.PositiveIntegerField(default=0)
+    follow_up_days = models.PositiveIntegerField(null=True, blank=True)
+    notify_owner   = models.BooleanField(default=True)
+    notify_client  = models.BooleanField(default=False)
+    is_builtin     = models.BooleanField(default=False)
+
+    class Meta:
+        db_table        = "pipeline_stageconfigconfig"
+        unique_together = ["workspace", "slug"]
+        ordering        = ["order"]
+
+    def __str__(self):
+        return f"{self.workspace} / {self.label} ({self.follow_up_days}d)"
 
 
 class StageHistory(WorkspaceModel):

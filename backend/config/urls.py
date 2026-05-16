@@ -77,6 +77,53 @@ def run_pending_invites(request):
     threading.Thread(target=_send_all, daemon=True).start()
     return Response({"detail": "ok", "queued": len(pending_ids)})
 
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def run_pipeline_alerts(request):
+    """POST /api/internal/pipeline-alerts/ — daily cron. Sends follow-up alerts for overdue deals."""
+    secret = request.headers.get("X-Cron-Secret", "")
+    expected = getattr(django_settings, "CRON_SECRET", "")
+    if not expected or secret != expected:
+        return Response({"detail": "Forbidden"}, status=403)
+
+    import threading
+
+    def _run():
+        import logging
+        from django.utils import timezone
+        from apps.pipeline.models import Deal, PipelineStageConfig
+        from apps.accounts.models import User
+        logger = logging.getLogger(__name__)
+        now = timezone.now()
+        active_deals = Deal.objects.exclude(
+            stage__in=["closed_lost", "active_client"]
+        ).select_related("workspace", "client", "coach")
+        sent = 0
+        for deal in active_deals:
+            if deal.pipeline_alert_sent_at:
+                continue
+            try:
+                cfg = PipelineStageConfig.objects.get(workspace=deal.workspace, slug=deal.stage)
+            except PipelineStageConfig.DoesNotExist:
+                continue
+            if not cfg.follow_up_days:
+                continue
+            days_in_stage = (now - deal.stage_changed_at).days
+            if days_in_stage < cfg.follow_up_days:
+                continue
+            # Send alert
+            try:
+                from tasks.email import send_pipeline_alert
+                send_pipeline_alert(str(deal.id))
+                Deal.objects.filter(pk=deal.pk).update(pipeline_alert_sent_at=now)
+                sent += 1
+            except Exception as e:
+                logger.error(f"Pipeline alert failed for deal {deal.id}: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    return Response({"detail": "ok"})
+
+
 # Health check endpoint - doesn't require database
 def health_check(request):
     return JsonResponse({"status": "ok"}, status=200)
@@ -115,8 +162,9 @@ urlpatterns = [
     path("api/settings/",    include("apps.settings_app.urls")),
     path("api/portal/",      include("apps.portal.urls")),
     path("api/stripe/",      include("djstripe.urls", namespace="djstripe")),
-    path("api/internal/reminders/", run_reminders),
-    path("api/internal/invites/",   run_pending_invites),
+    path("api/internal/reminders/",       run_reminders),
+    path("api/internal/invites/",         run_pending_invites),
+    path("api/internal/pipeline-alerts/", run_pipeline_alerts),
     path("accounts/",        include("allauth.urls")),
     # OpenAPI
     path("api/schema/",            SpectacularAPIView.as_view(), name="schema"),

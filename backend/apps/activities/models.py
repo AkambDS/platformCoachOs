@@ -77,3 +77,23 @@ class Activity(WorkspaceModel):
             "changed_at":   timezone.now().isoformat(),
             "diff":         diff,
         })
+
+
+BUILTIN_TYPES = ["appointment", "task", "call", "session", "training", "travel", "custom"]
+
+
+class ActivityTypeConfig(WorkspaceModel):
+    """Workspace-configurable activity types. Built-ins seeded on first access."""
+    name       = models.CharField(max_length=50)
+    color      = models.CharField(max_length=7, default="#1a1714")
+    is_active  = models.BooleanField(default=True)
+    is_builtin = models.BooleanField(default=False)
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table        = "activities_activitytypeconfig"
+        unique_together = ["workspace", "name"]
+        ordering        = ["sort_order", "name"]
+
+    def __str__(self):
+        return f"{self.workspace} / {self.name}"

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { activitiesApi, clientsApi } from '../../api/client'
+import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast, ConfirmDialog } from '../../components/ui'
 import {
@@ -17,8 +17,6 @@ const TYPE_COLOURS: Record<string, string> = {
   travel:      '#8c8279',
   custom:      '#a0522d',
 }
-const ACTIVITY_TYPES = ['appointment', 'task', 'call', 'session', 'training', 'travel', 'custom']
-
 const STATUS_TABS = [
   { label: 'All',       value: '' },
   { label: 'Scheduled', value: 'scheduled' },
@@ -51,6 +49,11 @@ function ActivityFormModal({
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
+  })
+  const { data: activityTypes = [] } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+    select: (d: any[]) => d.filter(t => t.is_active),
   })
   const clients: any[] = clientsData?.results || clientsData || []
   const isEdit = !!initial?.id
@@ -111,8 +114,8 @@ function ActivityFormModal({
         <div className="fgroup">
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-            {ACTIVITY_TYPES.map(t => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            {(activityTypes as any[]).map((t: any) => (
+              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
             ))}
           </select>
         </div>
@@ -352,6 +355,12 @@ export default function Activities() {
   if (statusFilter) params.status = statusFilter
   if (typeFilter)   params.activity_type = typeFilter
 
+  const { data: activityTypesList = [] } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+    select: (d: any[]) => d.filter(t => t.is_active),
+  })
+
   const { data, isLoading } = useQuery({
     queryKey: ['activities-list', statusFilter, typeFilter],
     queryFn: () => activitiesApi.list(params).then(r => r.data),
@@ -443,8 +452,8 @@ export default function Activities() {
             onChange={e => setTypeFilter(e.target.value)}
           >
             <option value="">All types</option>
-            {ACTIVITY_TYPES.map(t => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            {(activityTypesList as any[]).map((t: any) => (
+              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
             ))}
           </select>
         </div>

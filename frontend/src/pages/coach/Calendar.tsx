@@ -4,7 +4,7 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { activitiesApi, clientsApi } from '../../api/client'
+import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast, ConfirmDialog } from '../../components/ui'
 
@@ -17,8 +17,6 @@ const TYPE_COLOURS: Record<string, string> = {
   travel:      '#8c8279',
   custom:      '#a0522d',
 }
-
-const ACTIVITY_TYPES = ['appointment', 'task', 'call', 'session', 'training', 'travel', 'custom']
 
 function toLocalInput(utc: string) {
   if (!utc) return ''
@@ -33,6 +31,11 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
+  })
+  const { data: activityTypes = [] } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+    select: (d: any[]) => d.filter(t => t.is_active),
   })
   const clients: any[] = clientsData?.results || clientsData || []
   const [form, setForm] = useState({
@@ -79,8 +82,8 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
         <div className="fgroup">
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-            {ACTIVITY_TYPES.map(t => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            {(activityTypes as any[]).map((t: any) => (
+              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
             ))}
           </select>
         </div>
@@ -144,6 +147,11 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
   })
+  const { data: activityTypes = [] } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+    select: (d: any[]) => d.filter(t => t.is_active),
+  })
   const clients: any[] = clientsData?.results || clientsData || []
   const [form, setForm] = useState({
     client: activity.client || '',
@@ -200,8 +208,8 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
         <div className="fgroup">
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-            {ACTIVITY_TYPES.map(t => (
-              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            {(activityTypes as any[]).map((t: any) => (
+              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
             ))}
           </select>
         </div>

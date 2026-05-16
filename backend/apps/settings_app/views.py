@@ -7,7 +7,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import HttpResponse
 from apps.accounts.models import Workspace
-from .serializers import BrandingSerializer, SchedulingSerializer, WorkspaceSerializer
+from .serializers import (
+    BrandingSerializer, SchedulingSerializer, WorkspaceSerializer,
+    PipelineStageConfigSerializer, ActivityTypeConfigSerializer,
+)
+from apps.pipeline.models import PipelineStageConfig
+from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
 
 
@@ -109,6 +114,126 @@ def public_branding(request):
         })
     except Exception:
         return Response({"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"})
+
+
+_BUILTIN_COLORS = {
+    "appointment": "#c9a84c", "task": "#4a7c59", "call": "#2d6a9f",
+    "session": "#1a1714",    "training": "#7c4d9f", "travel": "#8c8279",
+    "custom": "#a0522d",
+}
+
+_BUILTIN_STAGES = [
+    {"slug": "lead_new",            "label": "Lead – New",            "color": "#8c8279", "order": 0},
+    {"slug": "discovery_scheduled", "label": "Discovery Scheduled",   "color": "#2d6a9f", "order": 1},
+    {"slug": "discovery_completed", "label": "Discovery Completed",   "color": "#2980b9", "order": 2},
+    {"slug": "proposal_sent",       "label": "Proposal Sent",         "color": "#c9a84c", "order": 3},
+    {"slug": "verbal_yes",          "label": "Verbal Yes",            "color": "#4a7c59", "order": 4},
+    {"slug": "active_client",       "label": "Active Client",         "color": "#1a1714", "order": 5},
+    {"slug": "on_hold",             "label": "On Hold",               "color": "#7c4d9f", "order": 6},
+    {"slug": "closed_lost",         "label": "Closed – Lost",         "color": "#c0392b", "order": 7},
+]
+
+
+def _seed_pipeline_stages(workspace):
+    for s in _BUILTIN_STAGES:
+        PipelineStageConfig.objects.get_or_create(
+            workspace=workspace, slug=s["slug"],
+            defaults={**s, "is_builtin": True, "follow_up_days": None,
+                      "notify_owner": True, "notify_client": False},
+        )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def pipeline_stage_configs(request):
+    """GET /api/settings/pipeline-stages/ — list; POST — create custom stage."""
+    workspace = request.user.workspace
+    _seed_pipeline_stages(workspace)
+
+    if request.method == "GET":
+        qs = PipelineStageConfig.objects.filter(workspace=workspace)
+        return Response(PipelineStageConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = PipelineStageConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace, is_builtin=False)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def pipeline_stage_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/pipeline-stages/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = PipelineStageConfig.objects.get(pk=pk, workspace=workspace)
+    except PipelineStageConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = PipelineStageConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+def _seed_activity_types(workspace):
+    """Create built-in types for a workspace if they don't exist yet."""
+    for i, name in enumerate(BUILTIN_TYPES):
+        ActivityTypeConfig.objects.get_or_create(
+            workspace=workspace, name=name,
+            defaults={"color": _BUILTIN_COLORS.get(name, "#1a1714"), "is_builtin": True,
+                      "is_active": True, "sort_order": i},
+        )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def activity_type_configs(request):
+    """GET /api/settings/activity-types/ — list; POST — create custom type."""
+    workspace = request.user.workspace
+    _seed_activity_types(workspace)
+
+    if request.method == "GET":
+        qs = ActivityTypeConfig.objects.filter(workspace=workspace)
+        return Response(ActivityTypeConfigSerializer(qs, many=True).data)
+
+    if not request.user.role == "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    data = {**request.data, "is_builtin": False}
+    ser = ActivityTypeConfigSerializer(data=data)
+    if ser.is_valid():
+        ser.save(workspace=workspace)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def activity_type_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/activity-types/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = ActivityTypeConfig.objects.get(pk=pk, workspace=workspace)
+    except ActivityTypeConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = ActivityTypeConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 def serve_workspace_logo(request, workspace_id):

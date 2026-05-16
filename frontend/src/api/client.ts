@@ -47,7 +47,15 @@ export const settingsApi = {
     const fd = new FormData(); fd.append('logo', file)
     return api.post('/api/settings/logo/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
-  removeLogo:      ()          => api.delete('/api/settings/logo/'),
+  removeLogo:         ()              => api.delete('/api/settings/logo/'),
+  getPipelineStages:    ()              => api.get('/api/settings/pipeline-stages/'),
+  createPipelineStage:  (d: any)       => api.post('/api/settings/pipeline-stages/', d),
+  updatePipelineStage:  (id: number, d: any) => api.patch(`/api/settings/pipeline-stages/${id}/`, d),
+  deletePipelineStage:  (id: number)   => api.delete(`/api/settings/pipeline-stages/${id}/`),
+  getActivityTypes:   ()              => api.get('/api/settings/activity-types/'),
+  createActivityType: (d: any)        => api.post('/api/settings/activity-types/', d),
+  updateActivityType: (id: number, d: any) => api.patch(`/api/settings/activity-types/${id}/`, d),
+  deleteActivityType: (id: number)    => api.delete(`/api/settings/activity-types/${id}/`),
 }
 export const clientsApi = {
   list:       (p?: any)              => api.get('/api/clients/', { params: p }),

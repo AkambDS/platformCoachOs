@@ -1,11 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, activitiesApi, invoicesApi } from '../../api/client'
+import { clientsApi, activitiesApi, invoicesApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
 
-const ACTIVITY_TYPES = ['appointment','task','call','session','training','travel','custom']
 const GOAL_STATUSES  = ['active','completed','paused']
 
 // Type definitions
@@ -42,6 +41,11 @@ function fmtDatetime(d: string) {
 // ── New Activity Modal ────────────────────────────────────────────────────────
 function NewActivityModal({ clientId, onClose, onSaved }: any) {
   const qc = useQueryClient()
+  const { data: activityTypes = [] } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+    select: (d: any[]) => d.filter(t => t.is_active),
+  })
   const [form, setForm] = useState({
     activity_type: 'session', title: '', start_at: '', end_at: '', location: '', notes: '',
   })
@@ -72,7 +76,7 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
       <div className="fgroup">
         <label className="flabel">Activity Type</label>
         <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-          {ACTIVITY_TYPES.map(t => <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>)}
+          {(activityTypes as any[]).map((t: any) => <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>)}
         </select>
       </div>
       <div className="fgroup">

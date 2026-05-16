@@ -32,4 +32,4 @@ class DealSerializer(serializers.ModelSerializer):
 
 
 class AdvanceStageSerializer(serializers.Serializer):
-    stage = serializers.ChoiceField(choices=Deal.Stage.choices)
+    stage = serializers.CharField(max_length=50)

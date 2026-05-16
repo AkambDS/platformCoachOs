@@ -597,3 +597,92 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     </p>"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+
+
+# ── Pipeline follow-up alert email ───────────────────────────────────────────────
+
+def build_pipeline_alert_email(
+    workspace_name: str,
+    logo_url: str,
+    owner_name: str,
+    owner_email: str,
+    client_name: str,
+    stage_label: str,
+    stage_color: str,
+    days_in_stage: int,
+    follow_up_days: int,
+    deal_value: str,
+    stage_entered: str,
+    pipeline_url: str = "",
+) -> str:
+    overdue_days = days_in_stage - follow_up_days
+
+    cta = ""
+    if pipeline_url:
+        cta = f"""
+    <div style="margin:32px 0;text-align:center;">
+      {_cta_button("View Pipeline", pipeline_url, "#1a2f4e")}
+    </div>"""
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+              color:#c0392b;font-weight:600;">
+      Follow-up required &middot; {overdue_days} day{'s' if overdue_days != 1 else ''} overdue
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      {client_name} needs attention
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {owner_name}, this deal has been sitting in
+      <strong style="color:#1a1714;">{stage_label}</strong> for
+      <strong style="color:#c0392b;">{days_in_stage} days</strong>
+      &mdash; {overdue_days} day{'s' if overdue_days != 1 else ''} past your follow-up threshold.
+    </p>
+
+    <!-- Stage badge -->
+    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
+      <tr>
+        <td style="background:{stage_color};border-radius:20px;padding:6px 16px;">
+          <span style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                       font-size:12px;font-weight:700;color:#fff;
+                       letter-spacing:.08em;text-transform:uppercase;">
+            {stage_label}
+          </span>
+        </td>
+      </tr>
+    </table>
+
+    <!-- Deal details -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
+      {_detail_row("Client", f'<strong style="color:#1a1714;">{client_name}</strong>')}
+      {_divider()}
+      {_detail_row("Stage", stage_label)}
+      {_divider()}
+      {_detail_row("Days in stage",
+        f'<strong style="color:#c0392b;">{days_in_stage} days</strong>'
+        f'&nbsp;<span style="font-size:12px;color:#9e9890;">(threshold: {follow_up_days} days)</span>'
+      )}
+      {_divider()}
+      {_detail_row("Deal value",
+        f'<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;">{deal_value}</span>'
+      )}
+      {_divider()}
+      {_detail_row("Stage entered", stage_entered)}
+    </table>
+
+    {cta}
+
+    <p style="margin:{'0' if cta else '28px'} 0 0;font-size:13px;color:#9e9890;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Once the deal moves to a new stage, this alert resets automatically.
+    </p>
+    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)

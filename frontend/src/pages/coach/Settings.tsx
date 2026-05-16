@@ -4,7 +4,7 @@ import { authApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
-import { User, Shield, Building2, Mail, Plus, Pencil, Trash2 } from 'lucide-react'
+import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays } from 'lucide-react'
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
@@ -589,15 +589,343 @@ function TeamTab() {
   )
 }
 
+// ── Pipeline Stages Tab ────────────────────────────────────────────────────────
+const STAGE_PRESET_COLORS = ['#8c8279','#2d6a9f','#2980b9','#c9a84c','#4a7c59','#1a1714','#7c4d9f','#c0392b','#16a085','#a0522d']
+
+function PipelineTab() {
+  const { show } = useToast()
+  const qc = useQueryClient()
+  const { data: stages = [], isLoading } = useQuery({
+    queryKey: ['pipeline-stage-configs'],
+    queryFn: () => settingsApi.getPipelineStages().then(r => r.data),
+  })
+  const [showAdd, setShowAdd] = useState(false)
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+  const [editForm, setEditForm] = useState<any>({})
+  const [saving, setSaving] = useState(false)
+
+  const handleAdd = async () => {
+    if (!newForm.label.trim()) return
+    setSaving(true)
+    const slug = newForm.slug.trim() || newForm.label.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const stageList = stages as any[]
+    let order: number
+    if (newForm.insertAfterSlug === '__beginning__') {
+      order = stageList.length > 0 ? stageList[0].order : 0
+    } else if (newForm.insertAfterSlug === '__end__' || !newForm.insertAfterSlug) {
+      order = stageList.length > 0 ? stageList[stageList.length - 1].order + 1 : 0
+    } else {
+      const after = stageList.find(s => s.slug === newForm.insertAfterSlug)
+      order = after ? after.order + 1 : stageList.length
+    }
+    const payload = { ...newForm, slug, order, follow_up_days: newForm.follow_up_days ? Number(newForm.follow_up_days) : null }
+    try {
+      await settingsApi.createPipelineStage(payload)
+      qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
+      setShowAdd(false)
+      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+      show('Stage added')
+    } catch (e: any) {
+      show(e?.response?.data?.label?.[0] || e?.response?.data?.slug?.[0] || 'Failed to add stage', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    setSaving(true)
+    const payload = { ...editForm, follow_up_days: editForm.follow_up_days ? Number(editForm.follow_up_days) : null }
+    try {
+      await settingsApi.updatePipelineStage(editTarget.id, payload)
+      qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
+      setEditTarget(null)
+      show('Stage updated')
+    } catch { show('Failed to update', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async (s: any) => {
+    if (!confirm(`Delete stage "${s.label}"?`)) return
+    try {
+      await settingsApi.deletePipelineStage(s.id)
+      qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
+      show('Deleted')
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Built-in stages cannot be deleted', 'error')
+    }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 700 }}>
+      <div className="card-hdr">
+        Pipeline Stages
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}><Plus size={13} /> Add Stage</button>
+      </div>
+      <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--muted)', borderBottom: '1px solid var(--border)', background: 'var(--paper)' }}>
+        Set follow-up days per stage. A daily alert is sent to you when a deal exceeds that threshold.
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {(stages as any[]).map((s: any) => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{s.label}</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {s.follow_up_days ? `Alert after ${s.follow_up_days}d` : <span style={{ color: '#bbb' }}>No alert</span>}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client }) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(s)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Pipeline Stage" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Stage Name *</label>
+            <input className="finput" value={newForm.label} onChange={e => setNewForm(f => ({ ...f, label: e.target.value }))} placeholder="e.g. Contract Sent" />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Position in pipeline</label>
+            <select className="fselect" value={newForm.insertAfterSlug} onChange={e => setNewForm(f => ({ ...f, insertAfterSlug: e.target.value }))}>
+              <option value="__beginning__">At the beginning</option>
+              {(stages as any[]).map((s: any) => (
+                <option key={s.slug} value={s.slug}>After: {s.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
+            <input className="finput" type="number" min={1} max={365} value={newForm.follow_up_days}
+              onChange={e => setNewForm(f => ({ ...f, follow_up_days: e.target.value }))} placeholder="e.g. 14" />
+          </div>
+          <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={newForm.notify_owner} onChange={e => setNewForm(f => ({ ...f, notify_owner: e.target.checked }))}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={newForm.notify_client} onChange={e => setNewForm(f => ({ ...f, notify_client: e.target.checked }))}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
+            </label>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {STAGE_PRESET_COLORS.map(c => (
+                <div key={c} onClick={() => setNewForm(f => ({ ...f, color: c }))}
+                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: newForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title={`Edit: ${editTarget.label}`} onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Stage Name *</label>
+            <input className="finput" value={editForm.label} onChange={e => setEditForm((f: any) => ({ ...f, label: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
+            <input className="finput" type="number" min={1} max={365} value={editForm.follow_up_days}
+              onChange={e => setEditForm((f: any) => ({ ...f, follow_up_days: e.target.value }))} placeholder="No alert" />
+          </div>
+          <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={editForm.notify_owner} onChange={e => setEditForm((f: any) => ({ ...f, notify_owner: e.target.checked }))}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+              <input type="checkbox" checked={editForm.notify_client} onChange={e => setEditForm((f: any) => ({ ...f, notify_client: e.target.checked }))}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
+            </label>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {STAGE_PRESET_COLORS.map(c => (
+                <div key={c} onClick={() => setEditForm((f: any) => ({ ...f, color: c }))}
+                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: editForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Activity Types Tab ─────────────────────────────────────────────────────────
+const PRESET_COLORS = ['#1a1714','#c9a84c','#2d6a9f','#4a7c59','#7c4d9f','#8c8279','#a0522d','#c0392b','#16a085','#2980b9']
+
+function ActivityTypesTab() {
+  const { show } = useToast()
+  const qc = useQueryClient()
+  const { data: types = [], isLoading } = useQuery({
+    queryKey: ['activity-type-configs'],
+    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
+  })
+  const [showAdd, setShowAdd] = useState(false)
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [newForm, setNewForm] = useState({ name: '', color: '#2d6a9f' })
+  const [editForm, setEditForm] = useState({ name: '', color: '#2d6a9f' })
+  const [saving, setSaving] = useState(false)
+
+  const handleAdd = async () => {
+    if (!newForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.createActivityType(newForm)
+      qc.invalidateQueries({ queryKey: ['activity-type-configs'] })
+      setShowAdd(false)
+      setNewForm({ name: '', color: '#2d6a9f' })
+      show('Activity type added')
+    } catch (e: any) {
+      show(e?.response?.data?.name?.[0] || 'Failed to add type', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.updateActivityType(editTarget.id, editForm)
+      qc.invalidateQueries({ queryKey: ['activity-type-configs'] })
+      setEditTarget(null)
+      show('Activity type updated')
+    } catch (e: any) {
+      show(e?.response?.data?.name?.[0] || 'Failed to update', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleToggle = async (t: any) => {
+    try {
+      await settingsApi.updateActivityType(t.id, { is_active: !t.is_active })
+      qc.invalidateQueries({ queryKey: ['activity-type-configs'] })
+    } catch { show('Failed to update', 'error') }
+  }
+
+  const handleDelete = async (t: any) => {
+    if (!confirm(`Delete activity type "${t.name}"?`)) return
+    try {
+      await settingsApi.deleteActivityType(t.id)
+      qc.invalidateQueries({ queryKey: ['activity-type-configs'] })
+      show('Deleted')
+    } catch { show('Failed to delete', 'error') }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 600 }}>
+      <div className="card-hdr">
+        Activity Types
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Type
+        </button>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {types.map((t: any) => (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: t.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: t.is_active ? 'var(--ink)' : 'var(--muted)' }}>
+              {t.name}
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={t.is_active} onChange={() => handleToggle(t)}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} />
+              Active
+            </label>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(t); setEditForm({ name: t.name, color: t.color }) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(t)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Activity Type" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Name *</label>
+            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Strategy Session" />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {PRESET_COLORS.map(c => (
+                <div key={c} onClick={() => setNewForm(f => ({ ...f, color: c }))}
+                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: newForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title="Edit Activity Type" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Name *</label>
+            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {PRESET_COLORS.map(c => (
+                <div key={c} onClick={() => setEditForm(f => ({ ...f, color: c }))}
+                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
+                    border: editForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
+              ))}
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
 
   const ALL_TABS = [
-    { key: 'Workspace', icon: <Building2 size={13} />, ownerOnly: true },
-    { key: 'Profile',   icon: <User size={13} />,      ownerOnly: false },
-    { key: 'Team',      icon: <Mail size={13} />,      ownerOnly: true },
+    { key: 'Workspace',       icon: <Building2 size={13} />,    ownerOnly: true  },
+    { key: 'Profile',         icon: <User size={13} />,         ownerOnly: false },
+    { key: 'Team',            icon: <Mail size={13} />,         ownerOnly: true  },
+    { key: 'Pipeline',        icon: <Kanban size={13} />,       ownerOnly: true  },
+    { key: 'Activity Types',  icon: <CalendarDays size={13} />, ownerOnly: true  },
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
 
@@ -622,9 +950,11 @@ export default function Settings() {
       </div>
 
       <div className="page-body">
-        {tab === 'Workspace' && isOwner && <WorkspaceTab />}
-        {tab === 'Profile'   && <ProfileTab />}
-        {tab === 'Team'      && isOwner && <TeamTab />}
+        {tab === 'Workspace'      && isOwner && <WorkspaceTab />}
+        {tab === 'Profile'        && <ProfileTab />}
+        {tab === 'Team'           && isOwner && <TeamTab />}
+        {tab === 'Pipeline'       && isOwner && <PipelineTab />}
+        {tab === 'Activity Types' && isOwner && <ActivityTypesTab />}
       </div>
     </AppShell>
   )

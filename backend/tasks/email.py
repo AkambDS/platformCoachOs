@@ -407,3 +407,75 @@ def send_payment_failed_email(invoice_id: str):
         msg.send()
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
+
+
+def send_pipeline_alert(deal_id: str):
+    """Send a styled HTML pipeline follow-up alert to the business owner (and optionally the client)."""
+    from apps.pipeline.models import Deal, PipelineStageConfig
+    from django.utils import timezone as dj_tz
+    from django.core.mail import EmailMultiAlternatives
+    from tasks.email_html import build_pipeline_alert_email
+    try:
+        deal      = Deal.objects.select_related("workspace", "client", "coach").get(id=deal_id)
+        workspace = deal.workspace
+        client    = deal.client
+        owner_email, owner_name = _owner_info(workspace)
+        if not owner_email:
+            return
+
+        try:
+            cfg = PipelineStageConfig.objects.get(workspace=workspace, slug=deal.stage)
+        except PipelineStageConfig.DoesNotExist:
+            return
+
+        stage_label   = cfg.label
+        stage_color   = cfg.color or "#1a2f4e"
+        days_in_stage = (dj_tz.now() - deal.stage_changed_at).days
+        client_name   = f"{client.first_name} {client.last_name}".strip()
+        deal_value    = f"${deal.deal_value:,.0f}" if deal.deal_value else "—"
+        stage_entered = deal.stage_changed_at.strftime("%B %d, %Y")
+        logo_url      = _logo_src(workspace)
+        pipeline_url  = f"{getattr(settings, 'FRONTEND_URL', '').rstrip('/')}/pipeline"
+
+        subject = f"Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)"
+
+        plain_body = (
+            f"Hi {owner_name},\n\n"
+            f"{client_name}'s deal has been in '{stage_label}' for {days_in_stage} days "
+            f"(threshold: {cfg.follow_up_days} days).\n\n"
+            f"Deal value: {deal_value}\n"
+            f"Stage entered: {stage_entered}\n\n"
+            f"View your pipeline: {pipeline_url}\n\n"
+            f"— {workspace.name}"
+        )
+
+        html_body = build_pipeline_alert_email(
+            workspace_name=workspace.name,
+            logo_url=logo_url,
+            owner_name=owner_name,
+            owner_email=owner_email,
+            client_name=client_name,
+            stage_label=stage_label,
+            stage_color=stage_color,
+            days_in_stage=days_in_stage,
+            follow_up_days=cfg.follow_up_days,
+            deal_value=deal_value,
+            stage_entered=stage_entered,
+            pipeline_url=pipeline_url,
+        )
+
+        recipients = [owner_email]
+        if cfg.notify_client and client.email:
+            recipients.append(client.email)
+
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=plain_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=recipients,
+        )
+        msg.attach_alternative(html_body, "text/html")
+        msg.send()
+        logger.info(f"Pipeline alert sent for deal {deal_id} ({stage_label})")
+    except Exception as e:
+        logger.error(f"send_pipeline_alert failed for deal {deal_id}: {e}")
