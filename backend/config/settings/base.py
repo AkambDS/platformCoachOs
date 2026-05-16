@@ -168,13 +168,10 @@ CORS_ALLOWED_ORIGINS  = env.list(
     "CORS_ALLOWED_ORIGINS",
     default=[
         "http://localhost:5173",
-        "https://platformcoachos.onrender.com",
         "http://127.0.0.1:5173",
     ]
 )
-CORS_ALLOWED_ORIGIN_REGEXES = [
-    r"^https://.*\.onrender\.com$",
-]
+CORS_ALLOWED_ORIGIN_REGEXES = []
 CORS_ALLOW_CREDENTIALS = True
 
 # ── Allauth ───────────────────────────────────────────────────────────────

@@ -26,3 +26,4 @@ minio_data/
 # OS
 .DS_Store
 Thumbs.db
+backend/library/

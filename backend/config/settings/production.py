@@ -1,62 +1,41 @@
-"""
-CoachOS — Production Settings (Azure / AWS)
-Only env vars and storage backend change — all app code identical to local.
-"""
+"""CoachOS — Production Settings (AWS EC2)"""
 from .base import *  # noqa
 
-DEBUG = False  # Production mode
-ALLOWED_HOSTS = [
-    "platformcoachos.onrender.com",   # backend (Docker service)
-    ".onrender.com",                  # wildcard covers all *.onrender.com subdomains
-    "localhost",
-    "127.0.0.1",
-]
-
-# ── Gunicorn + Uvicorn worker (ASGI) ──────────────────────────────────────
-# Command: gunicorn -k uvicorn.workers.UvicornWorker config.asgi:application
+DEBUG = False
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 # ── HTTPS enforcement ─────────────────────────────────────────────────────
-SECURE_PROXY_SSL_HEADER      = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_SSL_REDIRECT          = False  # Temporarily disabled for debugging (enable after testing)
-SESSION_COOKIE_SECURE        = True
-CSRF_COOKIE_SECURE           = True
-SECURE_HSTS_SECONDS          = 31536000
+SECURE_PROXY_SSL_HEADER        = ("HTTP_X_FORWARDED_PROTO", "https")
+SECURE_SSL_REDIRECT            = False
+SESSION_COOKIE_SECURE          = True
+CSRF_COOKIE_SECURE             = True
+SECURE_HSTS_SECONDS            = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+USE_X_FORWARDED_HOST           = True
 
-# ── Proxy headers (trust Render's proxy for Host and X-Forwarded headers) ──
-USE_X_FORWARDED_HOST         = True
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
-# ── CSRF trusted origins for Render ─────────────────────────────────────────
-CSRF_TRUSTED_ORIGINS = [
-    "https://platformcoachos.onrender.com",
-    "https://*.onrender.com",
-]
+# ── Email: AWS SES via SMTP ───────────────────────────────────────────────
+EMAIL_BACKEND     = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST        = env("EMAIL_HOST",     default="email-smtp.us-east-1.amazonaws.com")
+EMAIL_PORT        = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS     = True
+EMAIL_HOST_USER   = env("AWS_SES_SMTP_USER",     default="")
+EMAIL_HOST_PASSWORD = env("AWS_SES_SMTP_PASSWORD", default="")
 
-# ── Email: Brevo HTTP API (SMTP port 587 blocked on Render free tier) ─────
-INSTALLED_APPS += ["anymail"]  # noqa: F405 — only needed in production
-EMAIL_BACKEND = "anymail.backends.brevo.EmailBackend"
-ANYMAIL = {
-    "BREVO_API_KEY": env("BREVO_API_KEY", default=""),
-}
+# ── File Storage: AWS S3 ──────────────────────────────────────────────────
+DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
+AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="coachos-media")
+AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME",      default="us-east-1")
+AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
+MINIO_PUBLIC_URL        = ""
+AWS_DEFAULT_ACL         = None
+# If an IAM role is attached to the EC2 instance, leave these unset — boto3 uses the role.
+# Otherwise set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in backend/.env on EC2.
+AWS_ACCESS_KEY_ID     = env("AWS_ACCESS_KEY_ID",     default=None) or None
+AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None) or None
 
-# ── File Storage: Azure Blob Storage (S3-compat) or AWS S3 ────────────────
-# Azure Blob:
-# DEFAULT_FILE_STORAGE = "storages.backends.azure_storage.AzureStorage"
-# AZURE_ACCOUNT_NAME   = env("AZURE_STORAGE_ACCOUNT")
-# AZURE_ACCOUNT_KEY    = env("AZURE_STORAGE_KEY")
-# AZURE_CONTAINER      = env("AZURE_STORAGE_CONTAINER", default="coachos-files")
-
-# AWS S3 (uncomment to use S3 instead of Azure):
-# For now, disable S3 until credentials are properly configured
-DEFAULT_FILE_STORAGE    = "django.core.files.storage.FileSystemStorage"
-# DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
-# AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME")
-# AWS_ACCESS_KEY_ID       = env("AWS_ACCESS_KEY_ID")
-# AWS_SECRET_ACCESS_KEY   = env("AWS_SECRET_ACCESS_KEY")
-# AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
-# AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
-
-# ── Logging — write all ERROR+ tracebacks to Render's stdout/stderr ───────
+# ── Logging ───────────────────────────────────────────────────────────────
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -64,14 +43,11 @@ LOGGING = {
         "verbose": {"format": "[%(levelname)s %(asctime)s %(name)s] %(message)s"},
     },
     "handlers": {
-        "console": {
-            "class": "logging.StreamHandler",
-            "formatter": "verbose",
-        },
+        "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
     },
     "root": {"handlers": ["console"], "level": "WARNING"},
     "loggers": {
-        "django": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "django":         {"handlers": ["console"], "level": "ERROR", "propagate": False},
         "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
     },
 }
@@ -83,4 +59,4 @@ if SENTRY_DSN:
         import sentry_sdk
         sentry_sdk.init(dsn=SENTRY_DSN, traces_sample_rate=0.1)
     except ImportError:
-        pass  # sentry_sdk not installed, skip
+        pass

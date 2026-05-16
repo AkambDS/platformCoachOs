@@ -10,17 +10,12 @@ logger = logging.getLogger(__name__)
 
 
 def _logo_src(workspace) -> str:
-    """Return a public HTTPS URL for the workspace logo, or empty string if none.
-    Falls back to empty (not localhost) so broken URLs never appear in emails."""
+    """Return a public HTTPS URL for the workspace logo, or empty string if none."""
     if not getattr(workspace, "logo_data", ""):
         return ""
     backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/")
     if not backend_base:
-        allowed = getattr(settings, "ALLOWED_HOSTS", [])
-        host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
-        backend_base = f"https://{host}" if host else ""
-    if not backend_base:
-        return ""  # No valid public URL — show workspace name text fallback instead
+        return ""
     return f"{backend_base}/api/settings/logo/{workspace.id}/"
 
 
