@@ -15,6 +15,7 @@ import Activities  from "./pages/coach/Activities"
 import Invoices  from "./pages/coach/Invoices"
 import Reports   from "./pages/coach/Reports"
 import Settings  from "./pages/coach/Settings"
+import Library   from "./pages/coach/Library"
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
@@ -71,7 +72,7 @@ export default function App() {
           <Route path="/invoices"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />
           <Route path="/invoices/:id"  element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />
           <Route path="/reports"       element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Reports /></RoleRoute></PrivateRoute>} />
-          <Route path="/library"       element={<PrivateRoute><Stub name="Library" /></PrivateRoute>} />
+          <Route path="/library"       element={<PrivateRoute><Library /></PrivateRoute>} />
           <Route path="/settings"      element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"        element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />
 

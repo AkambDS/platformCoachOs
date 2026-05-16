@@ -96,6 +96,12 @@ export const reportsApi = {
   outstanding: ()             => api.get('/api/reports/outstanding/'),
 }
 export const libraryApi = {
-  items:   (p?: any) => api.get('/api/library/items/', { params: p }),
-  folders: ()        => api.get('/api/library/folders/'),
+  items:        (p?: any)            => api.get('/api/library/items/', { params: p }),
+  getItem:      (id: string)         => api.get(`/api/library/items/${id}/`),
+  updateItem:   (id: string, d: any) => api.patch(`/api/library/items/${id}/`, d),
+  deleteItem:   (id: string)         => api.delete(`/api/library/items/${id}/`),
+  upload:       (fd: FormData)       => api.post('/api/library/items/upload/', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  folders:      ()                   => api.get('/api/library/folders/'),
+  createFolder: (d: any)             => api.post('/api/library/folders/', d),
+  deleteFolder: (id: string)         => api.delete(`/api/library/folders/${id}/`),
 }

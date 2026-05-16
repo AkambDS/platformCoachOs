@@ -34,7 +34,15 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
         if not obj.s3_key: return None
         try:
             from django.core.files.storage import default_storage
-            return default_storage.url(obj.s3_key)
+            from django.conf import settings as dj_settings
+            url = default_storage.url(obj.s3_key)
+            # In local dev, MinIO is reachable from the browser at localhost:9000
+            # but the Docker-internal hostname is 'minio' — swap it out.
+            minio_internal = getattr(dj_settings, "AWS_S3_ENDPOINT_URL", "")
+            public_minio   = getattr(dj_settings, "MINIO_PUBLIC_URL", "")
+            if minio_internal and public_minio and minio_internal in url:
+                url = url.replace(minio_internal, public_minio)
+            return url
         except Exception:
             return None
 

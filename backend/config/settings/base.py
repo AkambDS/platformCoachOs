@@ -222,10 +222,11 @@ DJSTRIPE_WEBHOOK_SECRET   = env("STRIPE_WEBHOOK_SECRET", default="")
 DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
 # ── File Storage ─────────────────────────────────────────────────────────
-AWS_S3_ENDPOINT_URL     = env("MINIO_ENDPOINT",   default="http://localhost:9000")
-AWS_ACCESS_KEY_ID       = env("MINIO_ACCESS_KEY", default="coachos")
-AWS_SECRET_ACCESS_KEY   = env("MINIO_SECRET_KEY", default="coachos_minio_secret")
-AWS_STORAGE_BUCKET_NAME = env("MINIO_BUCKET",     default="coachos-files")
+AWS_S3_ENDPOINT_URL     = env("MINIO_ENDPOINT",    default="http://localhost:9000")
+AWS_ACCESS_KEY_ID       = env("MINIO_ACCESS_KEY",  default="coachos")
+AWS_SECRET_ACCESS_KEY   = env("MINIO_SECRET_KEY",  default="coachos_minio_secret")
+AWS_STORAGE_BUCKET_NAME = env("MINIO_BUCKET",      default="coachos-files")
+MINIO_PUBLIC_URL        = env("MINIO_PUBLIC_URL",  default="")
 AWS_DEFAULT_ACL         = "private"
 AWS_S3_FILE_OVERWRITE   = False
 DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
