@@ -1,0 +1,20 @@
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path("dashboard/",                            views.dashboard),
+    path("workspaces/",                           views.workspace_list),
+    path("workspaces/<str:pk>/",                  views.workspace_detail),
+    path("workspaces/<str:pk>/users/",            views.workspace_users),
+    path("workspaces/<str:pk>/activity/",         views.workspace_activity),
+    path("workspaces/<str:pk>/pipeline-stages/",              views.workspace_pipeline_stages),
+    path("workspaces/<str:pk>/errors/",                       views.workspace_errors),
+    path("workspaces/<str:pk>/reset-password/",               views.workspace_reset_password),
+    path("workspaces/<str:pk>/activity-types/",               views.workspace_activity_types),
+    path("workspaces/<str:pk>/activity-types/<int:type_pk>/", views.workspace_activity_type_detail),
+    path("registration-tokens/",                  views.registration_tokens),
+    path("registration-tokens/<str:pk>/",         views.registration_token_detail),
+    path("feedback/",                             views.feedback_list),
+    path("feedback/<str:pk>/",                    views.feedback_detail),
+    path("feedback/<str:pk>/comment/",            views.feedback_comment),
+]

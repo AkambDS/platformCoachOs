@@ -35,6 +35,14 @@ def _owner_info(workspace) -> tuple:
     return "", ""
 
 
+def _apply_tmpl(text: str, **vars) -> str:
+    """Substitute {variable} placeholders in a template string. Returns text unchanged on error."""
+    try:
+        return text.format(**vars) if text else ""
+    except (KeyError, ValueError):
+        return text
+
+
 # ── ICS builder ────────────────────────────────────────────────────────────────
 
 def _ics_escape(text: str) -> str:
@@ -163,6 +171,16 @@ def send_activity_confirmation_email(activity_id: str):
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
+        tmpl_vars = dict(
+            client_name=client.full_name, coach_name=coach_name,
+            session_title=activity.title, session_time=dt,
+            workspace_name=workspace.name,
+        )
+        tmpl = (workspace.email_templates or {}).get("confirmation", {})
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Confirmed: {activity.title} with {coach_name}"
+
         plain = (
             f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
             f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
@@ -180,11 +198,13 @@ def send_activity_confirmation_email(activity_id: str):
             owner_email=owner_email,
             owner_name=owner_name,
             google_cal_url=_build_google_cal_url(activity),
+            custom_intro=custom_intro,
+            custom_closing=custom_closing,
         )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
         msg = EmailMultiAlternatives(
-            subject=f"Confirmed: {activity.title} with {coach_name}",
+            subject=subject,
             body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
@@ -219,6 +239,17 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         time_label  = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
+        tmpl_key  = "reminder_24h" if hours_before == 24 else "reminder_1h"
+        tmpl_vars = dict(
+            client_name=client.full_name, coach_name=coach_name,
+            session_title=activity.title, session_time=dt,
+            workspace_name=workspace.name, time_label=time_label,
+        )
+        tmpl = (workspace.email_templates or {}).get(tmpl_key, {})
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Reminder: {activity.title} in {time_label}"
+
         plain = (
             f"Hi {client.first_name},\n\nThis is a reminder that you have a "
             f"{activity.activity_type} in {time_label}.\n\n"
@@ -235,9 +266,11 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             time_label=time_label,
             owner_email=owner_email,
             owner_name=owner_name,
+            custom_intro=custom_intro,
+            custom_closing=custom_closing,
         )
         msg = EmailMultiAlternatives(
-            subject=f"Reminder: {activity.title} in {time_label}",
+            subject=subject,
             body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[client.email],
@@ -357,6 +390,15 @@ def send_invoice_email(invoice_id: str):
         owner_email, owner_name = _owner_info(workspace)
         due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
 
+        tmpl_vars = dict(
+            client_name=invoice.client.full_name, workspace_name=workspace.name,
+            invoice_number=invoice.number, amount=str(invoice.total), due_date=due_str,
+        )
+        tmpl = (workspace.email_templates or {}).get("invoice", {})
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
+
         plain = (
             f"Hi {invoice.client.first_name},\n\n"
             f"Please find attached invoice #{invoice.number} for ${invoice.total}.\n\n"
@@ -371,18 +413,66 @@ def send_invoice_email(invoice_id: str):
             due_str=due_str,
             owner_email=owner_email,
             owner_name=owner_name,
+            custom_intro=custom_intro,
+            custom_closing=custom_closing,
         )
         msg = EmailMultiAlternatives(
-            subject=f"Invoice #{invoice.number} from {workspace.name}",
+            subject=subject,
             body=plain,
             from_email=settings.DEFAULT_FROM_EMAIL,
             to=[invoice.client.email],
         )
         msg.attach_alternative(html, "text/html")
+        try:
+            from weasyprint import HTML as WeasyHTML
+            pdf_bytes = WeasyHTML(string=html).write_pdf()
+            msg.attach(f"{invoice.number}.pdf", pdf_bytes, "application/pdf")
+        except Exception as pdf_err:
+            logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
         msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")
     except Exception as e:
         logger.error(f"send_invoice_email failed: {e}")
+
+
+def send_payment_receipt_email(invoice_id: str):
+    from apps.invoicing.models import Invoice
+    from tasks.email_html import build_invoice_email
+    try:
+        invoice   = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
+        workspace = invoice.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        due_str = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+        plain = (
+            f"Hi {invoice.client.first_name},\n\n"
+            f"Thank you — payment of ${invoice.total} for invoice #{invoice.number} has been received.\n\n"
+            f"— {workspace.name}"
+        )
+        html = build_invoice_email(
+            invoice=invoice,
+            workspace_name=workspace.name,
+            logo_url=_logo_src(workspace),
+            due_str=due_str,
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+        msg = EmailMultiAlternatives(
+            subject=f"Receipt: Invoice #{invoice.number} — Payment Received",
+            body=plain,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[invoice.client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        try:
+            from weasyprint import HTML as WeasyHTML
+            pdf_bytes = WeasyHTML(string=html).write_pdf()
+            msg.attach(f"{invoice.number}-receipt.pdf", pdf_bytes, "application/pdf")
+        except Exception as pdf_err:
+            logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
+        msg.send()
+        logger.info(f"Receipt email sent for {invoice.number}")
+    except Exception as e:
+        logger.error(f"send_payment_receipt_email failed: {e}")
 
 
 @shared_task(name="tasks.email.send_payment_failed_email")
@@ -402,6 +492,137 @@ def send_payment_failed_email(invoice_id: str):
         msg.send()
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
+
+
+def send_feedback_submitted_email(ticket_id: str):
+    """Notify the business owner that a new feedback ticket was submitted."""
+    from apps.feedback.models import FeedbackTicket
+    try:
+        ticket    = FeedbackTicket.objects.select_related("workspace", "submitted_by").get(id=ticket_id)
+        workspace = ticket.workspace
+        owner_email, owner_name = _owner_info(workspace)
+        if not owner_email:
+            return
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        ticket_url   = f"{frontend_url}/feedback/{ticket.id}"
+
+        subject = f"[CoachOS Feedback] {ticket.get_category_display()}: {ticket.title}"
+        plain = (
+            f"Hi {owner_name},\n\n"
+            f"A new feedback ticket has been submitted.\n\n"
+            f"  Title:    {ticket.title}\n"
+            f"  Category: {ticket.get_category_display()}\n"
+            f"  Priority: {ticket.get_priority_display()}\n"
+            f"  From:     {ticket.submitted_by.full_name if ticket.submitted_by else 'Unknown'}\n"
+            f"  Page:     {ticket.page_url or '—'}\n\n"
+            f"Description:\n{ticket.description}\n\n"
+            f"View ticket: {ticket_url}\n\n— CoachOS"
+        )
+        from_name = ticket.submitted_by.full_name if ticket.submitted_by else "CoachOS"
+        html = f"""<!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f5f5f0;padding:32px">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;border:1px solid #e8e4df">
+<h2 style="color:#1B3A6B;margin:0 0 4px">New Feedback Ticket</h2>
+<p style="color:#8c8279;margin:0 0 24px;font-size:13px">Submitted by {from_name}</p>
+<table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+  <tr><td style="padding:6px 0;color:#8c8279;font-size:13px;width:90px">Title</td><td style="padding:6px 0;font-size:13px;color:#1a1a1a;font-weight:600">{ticket.title}</td></tr>
+  <tr><td style="padding:6px 0;color:#8c8279;font-size:13px">Category</td><td style="padding:6px 0;font-size:13px;color:#1a1a1a">{ticket.get_category_display()}</td></tr>
+  <tr><td style="padding:6px 0;color:#8c8279;font-size:13px">Priority</td><td style="padding:6px 0;font-size:13px;color:#1a1a1a">{ticket.get_priority_display()}</td></tr>
+  <tr><td style="padding:6px 0;color:#8c8279;font-size:13px">Page</td><td style="padding:6px 0;font-size:13px;color:#1a1a1a">{ticket.page_url or '—'}</td></tr>
+</table>
+<div style="background:#f9f7f5;border-radius:6px;padding:16px;margin-bottom:24px">
+  <p style="margin:0;font-size:13px;color:#333;white-space:pre-wrap">{ticket.description}</p>
+</div>
+<a href="{ticket_url}" style="display:inline-block;background:#1B3A6B;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-size:13px">View Ticket</a>
+</div></body></html>"""
+
+        msg = EmailMultiAlternatives(subject=subject, body=plain,
+                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[owner_email])
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Feedback submitted email sent for ticket {ticket_id}")
+    except Exception as e:
+        logger.error(f"send_feedback_submitted_email failed: {e}")
+
+
+def send_feedback_comment_email(ticket_id: str, comment_id: str):
+    """Notify the ticket submitter that the admin replied."""
+    from apps.feedback.models import FeedbackTicket, FeedbackComment
+    try:
+        ticket  = FeedbackTicket.objects.select_related("workspace", "submitted_by").get(id=ticket_id)
+        comment = FeedbackComment.objects.select_related("created_by").get(id=comment_id)
+        if not ticket.submitted_by or not ticket.submitted_by.email:
+            return
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        ticket_url   = f"{frontend_url}/feedback/{ticket.id}"
+        recipient    = ticket.submitted_by
+
+        subject = f"[CoachOS] Update on your feedback: {ticket.title}"
+        plain = (
+            f"Hi {recipient.full_name},\n\n"
+            f"The admin has replied to your feedback ticket '{ticket.title}'.\n\n"
+            f"Comment:\n{comment.text}\n\n"
+            f"View your ticket: {ticket_url}\n\n— CoachOS"
+        )
+        html = f"""<!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f5f5f0;padding:32px">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;border:1px solid #e8e4df">
+<h2 style="color:#1B3A6B;margin:0 0 4px">Update on Your Feedback</h2>
+<p style="color:#8c8279;margin:0 0 24px;font-size:13px">{ticket.title}</p>
+<div style="background:#f9f7f5;border-radius:6px;padding:16px;margin-bottom:24px">
+  <p style="margin:0;font-size:13px;color:#333;white-space:pre-wrap">{comment.text}</p>
+</div>
+<a href="{ticket_url}" style="display:inline-block;background:#1B3A6B;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-size:13px">View Ticket</a>
+</div></body></html>"""
+
+        msg = EmailMultiAlternatives(subject=subject, body=plain,
+                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient.email])
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Feedback comment email sent for ticket {ticket_id}")
+    except Exception as e:
+        logger.error(f"send_feedback_comment_email failed: {e}")
+
+
+def send_feedback_status_email(ticket_id: str):
+    """Notify the ticket submitter when the admin updates the status."""
+    from apps.feedback.models import FeedbackTicket
+    try:
+        ticket = FeedbackTicket.objects.select_related("workspace", "submitted_by").get(id=ticket_id)
+        if not ticket.submitted_by or not ticket.submitted_by.email:
+            return
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        ticket_url   = f"{frontend_url}/feedback/{ticket.id}"
+        recipient    = ticket.submitted_by
+
+        subject = f"[CoachOS] Feedback status updated: {ticket.title}"
+        plain = (
+            f"Hi {recipient.full_name},\n\n"
+            f"The status of your feedback ticket '{ticket.title}' has been updated to "
+            f"'{ticket.get_status_display()}'.\n\n"
+            f"View your ticket: {ticket_url}\n\n— CoachOS"
+        )
+        status_colors = {
+            "new": "#6b7280", "reviewing": "#d97706", "in_progress": "#2563eb",
+            "resolved": "#16a34a", "closed": "#1B3A6B",
+        }
+        color = status_colors.get(ticket.status, "#6b7280")
+        html = f"""<!DOCTYPE html><html><body style="font-family:DM Sans,Arial,sans-serif;background:#f5f5f0;padding:32px">
+<div style="max-width:560px;margin:0 auto;background:#fff;border-radius:8px;padding:32px;border:1px solid #e8e4df">
+<h2 style="color:#1B3A6B;margin:0 0 4px">Feedback Status Updated</h2>
+<p style="color:#8c8279;margin:0 0 24px;font-size:13px">{ticket.title}</p>
+<p style="font-size:14px;color:#333">Your ticket status is now:
+  <span style="display:inline-block;margin-left:8px;padding:3px 10px;border-radius:20px;background:{color};color:#fff;font-size:12px;font-weight:600">{ticket.get_status_display()}</span>
+</p>
+<br>
+<a href="{ticket_url}" style="display:inline-block;background:#1B3A6B;color:#fff;text-decoration:none;padding:10px 20px;border-radius:6px;font-size:13px">View Ticket</a>
+</div></body></html>"""
+
+        msg = EmailMultiAlternatives(subject=subject, body=plain,
+                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient.email])
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Feedback status email sent for ticket {ticket_id}")
+    except Exception as e:
+        logger.error(f"send_feedback_status_email failed: {e}")
 
 
 def send_pipeline_alert(deal_id: str):

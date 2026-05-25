@@ -79,8 +79,9 @@ export function ConfirmDialog({ message, onConfirm, onCancel, confirmLabel = 'Co
 const STATUS_COLOURS: Record<string, string> = {
   draft: 'pill-grey', sent: 'pill-blue', paid: 'pill-green',
   overdue: 'pill-red', void: 'pill-grey', refunded: 'pill-grey', partially_paid: 'pill-gold',
-  active: 'pill-green', completed: 'pill-grey', paused: 'pill-gold',
-  scheduled: 'pill-blue', missed: 'pill-red', cancelled: 'pill-grey',
+  active: 'pill-green', paused: 'pill-gold',
+  scheduled: 'pill-blue', completed: 'pill-green', late: 'pill-gold', rescheduled: 'pill-blue',
+  missed: 'pill-red', cancelled: 'pill-grey',
   active_client: 'pill-green', lead_new: 'pill-grey', proposal_sent: 'pill-gold',
   verbal_yes: 'pill-green', closed_lost: 'pill-red', on_hold: 'pill-grey',
 }

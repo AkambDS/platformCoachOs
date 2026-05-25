@@ -185,7 +185,9 @@ def pipeline_stage_config_detail(request, pk):
 
 
 def _seed_activity_types(workspace):
-    """Create built-in types for a workspace if they don't exist yet."""
+    """Seed built-in types once — skip if any builtin already exists for this workspace."""
+    if ActivityTypeConfig.objects.filter(workspace=workspace, is_builtin=True).exists():
+        return
     for i, name in enumerate(BUILTIN_TYPES):
         ActivityTypeConfig.objects.get_or_create(
             workspace=workspace, name=name,
@@ -234,6 +236,97 @@ def activity_type_config_detail(request, pk):
         ser.save()
         return Response(ser.data)
     return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET"])
+@permission_classes([IsWorkspaceMember])
+def email_preview(request):
+    """
+    GET /api/settings/email-preview/?type=...&intro=...&closing=...
+    Renders email HTML using the values passed in the request params.
+    Falls back to saved DB template when params are omitted.
+    This makes the preview independent of save — it always reflects what
+    the user has typed in the editor, not what's committed to the DB.
+    """
+    from types import SimpleNamespace
+    from tasks.email_html import build_confirmation_email, build_reminder_email, build_invoice_email
+    from tasks.email import _logo_src, _owner_info
+
+    email_type = request.query_params.get("type", "confirmation")
+    workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
+    logo_url   = _logo_src(workspace)
+    owner_email, owner_name = _owner_info(workspace)
+
+    DUMMY = dict(
+        client_name="Jane Smith", coach_name="Coach Mike",
+        session_title="Discovery Session",
+        session_time="Wednesday, June 5 at 10:00 AM",
+        workspace_name=workspace.name,
+        time_label="24 hours",
+        invoice_number="INV-0042", amount="150.00",
+        due_date="June 30, 2026",
+    )
+
+    def apply(text):
+        try:
+            return text.format(**DUMMY) if text else ""
+        except (KeyError, ValueError):
+            return text
+
+    # Use request params when present (live preview); fall back to saved DB values
+    tmpl = (workspace.email_templates or {}).get(email_type, {})
+    raw_intro   = request.query_params.get("intro",   tmpl.get("intro",   ""))
+    raw_closing = request.query_params.get("closing", tmpl.get("closing", ""))
+    custom_intro   = apply(raw_intro)
+    custom_closing = apply(raw_closing)
+
+    if email_type == "confirmation":
+        client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        activity = SimpleNamespace(
+            title="Discovery Session", activity_type="session",
+            location="123 Main St", notes="", client=client,
+        )
+        html = build_confirmation_email(
+            activity=activity, workspace_name=workspace.name, logo_url=logo_url,
+            coach_name="Coach Mike", coach_email="",
+            dt_human="Wednesday, June 5 at 10:00 AM",
+            owner_email=owner_email, owner_name=owner_name,
+            google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
+        )
+
+    elif email_type in ("reminder_24h", "reminder_1h"):
+        time_label = "24 hours" if email_type == "reminder_24h" else "1 hour"
+        client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        activity = SimpleNamespace(
+            title="Discovery Session", activity_type="session",
+            location="123 Main St", client=client,
+        )
+        html = build_reminder_email(
+            activity=activity, workspace_name=workspace.name, logo_url=logo_url,
+            coach_name="Coach Mike", coach_email="",
+            dt_human="Wednesday, June 5 at 10:00 AM",
+            time_label=time_label,
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing,
+        )
+
+    elif email_type == "invoice":
+        client  = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        invoice = SimpleNamespace(
+            number="INV-0042", total=150.00, currency="USD",
+            stripe_payment_link="", client=client,
+        )
+        html = build_invoice_email(
+            invoice=invoice, workspace_name=workspace.name, logo_url=logo_url,
+            due_str="June 30, 2026",
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing,
+        )
+
+    else:
+        return Response({"detail": "Unknown type."}, status=status.HTTP_400_BAD_REQUEST)
+
+    return Response({"html": html})
 
 
 def serve_workspace_logo(request, workspace_id):

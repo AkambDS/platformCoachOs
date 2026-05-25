@@ -24,16 +24,24 @@ EMAIL_HOST_USER   = env("AWS_SES_SMTP_USER",     default="")
 EMAIL_HOST_PASSWORD = env("AWS_SES_SMTP_PASSWORD", default="")
 
 # ── File Storage: AWS S3 ──────────────────────────────────────────────────
-DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
 AWS_STORAGE_BUCKET_NAME = env("AWS_STORAGE_BUCKET_NAME", default="coachos-media")
 AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME",      default="us-east-1")
 AWS_S3_ENDPOINT_URL     = None   # Real S3, not MinIO
 MINIO_PUBLIC_URL        = ""
-AWS_DEFAULT_ACL         = None
+AWS_DEFAULT_ACL         = "private"
+AWS_QUERYSTRING_AUTH    = True
 # If an IAM role is attached to the EC2 instance, leave these unset — boto3 uses the role.
 # Otherwise set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in backend/.env on EC2.
 AWS_ACCESS_KEY_ID     = env("AWS_ACCESS_KEY_ID",     default=None) or None
 AWS_SECRET_ACCESS_KEY = env("AWS_SECRET_ACCESS_KEY", default=None) or None
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 # ── Logging ───────────────────────────────────────────────────────────────
 LOGGING = {

@@ -1,141 +1,93 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { clientsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { PageHeader, Modal, EmptyState, StatusBadge, useToast } from '../../components/ui'
+import { EmptyState, useToast } from '../../components/ui'
 
-const AVATAR_COLS = ['c1','c2','c3','c4','c5']
-const LEAD_SOURCES = ['referral','website','linkedin','conference','other']
-const TAGS_OPTIONS = ['Executive','Leadership','Career','Health','Team','Strategy','Startup']
+const AVATAR_COLS = ['c1', 'c2', 'c3', 'c4', 'c5']
 
 function initials(first: string, last: string) {
   return ((first?.[0] || '') + (last?.[0] || '')).toUpperCase()
 }
 
-function NewClientModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const qc = useQueryClient()
-  const [form, setForm] = useState({
-    first_name: '', last_name: '', email: '', phone: '',
-    company: '', job_title: '', lead_source: '', notes: '',
-    tags: [] as string[], create_deal: true,
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+function timeAgo(dateStr: string | null | undefined): string {
+  if (!dateStr) return ''
+  const diff = Date.now() - new Date(dateStr).getTime()
+  const mins  = Math.floor(diff / 60_000)
+  const hours = Math.floor(diff / 3_600_000)
+  const days  = Math.floor(diff / 86_400_000)
+  const weeks = Math.floor(days / 7)
+  if (mins  < 60)  return `${mins}m ago`
+  if (hours < 24)  return `${hours}h ago`
+  if (days  < 7)   return `${days}d ago`
+  if (weeks < 5)   return `${weeks}w ago`
+  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+}
 
-  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
-  const toggleTag = (t: string) => set('tags', form.tags.includes(t) ? form.tags.filter(x => x !== t) : [...form.tags, t])
-
-  const handleSave = async () => {
-    if (!form.first_name || !form.email) { setError('First name and email are required'); return }
-    setSaving(true); setError('')
-    try {
-      await clientsApi.create(form)
-      qc.invalidateQueries({ queryKey: ['clients'] })
-      onSaved()
-    } catch (e: any) {
-      setError(e.response?.data?.email?.[0] || e.response?.data?.detail || 'Failed to create client')
-    } finally { setSaving(false) }
+function lastActivityLabel(c: any): { label: string; when: string } | null {
+  if (c.last_activity_type && c.last_activity_at) {
+    const type = c.last_activity_type.charAt(0).toUpperCase() + c.last_activity_type.slice(1)
+    return { label: type, when: timeAgo(c.last_activity_at) }
   }
-
-  return (
-    <Modal title="New Client" onClose={onClose} size="lg"
-      footer={
-        <>
-          <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-          <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving…' : 'Create Client'}
-          </button>
-        </>
-      }>
-      {error && <div style={{ background: '#fde8dc', color: '#a0400d', padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>{error}</div>}
-      <div className="fsec" style={{ marginTop: 0 }}>Contact Information</div>
-      <div className="fgrid">
-        <div className="fgroup">
-          <label className="flabel">First Name *</label>
-          <input className="finput" value={form.first_name} onChange={e => set('first_name', e.target.value)} placeholder="Sarah" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Last Name</label>
-          <input className="finput" value={form.last_name} onChange={e => set('last_name', e.target.value)} placeholder="Mitchell" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Email *</label>
-          <input className="finput" type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="sarah@company.com" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Phone</label>
-          <input className="finput" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 555 000 0000" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Company</label>
-          <input className="finput" value={form.company} onChange={e => set('company', e.target.value)} placeholder="Acme Corp" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Job Title</label>
-          <input className="finput" value={form.job_title} onChange={e => set('job_title', e.target.value)} placeholder="VP of Sales" />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Lead Source</label>
-          <select className="fselect" value={form.lead_source} onChange={e => set('lead_source', e.target.value)}>
-            <option value="">Select source…</option>
-            {LEAD_SOURCES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="fsec">Tags</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
-        {TAGS_OPTIONS.map(t => (
-          <button key={t} className={`filter-pill${form.tags.includes(t) ? ' active' : ''}`} onClick={() => toggleTag(t)}>{t}</button>
-        ))}
-      </div>
-
-      <div className="fsec">Notes</div>
-      <textarea className="ftextarea" rows={3} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Initial context, referral source, coaching goals…" />
-
-      <div style={{ marginTop: 16, padding: '14px 16px', background: 'rgba(201,168,76,0.08)', border: '1px solid rgba(201,168,76,.3)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <input type="checkbox" id="create_deal" checked={form.create_deal} onChange={e => set('create_deal', e.target.checked)} style={{ width: 16, height: 16, accentColor: 'var(--gold)' }} />
-        <label htmlFor="create_deal" style={{ fontSize: 13, cursor: 'pointer' }}>
-          <strong>Create pipeline deal</strong> — add this client to the pipeline at Lead – New stage
-        </label>
-      </div>
-    </Modal>
-  )
+  if (c.created_at) {
+    return { label: 'Created', when: timeAgo(c.created_at) }
+  }
+  return null
 }
 
 export default function Clients() {
   const navigate = useNavigate()
-  const { show: showToast, el: toastEl } = useToast()
+  const { el: toastEl } = useToast()
   const [search, setSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState<string | null>(null)
-  const [showNew, setShowNew] = useState(false)
+  const [activeFilter, setActiveFilter] = useState<string>('all')
+  const [selectedTag, setSelectedTag] = useState<string>('')
+  const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
 
   const { data, isLoading } = useQuery({
-    queryKey: ['clients', search, activeFilter],
+    queryKey: ['clients', search, activeFilter, selectedTag],
     queryFn: () => clientsApi.list({
       search: search || undefined,
-      active_flag: activeFilter === 'active' ? true : activeFilter === 'inactive' ? false : undefined,
+      active_flag:
+        activeFilter === 'active' ? true :
+        activeFilter === 'inactive' ? false :
+        undefined,
+      tag: selectedTag || undefined,
     }).then(r => r.data),
   })
 
   const clients: any[] = data?.results || data || []
+  const activeCount = clients.filter((c: any) => c.active_flag).length
+  const inactiveCount = clients.filter((c: any) => !c.active_flag).length
+
+  // Collect all unique tags from loaded clients for the tag dropdown
+  const allTags = useMemo(() => {
+    const tagSet = new Set<string>()
+    clients.forEach((c: any) => (c.tags || []).forEach((t: string) => tagSet.add(t)))
+    return Array.from(tagSet).sort()
+  }, [clients])
 
   return (
     <AppShell>
-      <PageHeader
-        title="Clients"
-        subtitle={`${clients.length} total`}
-        action={
-          <button className="btn btn-dark" onClick={() => setShowNew(true)}>
-            + New Client
-          </button>
-        }
-      />
+      {/* Header */}
+      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)', padding: '22px 36px 20px' }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300, marginBottom: 4 }}>Clients</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {clients.length} total · {activeCount} active · {inactiveCount} inactive
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
+          </div>
+        </div>
+      </div>
 
       <div className="page-body">
-        <div className="toolbar">
-          <div className="search-box">
+        {/* Toolbar */}
+        <div className="toolbar" style={{ flexWrap: 'wrap', gap: 8 }}>
+          <div className="search-box" style={{ flex: '1 1 220px', minWidth: 180 }}>
             <span className="search-icon">⌕</span>
             <input
               placeholder="Search by name, email, company…"
@@ -143,27 +95,108 @@ export default function Clients() {
               onChange={e => setSearch(e.target.value)}
             />
           </div>
-          <button className={`filter-pill${activeFilter === null ? ' active' : ''}`} onClick={() => setActiveFilter(null)}>All</button>
-          <button className={`filter-pill${activeFilter === 'active' ? ' active' : ''}`} onClick={() => setActiveFilter('active')}>Active</button>
-          <button className={`filter-pill${activeFilter === 'inactive' ? ' active' : ''}`} onClick={() => setActiveFilter('inactive')}>Inactive</button>
+
+          {/* Status filters */}
+          {[
+            { key: 'all',      label: 'All' },
+            { key: 'active',   label: 'Active' },
+            { key: 'inactive', label: 'Inactive' },
+          ].map(f => (
+            <button
+              key={f.key}
+              className={`filter-pill${activeFilter === f.key ? ' active' : ''}`}
+              onClick={() => setActiveFilter(f.key)}
+            >
+              {f.label}
+            </button>
+          ))}
+
+          {/* Tag filter dropdown */}
+          <div style={{ position: 'relative' }}>
+            <button
+              className={`filter-pill${selectedTag ? ' active' : ''}`}
+              onClick={() => setTagDropdownOpen(o => !o)}
+              style={{ display: 'flex', alignItems: 'center', gap: 5 }}
+            >
+              {selectedTag ? selectedTag : 'All Tags'}
+              {selectedTag
+                ? <span onClick={e => { e.stopPropagation(); setSelectedTag(''); setTagDropdownOpen(false) }}
+                    style={{ fontWeight: 700, fontSize: 14, lineHeight: 1, marginLeft: 2 }}>×</span>
+                : <span style={{ fontSize: 10, opacity: 0.6 }}>▾</span>
+              }
+            </button>
+            {tagDropdownOpen && (
+              <>
+                <div
+                  style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                  onClick={() => setTagDropdownOpen(false)}
+                />
+                <div style={{
+                  position: 'absolute', top: '100%', left: 0, zIndex: 100,
+                  background: 'var(--white)', border: '1px solid var(--border)',
+                  boxShadow: 'var(--shadow-lg)', minWidth: 160, marginTop: 4,
+                  maxHeight: 240, overflowY: 'auto',
+                }}>
+                  <button
+                    onClick={() => { setSelectedTag(''); setTagDropdownOpen(false) }}
+                    style={{
+                      width: '100%', padding: '9px 14px', textAlign: 'left', background: !selectedTag ? 'var(--paper)' : 'none',
+                      border: 'none', cursor: 'pointer', fontSize: 12, fontFamily: "'DM Sans', sans-serif",
+                      color: 'var(--ink)', borderBottom: '1px solid var(--border)',
+                    }}
+                  >All Tags</button>
+                  {allTags.length === 0 && (
+                    <div style={{ padding: '9px 14px', fontSize: 12, color: 'var(--muted)' }}>No tags</div>
+                  )}
+                  {allTags.map(tag => (
+                    <button
+                      key={tag}
+                      onClick={() => { setSelectedTag(tag); setTagDropdownOpen(false) }}
+                      style={{
+                        width: '100%', padding: '9px 14px', textAlign: 'left',
+                        background: selectedTag === tag ? 'var(--paper)' : 'none',
+                        border: 'none', cursor: 'pointer', fontSize: 12,
+                        fontFamily: "'DM Sans', sans-serif", color: 'var(--ink)',
+                        borderBottom: '1px solid var(--border)',
+                      }}
+                    >{tag}</button>
+                  ))}
+                </div>
+              </>
+            )}
+          </div>
         </div>
+
+        {/* Active tag badge */}
+        {selectedTag && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Filtered by tag:</span>
+            <span className="tag" style={{ cursor: 'pointer' }} onClick={() => setSelectedTag('')}>
+              {selectedTag} ×
+            </span>
+          </div>
+        )}
 
         {isLoading ? (
           <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading clients…</div>
         ) : clients.length === 0 ? (
-          <EmptyState icon="◉" title="No clients yet" message="Add your first client to get started" action={
-            <button className="btn btn-dark" onClick={() => setShowNew(true)}>+ New Client</button>
+          <EmptyState icon="◉" title="No clients found" message={
+            selectedTag || search ? 'Try adjusting your search or filters' : 'Add your first client to get started'
+          } action={
+            !selectedTag && !search
+              ? <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
+              : undefined
           } />
         ) : (
           <table className="tbl">
             <thead>
               <tr>
                 <th>Client</th>
-                <th>Company</th>
-                <th>Email</th>
-                <th>Tags</th>
                 <th>Status</th>
-                <th>Lead Source</th>
+                <th>Tags</th>
+                <th>Coach</th>
+                <th>Last Activity</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
@@ -171,40 +204,57 @@ export default function Clients() {
                 <tr key={c.id} onClick={() => navigate(`/clients/${c.id}`)}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div className={`avatar ${AVATAR_COLS[i % 5]}`} style={{ background: undefined }}>
+                      <div className={`avatar ${AVATAR_COLS[i % 5]}`}>
                         {initials(c.first_name, c.last_name)}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 500, fontSize: 13 }}>{c.first_name} {c.last_name}</div>
-                        {c.job_title && <div style={{ fontSize: 11, color: 'var(--muted)' }}>{c.job_title}</div>}
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{c.first_name} {c.last_name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                          {c.company
+                            ? `${c.company}${c.job_title ? ' · ' + c.job_title : ''}`
+                            : c.email}
+                        </div>
                       </div>
                     </div>
-                  </td>
-                  <td style={{ fontSize: 13 }}>{c.company || '—'}</td>
-                  <td style={{ fontSize: 13, color: 'var(--blue)' }}>{c.email}</td>
-                  <td>
-                    {(c.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}
                   </td>
                   <td>
                     <span className={`pill ${c.active_flag ? 'pill-green' : 'pill-grey'}`}>
                       {c.active_flag ? 'Active' : 'Inactive'}
                     </span>
-                    {c.portal_access && <span className="pill pill-blue" style={{ marginLeft: 4 }}>Portal</span>}
+                    {c.portal_access && (
+                      <span className="pill pill-blue" style={{ marginLeft: 4 }}>Portal</span>
+                    )}
                   </td>
-                  <td style={{ fontSize: 12, color: 'var(--muted)', textTransform: 'capitalize' }}>{c.lead_source || '—'}</td>
+                  <td>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {(c.tags || []).map((t: string) => (
+                        <span
+                          key={t}
+                          className={`tag${selectedTag === t ? ' active' : ''}`}
+                          style={{ cursor: 'pointer' }}
+                          onClick={e => { e.stopPropagation(); setSelectedTag(selectedTag === t ? '' : t) }}
+                        >{t}</span>
+                      ))}
+                    </div>
+                  </td>
+                  <td style={{ fontSize: 13, color: 'var(--muted)' }}>
+                    {c.coach_name || '—'}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {(() => {
+                      const la = lastActivityLabel(c)
+                      return la
+                        ? <><span style={{ color: 'var(--ink)', fontWeight: 500 }}>{la.label}</span> · {la.when}</>
+                        : '—'
+                    })()}
+                  </td>
+                  <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
-
-      {showNew && (
-        <NewClientModal
-          onClose={() => setShowNew(false)}
-          onSaved={() => { setShowNew(false); showToast('Client created successfully') }}
-        />
-      )}
       {toastEl}
     </AppShell>
   )

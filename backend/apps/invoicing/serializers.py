@@ -11,29 +11,35 @@ class InvoiceItemSerializer(serializers.ModelSerializer):
 
 
 class InvoiceListSerializer(serializers.ModelSerializer):
-    client_name  = serializers.CharField(source="client.full_name", read_only=True)
-    email_html   = serializers.SerializerMethodField()
+    client_name    = serializers.CharField(source="client.full_name", read_only=True)
+    client_company = serializers.CharField(source="client.company",   read_only=True)
+    email_html     = serializers.SerializerMethodField()
 
     class Meta:
         model  = Invoice
         fields = ["id", "number", "status", "invoice_type", "total",
-                  "amount_paid", "due_date", "client_name", "created_at", "email_html"]
+                  "amount_paid", "refund_amount", "due_date", "client_name",
+                  "client_company", "created_at", "email_html"]
 
     def get_email_html(self, obj):
         return _build_email_html(obj)
 
 
 class InvoiceDetailSerializer(serializers.ModelSerializer):
-    items       = InvoiceItemSerializer(many=True)
-    client_name = serializers.CharField(source="client.full_name", read_only=True)
-    payments    = serializers.SerializerMethodField()
-    email_html  = serializers.SerializerMethodField()
+    items          = InvoiceItemSerializer(many=True)
+    client_name    = serializers.CharField(source="client.full_name",  read_only=True)
+    client_email   = serializers.CharField(source="client.email",      read_only=True)
+    client_company = serializers.CharField(source="client.company",    read_only=True)
+    client_phone   = serializers.CharField(source="client.phone",      read_only=True)
+    payments       = serializers.SerializerMethodField()
+    email_html     = serializers.SerializerMethodField()
 
     class Meta:
         model  = Invoice
         fields = "__all__"
         read_only_fields = ["id", "workspace", "number", "total", "subtotal",
-                            "amount_paid", "stripe_invoice_id", "pdf_s3_key",
+                            "amount_paid", "stripe_invoice_id", "stripe_payment_link",
+                            "stripe_subscription_id", "pdf_s3_key",
                             "created_at", "updated_at"]
 
     def get_payments(self, obj):

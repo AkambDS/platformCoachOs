@@ -1,8 +1,7 @@
 """CoachOS — Celery Beat task: dispatch email + SMS reminders for upcoming activities.
 
-Runs every 15 minutes. Uses Django's cache to ensure each reminder fires only once.
-Cache keys: reminder_email_24h_{id}, reminder_email_1h_{id}
-             reminder_sms_24h_{id},   reminder_sms_1h_{id}
+Runs every 15 minutes. Uses DB flags (reminder_24h_sent / reminder_1h_sent) as the
+authoritative deduplication guard, with Redis cache as a secondary within-window lock.
 """
 from celery import shared_task
 from django.core.cache import cache
@@ -12,10 +11,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# How far in advance to remind (hours), plus a ±10-minute detection window
+# (hours_before, label, db_flag_field)
 REMINDER_WINDOWS = [
-    (24, "24h"),
-    (1,  "1h"),
+    (24, "24h", "reminder_24h_sent"),
+    (1,  "1h",  "reminder_1h_sent"),
 ]
 
 
@@ -29,13 +28,19 @@ def dispatch_activity_reminders():
     now = timezone.now()
     dispatched = 0
 
-    for hours_before, label in REMINDER_WINDOWS:
+    for hours_before, label, db_flag in REMINDER_WINDOWS:
         window_start = now + timedelta(hours=hours_before) - timedelta(minutes=10)
         window_end   = now + timedelta(hours=hours_before) + timedelta(minutes=10)
 
+        # Exclude activities where the DB flag is already set (primary guard)
         activities = (
             Activity.objects
-            .filter(status="scheduled", start_at__gte=window_start, start_at__lte=window_end)
+            .filter(
+                status="scheduled",
+                start_at__gte=window_start,
+                start_at__lte=window_end,
+                **{db_flag: False},
+            )
             .select_related("client")
         )
 
@@ -46,7 +51,12 @@ def dispatch_activity_reminders():
             email_key = f"reminder_email_{label}_{activity_id}"
             if activity.client.email and not cache.get(email_key):
                 send_activity_reminder_email.delay(activity_id, hours_before)
-                cache.set(email_key, True, timeout=60 * 60 * 3)  # 3-hour TTL prevents double-fire
+                # Mark the DB flag immediately so a Redis flush can't cause a double-send
+                Activity.objects.filter(pk=activity.pk).update(
+                    **{db_flag: True},
+                    **{db_flag.replace("_sent", "_sent_at"): now},
+                )
+                cache.set(email_key, True, timeout=60 * 60 * 3)
                 dispatched += 1
                 logger.info(f"Queued email reminder ({label}) for activity {activity_id}")
 

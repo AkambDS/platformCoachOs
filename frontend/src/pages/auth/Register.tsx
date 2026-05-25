@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 
@@ -12,6 +12,8 @@ export default function Register() {
   const [branding, setBranding] = useState<PublicBranding | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  const registrationToken = searchParams.get('token') ?? ''
 
   useEffect(() => {
     fetch('/api/settings/public-branding/')
@@ -27,7 +29,7 @@ export default function Register() {
     e.preventDefault()
     setLoading(true); setError('')
     try {
-      const { data } = await authApi.register(form)
+      const { data } = await authApi.register({ ...form, registration_token: registrationToken || undefined })
       login({ access: data.access, refresh: data.refresh }, data.user, data.workspace)
       navigate('/dashboard')
     } catch (err: any) {

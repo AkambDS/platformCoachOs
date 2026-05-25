@@ -1,99 +1,140 @@
 version: "3.9"
 
 services:
+  # ── Database ──────────────────────────────────────────────────────────────
   db:
     image: postgres:16-alpine
     restart: always
     volumes:
       - pgdata:/var/lib/postgresql/data
-    env_file: ./backend/.env
     environment:
       POSTGRES_DB:       coachos
       POSTGRES_USER:     coachos
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
     healthcheck:
-      test: ["CMD-SHELL","pg_isready -U coachos"]
+      test: ["CMD-SHELL", "pg_isready -U coachos"]
       interval: 10s
       timeout: 5s
       retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
+  # ── Cache + Queue broker ──────────────────────────────────────────────────
   redis:
     image: redis:7-alpine
     restart: always
     volumes:
       - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
+  # ── Django API (Gunicorn) ─────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
     depends_on:
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_started
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file: ./backend/.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
-    volumes:
-      - staticfiles:/app/staticfiles
-      - mediafiles:/app/media
     command: >
-      sh -c "python manage.py migrate --noinput &&
-             python manage.py collectstatic --noinput &&
-             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 60"
+      gunicorn config.wsgi:application
+        --bind 0.0.0.0:8000
+        --workers 3
+        --timeout 60
+        --access-logfile -
+        --error-logfile -
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8000/ | grep -q ok"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+    logging:
+      driver: json-file
+      options: { max-size: "50m", max-file: "5" }
 
+  # ── Celery worker ─────────────────────────────────────────────────────────
   celery:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
-    depends_on: [backend, redis]
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file: ./backend/.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
-    command: celery -A config.celery worker --loglevel=info --concurrency=2
+    command: celery -A config worker --loglevel=info --concurrency=2
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
 
+  # ── Celery beat (cron scheduler) ──────────────────────────────────────────
   celery-beat:
     build:
       context: ./backend
       dockerfile: Dockerfile
     restart: always
-    depends_on: [backend, redis]
+    depends_on:
+      db:    { condition: service_healthy }
+      redis: { condition: service_healthy }
     env_file: ./backend/.env
     environment:
       DJANGO_SETTINGS_MODULE: config.settings.production
-    command: celery -A config.celery beat --loglevel=info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: >
+      celery -A config beat
+        --loglevel=info
+        --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
 
+  # ── Frontend build (runs once, copies dist to shared volume) ──────────────
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        VITE_API_BASE_URL: ""   # empty = same origin via nginx
+        VITE_API_BASE_URL: ""
     volumes:
       - frontdist:/app/dist
+    restart: "no"
+    logging:
+      driver: json-file
+      options: { max-size: "5m", max-file: "2" }
 
+  # ── Nginx reverse proxy ───────────────────────────────────────────────────
   nginx:
     image: nginx:1.25-alpine
     restart: always
-    depends_on: [backend, frontend]
+    depends_on:
+      backend:  { condition: service_healthy }
     ports:
       - "80:80"
       - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - staticfiles:/var/www/static:ro
-      - mediafiles:/var/www/media:ro
-      - frontdist:/var/www/frontend:ro
       - ./nginx/certs:/etc/nginx/certs:ro
-    environment:
-      NGINX_HOST: ${DOMAIN:-localhost}
+      - staticfiles:/var/www/static:ro
+      - frontdist:/var/www/frontend:ro
+    logging:
+      driver: json-file
+      options: { max-size: "20m", max-file: "3" }
 
 volumes:
   pgdata:
   redisdata:
   staticfiles:
-  mediafiles:
   frontdist:

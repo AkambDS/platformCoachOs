@@ -1,13 +1,12 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, activitiesApi, invoicesApi, settingsApi } from '../../api/client'
+import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
 
 const GOAL_STATUSES  = ['active','completed','paused']
 
-// Type definitions
 type Client = {
   id?: string
   first_name: string
@@ -168,8 +167,528 @@ function NewGoalModal({ clientId, onClose, onSaved }: any) {
   )
 }
 
+// ── NoteTypeSelector — defined outside NoteLog so its reference is stable ────
+function NoteTypeSelector({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      {NOTE_TYPES.map(nt => (
+        <button key={nt.value} onClick={() => onChange(nt.value)} style={{
+          padding: '5px 14px', fontSize: 12, fontWeight: 400, cursor: 'pointer',
+          border: '1px solid var(--border)',
+          background: value === nt.value ? 'var(--ink)' : 'var(--white)',
+          color: value === nt.value ? 'var(--paper)' : 'var(--ink)',
+          fontFamily: "'DM Sans', sans-serif",
+        }}>{nt.label}</button>
+      ))}
+    </div>
+  )
+}
+
+// ── NoteLog ───────────────────────────────────────────────────────────────────
+const COLLAPSE_CHARS = 220
+
+function NoteLog({ clientId, noteList, refetch, showToast }: { clientId: string; noteList: any[]; refetch: () => Promise<any>; showToast: any }) {
+  const [adding, setAdding]     = useState(false)
+  const [saving, setSaving]     = useState(false)
+  const [noteText, setNoteText] = useState('')
+  const [noteType, setNoteType] = useState('general')
+
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [editingId, setEditingId]   = useState<string | null>(null)
+  const [editText, setEditText]     = useState('')
+  const [editType, setEditType]     = useState('general')
+  const [editSaving, setEditSaving] = useState(false)
+
+  const toggle = (id: string) =>
+    setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+
+  const startEdit = (n: any) => { setEditingId(n.id); setEditText(n.text); setEditType(n.note_type) }
+  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('general') }
+
+  const handleAdd = async () => {
+    if (!noteText.trim()) return
+    setSaving(true)
+    try {
+      await clientsApi.createNote(clientId, { text: noteText, note_type: noteType })
+      await refetch()
+      setNoteText(''); setNoteType('general'); setAdding(false)
+      showToast('Note added')
+    } catch { showToast('Failed to save note', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleSaveEdit = async (nid: string) => {
+    if (!editText.trim()) return
+    setEditSaving(true)
+    try {
+      await clientsApi.updateNote(clientId, nid, { text: editText, note_type: editType })
+      await refetch()
+      cancelEdit()
+      showToast('Note updated')
+    } catch { showToast('Failed to update', 'error') }
+    finally { setEditSaving(false) }
+  }
+
+  const handleDelete = async (nid: string) => {
+    try {
+      await clientsApi.deleteNote(clientId, nid)
+      await refetch()
+      showToast('Note deleted')
+    } catch { showToast('Failed to delete', 'error') }
+  }
+
+  const typePill  = (t: string) => t === 'session' ? 'pill-blue' : t === 'observation' ? 'pill-gold' : t === 'commitment' ? 'pill-green' : 'pill-grey'
+  const typeLabel = (t: string) => NOTE_TYPES.find(n => n.value === t)?.label || t
+
+  return (
+    <div style={{ maxWidth: 800 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
+        <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400 }}>
+          Session Notes
+          {noteList.length > 0 && (
+            <span style={{ fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 400, color: 'var(--muted)', marginLeft: 10 }}>
+              {noteList.length}
+            </span>
+          )}
+        </div>
+        <button className="btn btn-dark btn-sm" onClick={() => { setAdding(a => !a); setNoteText(''); setNoteType('general') }}>
+          {adding ? 'Cancel' : '+ Add Note'}
+        </button>
+      </div>
+
+      {/* Add note form */}
+      {adding && (
+        <div className="card" style={{ marginBottom: 18, border: '2px solid var(--gold)' }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>New Note</span>
+          </div>
+          <div style={{ padding: '16px 20px' }}>
+            <NoteTypeSelector value={noteType} onChange={setNoteType} />
+            <textarea
+              className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
+              value={noteText} onChange={e => setNoteText(e.target.value)}
+              placeholder="Write your note here…"
+            />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+              <button className="btn btn-outline btn-sm" onClick={() => { setAdding(false); setNoteText('') }}>Cancel</button>
+              <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving || !noteText.trim()}>
+                {saving ? 'Saving…' : 'Save Note'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {noteList.length === 0 && !adding && (
+        <EmptyState icon="✎" title="No notes yet" message="Add date-stamped notes — session observations, commitments, and context." action={
+          <button className="btn btn-dark" onClick={() => setAdding(true)}>+ Add First Note</button>
+        } />
+      )}
+
+      {/* Note cards */}
+      {noteList.map((n: any) => {
+        const isExpanded = expanded.has(n.id)
+        const isEditing  = editingId === n.id
+        const needsCollapse = n.text.length > COLLAPSE_CHARS
+        const displayText = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
+
+        return (
+          <div key={n.id} className="card" style={{ marginBottom: 14 }}>
+            {/* Card header */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '13px 20px', borderBottom: '1px solid var(--border)',
+              background: 'var(--paper)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 11 }}>
+                  {typeLabel(n.note_type)}
+                </span>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  {new Date(n.created_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
+                  {' · '}
+                  {new Date(n.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                </span>
+                {n.created_by_name && (
+                  <span style={{ fontSize: 12, color: 'var(--muted-faint)' }}>— {n.created_by_name}</span>
+                )}
+              </div>
+              {/* Actions */}
+              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                {!isEditing && (
+                  <button onClick={() => startEdit(n)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 6px', fontSize: 12, fontFamily: "'DM Sans', sans-serif" }}
+                    title="Edit note">Edit</button>
+                )}
+                <button onClick={() => handleDelete(n.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 19, lineHeight: 1, padding: '0 4px' }}
+                  title="Delete note">×</button>
+              </div>
+            </div>
+
+            {/* Card body */}
+            {isEditing ? (
+              <div style={{ padding: '16px 20px' }}>
+                <NoteTypeSelector value={editType} onChange={setEditType} />
+                <textarea
+                  className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
+                  value={editText} onChange={e => setEditText(e.target.value)}
+                />
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
+                  <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                  <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving || !editText.trim()}>
+                    {editSaving ? 'Saving…' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div style={{ padding: '16px 20px' }}>
+                <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>
+                  {displayText}
+                </p>
+                {needsCollapse && (
+                  <button onClick={() => toggle(n.id)}
+                    style={{
+                      background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0',
+                      fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif",
+                    }}>
+                    {isExpanded ? '↑ Collapse' : '↓ Read more'}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── File type SVG icons ───────────────────────────────────────────────────────
+function IconPdf() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <rect x="11" y="4" width="24" height="32" rx="2" fill="#d4cfc8"/>
+      <path d="M35 4l6 6h-6V4z" fill="#b8b2ab"/>
+      <rect x="8" y="28" width="30" height="16" rx="2" fill="#c0392b" opacity=".85"/>
+      <text x="14" y="40" fontSize="8" fontWeight="700" fill="white" fontFamily="sans-serif">PDF</text>
+      <line x1="15" y1="16" x2="33" y2="16" stroke="white" strokeWidth="1.5" opacity=".6"/>
+      <line x1="15" y1="21" x2="33" y2="21" stroke="white" strokeWidth="1.5" opacity=".6"/>
+    </svg>
+  )
+}
+function IconVideo() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <rect x="4" y="12" width="36" height="26" rx="3" fill="#1e2d42" opacity=".85"/>
+      <rect x="4" y="12" width="36" height="9" rx="3" fill="#1a2638"/>
+      <line x1="14" y1="12" x2="10" y2="21" stroke="white" strokeWidth="2" opacity=".7"/>
+      <line x1="22" y1="12" x2="18" y2="21" stroke="white" strokeWidth="2" opacity=".7"/>
+      <line x1="30" y1="12" x2="26" y2="21" stroke="white" strokeWidth="2" opacity=".7"/>
+      <polygon points="20,23 20,36 34,29.5" fill="white" opacity=".85"/>
+      <path d="M42 19l6-4v22l-6-4V19z" fill="#1e2d42" opacity=".85"/>
+    </svg>
+  )
+}
+function IconDoc() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <rect x="10" y="4" width="24" height="34" rx="2" fill="#d4cfc8"/>
+      <path d="M34 4l7 7h-7V4z" fill="#b8b2ab"/>
+      <line x1="15" y1="16" x2="33" y2="16" stroke="white" strokeWidth="1.5"/>
+      <line x1="15" y1="21" x2="33" y2="21" stroke="white" strokeWidth="1.5"/>
+      <line x1="15" y1="26" x2="27" y2="26" stroke="white" strokeWidth="1.5"/>
+      <rect x="28" y="30" width="14" height="5" rx="1.5" fill="#c8a028" transform="rotate(-42 28 30)"/>
+      <circle cx="40" cy="43" r="3" fill="#c8a028"/>
+    </svg>
+  )
+}
+function IconLink() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <path d="M22 30a9 9 0 0 0 12.73 0l4.77-4.77a9 9 0 0 0-12.73-12.73L24.5 14.77" stroke="#b8921e" strokeWidth="3.5" strokeLinecap="round"/>
+      <path d="M30 22a9 9 0 0 0-12.73 0l-4.77 4.77a9 9 0 0 0 12.73 12.73L27.5 37.23" stroke="#b8921e" strokeWidth="3.5" strokeLinecap="round"/>
+    </svg>
+  )
+}
+function IconImage() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <rect x="6" y="10" width="40" height="30" rx="3" fill="#d4cfc8"/>
+      <circle cx="17" cy="20" r="4" fill="#b8921e" opacity=".7"/>
+      <path d="M6 32l12-10 8 8 7-6 13 10H6z" fill="#b8b2ab" opacity=".8"/>
+    </svg>
+  )
+}
+function IconFile() {
+  return (
+    <svg width="52" height="52" viewBox="0 0 52 52" fill="none">
+      <rect x="10" y="4" width="24" height="34" rx="2" fill="#d4cfc8"/>
+      <path d="M34 4l7 7h-7V4z" fill="#b8b2ab"/>
+      <line x1="15" y1="16" x2="33" y2="16" stroke="white" strokeWidth="1.5"/>
+      <line x1="15" y1="21" x2="33" y2="21" stroke="white" strokeWidth="1.5"/>
+      <line x1="15" y1="26" x2="27" y2="26" stroke="white" strokeWidth="1.5"/>
+    </svg>
+  )
+}
+
+// ── FileVault ─────────────────────────────────────────────────────────────────
+type FileCategory = 'pdf' | 'video' | 'document' | 'image' | 'link'
+
+function fileCategory(name: string): FileCategory {
+  const ext = name?.split('.').pop()?.toLowerCase() || ''
+  if (ext === 'pdf') return 'pdf'
+  if (['mp4','mov','avi','mkv','webm','m4v'].includes(ext)) return 'video'
+  if (['png','jpg','jpeg','gif','webp','svg'].includes(ext)) return 'image'
+  return 'document'
+}
+
+const CAT_CONFIG: Record<FileCategory, { bg: string; icon: JSX.Element; action: string }> = {
+  pdf:      { bg: '#fdf0ef', icon: <IconPdf />,   action: 'Download PDF' },
+  video:    { bg: '#edf4fc', icon: <IconVideo />,  action: 'Watch Now' },
+  document: { bg: '#fdf0ef', icon: <IconDoc />,    action: 'Open Document' },
+  image:    { bg: '#f0f4ef', icon: <IconImage />,  action: 'View Image' },
+  link:     { bg: '#fdf9ed', icon: <IconLink />,   action: 'Open Link' },
+}
+
+function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clientId: string; fileList: any[]; refetch: () => Promise<any>; showToast: any; canDelete: boolean }) {
+  const [uploading, setUploading]   = useState(false)
+  const [fileType, setFileType]     = useState('other')
+  const [dragOver, setDragOver]     = useState(false)
+  const [showUpload, setShowUpload] = useState(false)
+  const [search, setSearch]         = useState('')
+  const [filterCat, setFilterCat]   = useState<'all' | FileCategory>('all')
+  const [confirmFile, setConfirmFile] = useState<{ id: string; name: string } | null>(null)
+  const [deleting, setDeleting]     = useState(false)
+
+  const handleUpload = async (file: File) => {
+    setUploading(true)
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('assessment_type', fileType)
+    fd.append('date', new Date().toISOString().slice(0, 10))
+    try {
+      await clientsApi.uploadFile(clientId, fd)
+      await refetch()
+      showToast(`${file.name} uploaded`)
+      setShowUpload(false)
+    } catch { showToast('Upload failed', 'error') }
+    finally { setUploading(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!confirmFile) return
+    setDeleting(true)
+    try {
+      await clientsApi.deleteFile(clientId, confirmFile.id)
+      await refetch()
+      showToast('File deleted')
+      setConfirmFile(null)
+    } catch { showToast('Failed to delete', 'error') }
+    finally { setDeleting(false) }
+  }
+
+  const isNew = (dateStr: string) =>
+    (Date.now() - new Date(dateStr).getTime()) < 7 * 24 * 60 * 60 * 1000
+
+  const filtered = fileList.filter(f => {
+    const cat = fileCategory(f.file_name)
+    if (filterCat !== 'all' && cat !== filterCat) return false
+    if (search && !f.file_name.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  const FILTERS: Array<{ value: 'all' | FileCategory; label: string }> = [
+    { value: 'all',      label: 'All' },
+    { value: 'pdf',      label: 'PDF' },
+    { value: 'video',    label: 'Video' },
+    { value: 'document', label: 'Document' },
+    { value: 'image',    label: 'Image' },
+  ]
+
+  return (
+    <div style={{ maxWidth: 980 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 24, fontWeight: 300 }}>Files & Documents</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
+            {fileList.length} item{fileList.length !== 1 ? 's' : ''} · Available immediately after upload
+          </div>
+        </div>
+        <button className="btn btn-dark btn-sm" onClick={() => setShowUpload(s => !s)}>
+          {showUpload ? 'Cancel' : '+ Upload File'}
+        </button>
+      </div>
+
+      {/* Upload panel */}
+      {showUpload && (
+        <div className="card" style={{ marginBottom: 24 }}>
+          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Upload File</span>
+          </div>
+          <div style={{ padding: '16px 20px' }}>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+              {FILE_TYPES.map(ft => (
+                <button key={ft.value} onClick={() => setFileType(ft.value)}
+                  style={{
+                    padding: '5px 12px', fontSize: 11, cursor: 'pointer',
+                    border: '1px solid var(--border)',
+                    background: fileType === ft.value ? 'var(--ink)' : 'var(--white)',
+                    color: fileType === ft.value ? 'var(--paper)' : 'var(--ink)',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>{ft.label}</button>
+              ))}
+            </div>
+            <label
+              onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => { e.preventDefault(); setDragOver(false); const f = e.dataTransfer.files[0]; if (f) handleUpload(f) }}
+              style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+                border: `2px dashed ${dragOver ? 'var(--gold)' : 'var(--border)'}`,
+                background: dragOver ? 'var(--gold-faint)' : 'var(--paper)',
+                padding: '32px 20px', cursor: 'pointer', transition: 'all .2s',
+                borderRadius: 'var(--radius-sm)',
+              }}>
+              <input type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
+              {uploading ? (
+                <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading…</span>
+              ) : (
+                <>
+                  <IconFile />
+                  <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500, marginTop: 10, marginBottom: 4 }}>Drop file here or click to browse</span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>PDF, Word, Excel, images — max 50 MB</span>
+                </>
+              )}
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Search + filters */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 22 }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <svg style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }}
+            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+          </svg>
+          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search files…"
+            style={{
+              width: '100%', paddingLeft: 36, paddingRight: 12, height: 38, boxSizing: 'border-box',
+              border: '1px solid var(--border)', background: 'var(--white)',
+              fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none',
+            }}/>
+        </div>
+        {FILTERS.map(f => (
+          <button key={f.value} onClick={() => setFilterCat(f.value)}
+            style={{
+              padding: '8px 16px', fontSize: 12, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+              border: '1px solid var(--border)', whiteSpace: 'nowrap',
+              background: filterCat === f.value ? 'var(--ink)' : 'var(--white)',
+              color: filterCat === f.value ? 'var(--paper)' : 'var(--ink)',
+            }}>{f.label}</button>
+        ))}
+      </div>
+
+      {/* Grid */}
+      {filtered.length === 0 ? (
+        <EmptyState icon="📁" title="No files yet" message="Upload signed contracts, assessments, and reports." />
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          {filtered.map((f: any) => {
+            const cat = fileCategory(f.file_name)
+            const { bg, icon, action } = CAT_CONFIG[cat]
+            const typeLabel = FILE_TYPES.find(t => t.value === f.assessment_type)?.label || f.assessment_type
+            return (
+              <div key={f.id} className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                {/* Thumbnail */}
+                <div style={{ position: 'relative', height: 118, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {icon}
+                  {isNew(f.created_at) && (
+                    <div style={{
+                      position: 'absolute', top: 10, right: 10,
+                      background: 'var(--gold)', color: 'var(--ink)',
+                      fontSize: 9, fontWeight: 700, letterSpacing: '.1em',
+                      padding: '3px 8px',
+                    }}>NEW</div>
+                  )}
+                </div>
+                {/* Body */}
+                <div style={{ padding: '13px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 6 }}>
+                    {cat} · {typeLabel}
+                  </div>
+                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', lineHeight: 1.4, flex: 1, wordBreak: 'break-word' }}>
+                    {f.file_name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, marginBottom: 12 }}>
+                    Added {fmtDate(f.date || f.created_at)}
+                    {f.uploaded_by_name && <> · {f.uploaded_by_name}</>}
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    {f.presigned_url ? (
+                      <a href={f.presigned_url} target="_blank" rel="noreferrer"
+                        style={{ fontSize: 12, fontWeight: 500, color: 'var(--gold)', textDecoration: 'none' }}>
+                        {action} →
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: 12, color: 'var(--muted-faint)' }}>No preview</span>
+                    )}
+                    {canDelete && (
+                      <button onClick={() => setConfirmFile({ id: f.id, name: f.file_name })}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 18, padding: '0 2px', lineHeight: 1 }}
+                        title="Delete file">×</button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Delete confirmation modal */}
+      {confirmFile && (
+        <Modal title="Delete File" onClose={() => setConfirmFile(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setConfirmFile(null)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: 'var(--rust)', color: '#fff', border: 'none' }}
+              onClick={handleDelete} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+            Are you sure you want to permanently delete <strong>"{confirmFile.name}"</strong>?
+            This action cannot be undone.
+          </p>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Activities', 'Goals', 'Invoices']
+const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices']
+
+const NOTE_TYPES = [
+  { value: 'general',     label: 'General' },
+  { value: 'session',     label: 'Session Note' },
+  { value: 'observation', label: 'Observation' },
+  { value: 'commitment',  label: 'Commitment' },
+]
+
+const FILE_TYPES = [
+  { value: 'contract',   label: 'Contract' },
+  { value: 'disc',       label: 'DISC Assessment' },
+  { value: 'motivators', label: 'Motivators' },
+  { value: 'behavioral', label: 'Behavioral Assessment' },
+  { value: 'other',      label: 'Other' },
+]
+
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -187,6 +706,13 @@ export default function ClientDetail() {
     queryFn: () => clientsApi.get(id!).then(r => r.data),
   })
 
+  const { data: me } = useQuery({
+    queryKey: ['me'],
+    queryFn: () => authApi.me().then((r: any) => r.data),
+    staleTime: 5 * 60 * 1000,
+  })
+  const canDelete = me?.role === 'business_owner' || !!me?.is_superuser
+
   useEffect(() => {
     if (client && !editForm) {
       setEditForm(client)
@@ -196,20 +722,44 @@ export default function ClientDetail() {
   const { data: activities } = useQuery<any, Error>({
     queryKey: ['client-activities', id],
     queryFn: () => activitiesApi.list({ client: id, page_size: 50 }).then(r => r.data),
-    enabled: tab === 'Activities',
+    enabled: tab === 'Activities' || tab === 'Overview',
   })
 
   const { data: goals } = useQuery<any, Error>({
     queryKey: ['client-goals', id],
     queryFn: () => clientsApi.listGoals(id!).then(r => r.data),
-    enabled: tab === 'Goals',
+    enabled: tab === 'Goals' || tab === 'Overview',
   })
 
   const { data: invoices } = useQuery<any, Error>({
     queryKey: ['client-invoices', id],
     queryFn: () => invoicesApi.list({ client: id }).then(r => r.data),
-    enabled: tab === 'Invoices',
+    enabled: tab === 'Invoices' || tab === 'Overview',
   })
+
+  const { data: notesData, refetch: refetchNotes } = useQuery<any, Error>({
+    queryKey: ['client-notes', id],
+    queryFn: () => clientsApi.listNotes(id!).then(r => r.data),
+    enabled: tab === 'Notes',
+  })
+
+  const { data: filesData, refetch: refetchFiles } = useQuery<any, Error>({
+    queryKey: ['client-files', id],
+    queryFn: () => clientsApi.listFiles(id!).then(r => r.data),
+    enabled: tab === 'Files',
+  })
+
+  const { data: dealData } = useQuery<any, Error>({
+    queryKey: ['client-deal', id],
+    queryFn: () => pipelineApi.deals({ client: id }).then(r => r.data),
+  })
+
+  const { data: stagesData = [] } = useQuery({
+    queryKey: ['pipeline-stage-configs'],
+    queryFn: () => settingsApi.getPipelineStages().then(r => r.data),
+  })
+  const stageMap: Record<string, any> = {}
+  ;(stagesData as any[]).forEach((s: any) => { stageMap[s.slug] = s })
 
   const handleSave = async () => {
     try {
@@ -229,52 +779,93 @@ export default function ClientDetail() {
     } catch { showToast('Failed', 'error') }
   }
 
+  // Derived lists — safe before early returns because they default to []
+  const actList: any[]  = activities?.results || activities || []
+  const goalList: any[] = goals?.results || goals || []
+  const invList: any[]  = invoices?.results || invoices || []
+  const noteList: any[] = notesData?.results || notesData || []
+  const fileList: any[] = filesData?.results || filesData || []
+  const deal: any = dealData?.results?.[0] || dealData?.[0] || null
+
+  const actDotColor = (status: string) => {
+    if (status === 'completed') return '#4a9e6b'
+    if (status === 'missed' || status === 'cancelled') return '#c0392b'
+    return 'var(--gold)'
+  }
+
+  const goalStatusLabel = (s: string) =>
+    s === 'active' ? 'In Progress' : s === 'completed' ? 'Completed' : 'Paused'
+
+  // useMemo must be called before any conditional returns (Rules of Hooks)
+  const timeline = useMemo(() => {
+    const items: any[] = [
+      ...actList.map(a => ({ ...a, _type: 'activity', _date: a.start_at })),
+      ...invList.map(inv => ({ ...inv, _type: 'invoice', _date: inv.issue_date || inv.created_at })),
+    ]
+    return items
+      .filter(i => i._date)
+      .sort((a, b) => new Date(b._date).getTime() - new Date(a._date).getTime())
+      .slice(0, 8)
+  }, [actList, invList])
+
   if (isLoading) return <AppShell><div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div></AppShell>
   if (!client) return <AppShell><div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Client not found</div></AppShell>
 
   const ef: Client = editForm || client!
-  const actList: any[] = activities?.results || activities || []
-  const goalList: any[] = goals?.results || goals || []
-  const invList: any[] = invoices?.results || invoices || []
 
   return (
     <AppShell>
       {/* Profile Header */}
       <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ padding: '24px 36px 0' }}>
-          <button onClick={() => navigate('/clients')} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 13, marginBottom: 16, display: 'flex', alignItems: 'center', gap: 6 }}>
-            ← Back to Clients
+        <div style={{ padding: '22px 36px 0' }}>
+          <button onClick={() => navigate('/clients')} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 12, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5, fontFamily: "'DM Sans', sans-serif" }}>
+            ← Clients
           </button>
           <div style={{ display: 'flex', alignItems: 'flex-start', gap: 18, marginBottom: 18 }}>
-            <div style={{ width: 60, height: 60, borderRadius: '50%', background: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Cormorant Garamond, serif', fontSize: 24, fontWeight: 300, flexShrink: 0 }}>
+            {/* Avatar */}
+            <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'var(--gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 300, color: 'var(--ink)', flexShrink: 0 }}>
               {initials(client.first_name + ' ' + client.last_name)}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300, marginBottom: 4 }}>
-                {client.first_name} {client.last_name}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 16, flexWrap: 'wrap', alignItems: 'center' }}>
-                {client.job_title && <span>{client.job_title}</span>}
-                {client.company && <span>at {client.company}</span>}
-                {client.email && <span style={{ color: 'var(--blue)' }}>{client.email}</span>}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 5 }}>
+                <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300 }}>
+                  {client.first_name} {client.last_name}
+                </span>
                 <span className={`pill ${client.active_flag ? 'pill-green' : 'pill-grey'}`}>{client.active_flag ? 'Active' : 'Inactive'}</span>
                 {client.portal_access && <span className="pill pill-blue">Portal</span>}
               </div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                {(client.job_title || client.company) && (
+                  <span>{[client.job_title, client.company].filter(Boolean).join(', ')}</span>
+                )}
+                {client.email && <><span>·</span><span>{client.email}</span></>}
+                {(client as any).coach_name && <><span>·</span><span>Coach: {(client as any).coach_name}</span></>}
+                {(client.tags || []).length > 0 && <><span>·</span>{(client.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}</>}
+              </div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
               {editMode ? (
                 <>
                   <button className="btn btn-outline btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
                   <button className="btn btn-dark btn-sm" onClick={handleSave}>Save</button>
                 </>
               ) : (
-                <button className="btn btn-outline btn-sm" onClick={() => { setEditForm(client); setEditMode(true) }}>Edit</button>
+                <>
+                  <button className="btn btn-outline btn-sm" onClick={async () => {
+                    await clientsApi.patch(id!, { portal_access: !client.portal_access })
+                    qc.invalidateQueries({ queryKey: ['client', id] })
+                    showToast(client.portal_access ? 'Portal access removed' : 'Portal invite sent')
+                  }}>
+                    {client.portal_access ? 'Revoke Portal' : 'Invite to Portal'}
+                  </button>
+                  <button className="btn btn-outline btn-sm" onClick={() => { setEditForm(client); setEditMode(true) }}>Edit</button>
+                </>
               )}
-              <button className="btn btn-gold btn-sm" onClick={() => setShowActivity(true)}>+ Schedule Session</button>
+              <button className="btn btn-dark btn-sm" onClick={() => setShowActivity(true)}>+ Schedule Session</button>
             </div>
           </div>
 
-          {/* Tabs */}
+          {/* Profile Tabs */}
           <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
             {TABS.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
@@ -283,6 +874,7 @@ export default function ClientDetail() {
                 background: 'none', border: 'none',
                 borderBottom: `2px solid ${tab === t ? 'var(--gold)' : 'transparent'}`,
                 cursor: 'pointer', transition: 'all .15s',
+                fontFamily: "'DM Sans', sans-serif",
               }}>{t}</button>
             ))}
           </div>
@@ -291,105 +883,275 @@ export default function ClientDetail() {
 
       {/* Tab Content */}
       <div className="page-body">
+
         {/* ── Overview ── */}
         {tab === 'Overview' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 272px', gap: 20, alignItems: 'start' }}>
+
+            {/* ── Left column ── */}
             <div>
+              {/* GOALS & COMMITMENTS */}
               <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-hdr">Contact Details</div>
-                <div className="card-body">
-                  {editMode ? (
-                    <div className="fgrid">
-                      {['first_name','last_name','email','phone','company','job_title'].map(k => (
-                        <div key={k} className="fgroup">
-                          <label className="flabel">{k.replace('_', ' ')}</label>
-                          <input className="finput" value={ef[k] || ''} onChange={e => setEditForm((f: any) => ({ ...f, [k]: e.target.value }))} />
-                        </div>
-                      ))}
-                      <div className="fgroup full">
-                        <label className="flabel">Notes</label>
-                        <textarea className="ftextarea" rows={3} value={ef.notes || ''} onChange={e => setEditForm((f: any) => ({ ...f, notes: e.target.value }))} />
-                      </div>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '14px 20px',
+                  borderBottom: goalList.length > 0 ? '1px solid var(--border)' : 'none',
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Goals & Commitments
+                  </span>
+                  <button
+                    onClick={() => setShowGoal(true)}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}
+                  >+ Add Goal</button>
+                </div>
+                <div>
+                  {goalList.length === 0 ? (
+                    <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>
+                      No goals set yet.{' '}
+                      <button onClick={() => setShowGoal(true)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0 }}>
+                        Add the first goal →
+                      </button>
                     </div>
-                  ) : (
-                    <>
-                      {[
-                        ['Email', client.email], ['Phone', client.phone || '—'],
-                        ['Company', client.company || '—'], ['Job Title', client.job_title || '—'],
-                        ['Lead Source', client.lead_source || '—'], ['Birthday', client.birth_date ? fmtDate(client.birth_date) : '—'],
-                      ].map(([k, v]) => (
-                        <div key={k} className="kv"><span className="kvl">{k}</span><span className="kvv">{v}</span></div>
-                      ))}
-                      {client.notes && <div style={{ marginTop: 12, fontSize: 13, color: '#555', lineHeight: 1.6 }}>{client.notes}</div>}
-                    </>
-                  )}
+                  ) : goalList.map((g: any, i: number) => {
+                    const statusPill = g.status === 'completed' ? 'pill-green'
+                      : g.status === 'paused' ? 'pill-grey' : 'pill-gold'
+                    return (
+                      <div key={g.id} style={{
+                        padding: '18px 20px 0',
+                        borderBottom: i < goalList.length - 1 ? '1px solid var(--border)' : 'none',
+                        paddingBottom: 0,
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
+                          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', flex: 1, marginRight: 14 }}>{g.title}</span>
+                          <span className={`pill ${statusPill}`} style={{ flexShrink: 0, fontSize: 10 }}>{goalStatusLabel(g.status)}</span>
+                        </div>
+                        {g.description && (
+                          <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 10 }}>{g.description}</div>
+                        )}
+                        {g.target_date && (
+                          <div style={{ fontSize: 11, color: 'var(--muted-faint)', marginBottom: 10 }}>Target: {fmtDate(g.target_date)}</div>
+                        )}
+                        {/* Thin progress bar — gold for active, grey for others */}
+                        <div style={{ height: 3, background: 'var(--border)', margin: '0 -20px', marginTop: g.description || g.target_date ? 0 : 10 }}>
+                          {g.status === 'active' && (
+                            <div style={{ width: '45%', height: '100%', background: 'var(--gold)' }} />
+                          )}
+                          {g.status === 'completed' && (
+                            <div style={{ width: '100%', height: '100%', background: '#4a9e6b' }} />
+                          )}
+                        </div>
+                        <div style={{ height: 14 }} />
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
 
-              {/* Tags */}
+              {/* ENGAGEMENT HISTORY */}
               <div className="card">
-                <div className="card-hdr">Tags</div>
-                <div className="card-body">
-                  {(client.tags || []).length === 0
-                    ? <span style={{ fontSize: 13, color: 'var(--muted)' }}>No tags</span>
-                    : (client.tags || []).map((t: string) => <span key={t} className="tag" style={{ marginRight: 6 }}>{t}</span>)
-                  }
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '14px 20px', borderBottom: '1px solid var(--border)',
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Engagement History
+                  </span>
+                  <button
+                    onClick={() => setTab('Activities')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}
+                  >View all →</button>
+                </div>
+                <div style={{ padding: '8px 20px 12px' }}>
+                  {timeline.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--muted)', padding: '12px 0' }}>
+                      No history yet.{' '}
+                      <button onClick={() => setShowActivity(true)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0 }}>
+                        Schedule a session →
+                      </button>
+                    </div>
+                  ) : timeline.map((item: any) => (
+                    <div key={`${item._type}-${item.id}`} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '10px 0' }}>
+                      <div style={{
+                        width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
+                        background: item._type === 'invoice'
+                          ? '#3a6ea8'
+                          : actDotColor(item.status),
+                      }} />
+                      <div style={{ flex: 1 }}>
+                        {item._type === 'activity' ? (
+                          <>
+                            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
+                              <strong>{item.activity_type ? item.activity_type.charAt(0).toUpperCase() + item.activity_type.slice(1) : 'Session'}</strong>
+                              {' — '}{item.title}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{fmtDatetime(item.start_at)}</div>
+                          </>
+                        ) : (
+                          <>
+                            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
+                              <strong>Invoice {item.number}</strong>
+                              {' sent — '}{item.total ? `$${parseFloat(item.total).toLocaleString()}` : ''} · {item.status}
+                            </div>
+                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{fmtDate(item.issue_date || item.created_at)}</div>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
-            {/* Right panel */}
+            {/* ── Right column ── */}
             <div>
-              <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-hdr">Quick Actions</div>
-                <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setTab('Goals')}>Add Goal</button>
-                  <button className="btn btn-outline" style={{ width: '100%', justifyContent: 'center' }} onClick={() => setTab('Invoices')}>Create Invoice</button>
+              {/* CONTACT INFO */}
+              <div className="card" style={{ marginBottom: 14 }}>
+                <div style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '14px 20px', borderBottom: '1px solid var(--border)',
+                }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Contact Info
+                  </span>
+                  {!editMode && (
+                    <button
+                      onClick={() => { setEditForm(client); setEditMode(true) }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}
+                    >Edit</button>
+                  )}
                 </div>
+                {editMode ? (
+                  <div style={{ padding: '16px 20px' }}>
+                    {[
+                      { k: 'email',     label: 'Email' },
+                      { k: 'phone',     label: 'Phone' },
+                      { k: 'company',   label: 'Company' },
+                      { k: 'job_title', label: 'Title' },
+                    ].map(({ k, label }) => (
+                      <div key={k} className="fgroup" style={{ marginBottom: 12 }}>
+                        <label className="flabel">{label}</label>
+                        <input className="finput" value={ef[k] || ''} onChange={e => setEditForm((f: any) => ({ ...f, [k]: e.target.value }))} />
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn btn-outline btn-sm" style={{ flex: 1 }} onClick={() => setEditMode(false)}>Cancel</button>
+                      <button className="btn btn-dark btn-sm" style={{ flex: 1 }} onClick={handleSave}>Save</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '0 20px' }}>
+                    {[
+                      { label: 'Email',   value: client.email,     small: true },
+                      { label: 'Company', value: client.company || '—' },
+                      { label: 'Title',   value: client.job_title || '—' },
+                      { label: 'Source',  value: client.lead_source
+                          ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1)
+                          : '—' },
+                    ].map(({ label, value, small }) => (
+                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #f3f0eb' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
+                        <span style={{ fontSize: small ? 11 : 13, fontWeight: 500, color: 'var(--ink)', textAlign: 'right', maxWidth: 150, wordBreak: 'break-all' }}>{value}</span>
+                      </div>
+                    ))}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0' }}>
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>Portal</span>
+                      <span className={`pill ${client.portal_access ? 'pill-blue' : 'pill-grey'}`} style={{ fontSize: 10 }}>
+                        {client.portal_access ? 'Enabled' : 'Not invited'}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* PIPELINE DEAL */}
+              {deal && (() => {
+                const stageConfig = stageMap[deal.stage]
+                const stageLabel  = stageConfig?.label || (deal.stage || '').replace(/_/g, ' ')
+                const stageColor  = stageConfig?.color || '#1B3A6B'
+                const dealValue   = deal.deal_value ? parseFloat(deal.deal_value) : null
+                const tags: string[] = deal.tags || []
+                return (
+                  <div className="card" style={{ marginBottom: 14 }}>
+                    <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                        Pipeline Deal
+                      </span>
+                    </div>
+                    <div style={{ padding: '0 20px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Stage</span>
+                        <span style={{
+                          fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12,
+                          background: stageColor + '18', color: stageColor, border: `1px solid ${stageColor}30`,
+                        }}>
+                          {stageLabel}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Deal Value</span>
+                        <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>
+                          {dealValue && dealValue > 0 ? `$${dealValue.toLocaleString()}` : '—'}
+                        </span>
+                      </div>
+                      {tags.length > 0 && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
+                          <span style={{ fontSize: 12, color: 'var(--muted)' }}>Tags</span>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
+                            {tags.map((t: string) => (
+                              <span key={t} style={{
+                                fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
+                                background: '#e8f0fe', color: '#1B3A6B', border: '1px solid #c7d5ec',
+                              }}>{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Opened</span>
+                        <span style={{ fontSize: 13, fontWeight: 500 }}>{fmtDate(deal.created_at)}</span>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })()}
+
+              {/* INVOICES */}
               <div className="card">
-                <div className="card-hdr">Settings</div>
-                <div className="card-body">
-                  <div className="kv">
-                    <span className="kvl">Active Flag</span>
-                    <input type="checkbox"
-                      checked={editMode ? ef.active_flag : client.active_flag}
-                      style={{ accentColor: 'var(--gold)', cursor: 'pointer' }}
-                      onChange={async e => {
-                        const val = e.target.checked
-                        if (editMode) {
-                          setEditForm((f: any) => ({ ...f, active_flag: val }))
-                        } else {
-                          try {
-                            await clientsApi.patch(id!, { active_flag: val })
-                            qc.invalidateQueries({ queryKey: ['client', id] })
-                            qc.invalidateQueries({ queryKey: ['clients'] })
-                            showToast(val ? 'Client marked active' : 'Client marked inactive')
-                          } catch { showToast('Failed to update', 'error') }
-                        }
+                <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Invoices
+                  </span>
+                </div>
+                <div style={{ padding: '0 20px' }}>
+                  {invList.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--muted)', padding: '16px 0' }}>No invoices yet.</div>
+                  ) : invList.slice(0, 4).map((inv: any, i: number) => (
+                    <div
+                      key={inv.id}
+                      onClick={() => navigate(`/invoices/${inv.id}`)}
+                      style={{
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        padding: '10px 0',
+                        borderBottom: i < Math.min(invList.length, 4) - 1 ? '1px solid #f3f0eb' : 'none',
+                        cursor: 'pointer',
                       }}
-                    />
-                  </div>
-                  <div className="kv">
-                    <span className="kvl">Portal Access</span>
-                    <input type="checkbox"
-                      checked={editMode ? ef.portal_access : client.portal_access}
-                      style={{ accentColor: 'var(--gold)', cursor: 'pointer' }}
-                      onChange={async e => {
-                        const val = e.target.checked
-                        if (editMode) {
-                          setEditForm((f: any) => ({ ...f, portal_access: val }))
-                        } else {
-                          try {
-                            await clientsApi.patch(id!, { portal_access: val })
-                            qc.invalidateQueries({ queryKey: ['client', id] })
-                            qc.invalidateQueries({ queryKey: ['clients'] })
-                            showToast(val ? 'Portal access enabled' : 'Portal access disabled')
-                          } catch { showToast('Failed to update', 'error') }
-                        }
-                      }}
-                    />
-                  </div>
+                    >
+                      <span style={{ fontSize: 13, color: 'var(--ink)' }}>
+                        {inv.number} · {new Date(inv.issue_date || inv.due_date || inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                      </span>
+                      <span className={`pill ${inv.status === 'paid' ? 'pill-green' : inv.status === 'overdue' ? 'pill-red' : 'pill-grey'}`} style={{ fontSize: 10 }}>
+                        {inv.status === 'paid' ? `Paid $${parseFloat(inv.total || 0).toLocaleString()}` : inv.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <div style={{ padding: '12px 20px', borderTop: invList.length > 0 ? '1px solid var(--border)' : 'none' }}>
+                  <button
+                    className="btn btn-dark"
+                    style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
+                    onClick={() => navigate('/invoices')}
+                  >+ New Invoice</button>
                 </div>
               </div>
             </div>
@@ -455,6 +1217,16 @@ export default function ClientDetail() {
           </>
         )}
 
+        {/* ── Notes (date-stamped log) ── */}
+        {tab === 'Notes' && (
+          <NoteLog clientId={id!} noteList={noteList} refetch={refetchNotes} showToast={showToast} />
+        )}
+
+        {/* ── Files ── */}
+        {tab === 'Files' && (
+          <FileVault clientId={id!} fileList={fileList} refetch={refetchFiles} showToast={showToast} canDelete={canDelete} />
+        )}
+
         {/* ── Invoices ── */}
         {tab === 'Invoices' && (
           <>
@@ -473,7 +1245,7 @@ export default function ClientDetail() {
                         <td><StatusBadge status={inv.status} /></td>
                         <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16 }}>${inv.total}</td>
                         <td style={{ color: inv.status === 'overdue' ? 'var(--warn)' : 'inherit' }}>{fmtDate(inv.due_date)}</td>
-                        <td style={{ color: 'var(--blue)', fontSize: 12 }}>View →</td>
+                        <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
                       </tr>
                     ))}
                   </tbody>

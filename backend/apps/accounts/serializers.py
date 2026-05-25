@@ -25,7 +25,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         model  = Workspace
         fields = ["id", "name", "slug", "plan", "primary_colour",
                   "workspace_timezone", "buffer_minutes", "cancellation_hours",
-                  "logo_s3_key", "logo_data", "created_at"]
+                  "logo_s3_key", "logo_data", "email_templates", "created_at"]
         read_only_fields = ["id", "created_at", "slug"]
 
 
@@ -33,8 +33,8 @@ class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
         fields = ["id", "email", "full_name", "role", "user_timezone",
-                  "avatar_url", "is_active", "date_joined"]
-        read_only_fields = ["id", "date_joined"]
+                  "avatar_url", "is_active", "is_superuser", "date_joined"]
+        read_only_fields = ["id", "is_superuser", "date_joined"]
 
 
 class RegisterWorkspaceSerializer(serializers.Serializer):

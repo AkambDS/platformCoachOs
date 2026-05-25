@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-interface User { id: string; email: string; full_name: string; role: string }
+export interface User { id: string; email: string; full_name: string; role: string; is_superuser?: boolean }
 
 interface AuthState {
   user: User | null
@@ -12,33 +12,34 @@ interface AuthState {
 }
 
 function loadUser(): User | null {
-  try { return JSON.parse(localStorage.getItem('user') || 'null') } catch { return null }
+  try { return JSON.parse(sessionStorage.getItem('user') || 'null') } catch { return null }
 }
 function loadWorkspace(): any | null {
-  try { return JSON.parse(localStorage.getItem('workspace') || 'null') } catch { return null }
+  try { return JSON.parse(sessionStorage.getItem('workspace') || 'null') } catch { return null }
 }
 
 export const useAuthStore = create<AuthState>((set) => ({
   user:            loadUser(),
   workspace:       loadWorkspace(),
-  isAuthenticated: !!localStorage.getItem('access_token'),
+  isAuthenticated: !!sessionStorage.getItem('access_token'),
 
   login: (tokens, user, workspace) => {
-    localStorage.setItem('access_token',  tokens.access)
-    localStorage.setItem('refresh_token', tokens.refresh)
-    localStorage.setItem('user',          JSON.stringify(user))
-    localStorage.setItem('workspace',     JSON.stringify(workspace))
+    sessionStorage.setItem('access_token',  tokens.access)
+    sessionStorage.setItem('refresh_token', tokens.refresh)
+    sessionStorage.setItem('user',          JSON.stringify(user))
+    sessionStorage.setItem('workspace',     JSON.stringify(workspace))
     set({ user, workspace, isAuthenticated: true })
   },
 
   rehydrate: (user, workspace) => {
-    localStorage.setItem('user',      JSON.stringify(user))
-    localStorage.setItem('workspace', JSON.stringify(workspace))
+    sessionStorage.setItem('user',      JSON.stringify(user))
+    sessionStorage.setItem('workspace', JSON.stringify(workspace))
     set({ user, workspace, isAuthenticated: true })
   },
 
   logout: () => {
-    localStorage.clear()
+    sessionStorage.removeItem('access_token')
+    sessionStorage.removeItem('refresh_token')
     set({ user: null, workspace: null, isAuthenticated: false })
   },
 }))

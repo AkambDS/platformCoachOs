@@ -20,6 +20,8 @@ class Activity(WorkspaceModel):
     class Status(models.TextChoices):
         SCHEDULED    = "scheduled",     "Scheduled"
         COMPLETED    = "completed",     "Completed"
+        LATE         = "late",          "Late"
+        RESCHEDULED  = "rescheduled",   "Rescheduled"
         MISSED       = "missed",        "Missed Session"
         CANCELLED    = "cancelled",     "Cancelled"
 

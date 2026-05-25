@@ -212,7 +212,8 @@ def _calendar_block(google_cal_url: str = "") -> str:
 def build_confirmation_email(activity, workspace_name: str, logo_url: str,
                               coach_name: str, coach_email: str, dt_human: str,
                               owner_email: str = "", owner_name: str = "",
-                              google_cal_url: str = "") -> str:
+                              google_cal_url: str = "",
+                              custom_intro: str = "", custom_closing: str = "") -> str:
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
@@ -231,6 +232,12 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
         if coach_email else coach_name
     )
 
+    _default_intro   = (f"Hi {activity.client.first_name}, your session with "
+                        f"{coach_name} has been scheduled. We look forward to seeing you.")
+    _default_closing = (f"Need to reschedule or have questions? Contact {coach_name} directly.")
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
+
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
               font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
@@ -243,9 +250,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {activity.client.first_name}, your session with
-      <strong style="color:#1a1714;">{coach_name}</strong> has been scheduled.
-      We look forward to seeing you.
+      {intro_html}
     </p>
 
     <!-- Details table -->
@@ -264,10 +269,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Need to reschedule or have questions? Contact
-      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
-        {coach_name}
-      </a> directly.
+      {closing_html}
     </p>
     <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
               font-size:15px;color:#9e9890;">
@@ -423,7 +425,8 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
 def build_reminder_email(activity, workspace_name: str, logo_url: str,
                          coach_name: str, coach_email: str, dt_human: str,
                          time_label: str, owner_email: str = "",
-                         owner_name: str = "") -> str:
+                         owner_name: str = "",
+                         custom_intro: str = "", custom_closing: str = "") -> str:
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
@@ -438,6 +441,12 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
         if coach_email else coach_name
     )
 
+    _default_intro   = (f"Hi {activity.client.first_name}, this is a friendly reminder "
+                        f"about your upcoming session with {coach_name}.")
+    _default_closing = f"Need to reschedule? Please contact {coach_name} as soon as possible."
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
+
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
               font-size:11px;letter-spacing:.16em;text-transform:uppercase;
@@ -450,8 +459,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {activity.client.first_name}, this is a friendly reminder about your upcoming session
-      with <strong style="color:#1a1714;">{coach_name}</strong>.
+      {intro_html}
     </p>
 
     <!-- Details table -->
@@ -467,10 +475,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Need to reschedule? Please contact
-      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
-        {coach_name}
-      </a> as soon as possible.
+      {closing_html}
     </p>
     <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
               font-size:15px;color:#9e9890;">
@@ -548,7 +553,8 @@ def build_cancellation_email(activity, workspace_name: str, logo_url: str,
 # ── Invoice email ────────────────────────────────────────────────────────────────
 
 def build_invoice_email(invoice, workspace_name: str, logo_url: str,
-                        due_str: str, owner_email: str = "", owner_name: str = "") -> str:
+                        due_str: str, owner_email: str = "", owner_name: str = "",
+                        custom_intro: str = "", custom_closing: str = "") -> str:
     amount = f"{invoice.currency} {invoice.total:,.2f}"
 
     pay_button = ""
@@ -562,6 +568,12 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     if due_str:
         due_row = _divider() + _detail_row("Due Date", f'<strong style="color:#c0392b;">{due_str}</strong>')
 
+    _default_intro   = f"Hi {invoice.client.first_name}, please find your invoice from {workspace_name} below."
+    _default_closing = (f"Have questions about this invoice? Contact us at {owner_name or owner_email}."
+                        if owner_email else "")
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
+
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
               font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
@@ -574,8 +586,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {invoice.client.first_name}, please find your invoice from
-      <strong style="color:#1a1714;">{workspace_name}</strong> below.
+      {intro_html}
     </p>
 
     <!-- Invoice details -->
@@ -589,9 +600,9 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     {pay_button}
 
-    {'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">Have questions about this invoice? Contact us at <a href="mailto:' + owner_email + '" style="color:#b8922e;text-decoration:none;font-weight:600;">' + (owner_name or owner_email) + '</a>.</p>' if owner_email else ''}
+    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">{closing_html}</p>' if closing_html else ''}
 
-    <p style="margin:{'12px' if owner_email else '28px'} 0 0;font-family:Georgia,'Times New Roman',serif;
+    <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:Georgia,'Times New Roman',serif;
               font-size:15px;color:#9e9890;">
       &mdash; {workspace_name}
     </p>"""

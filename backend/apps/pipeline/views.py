@@ -1,15 +1,19 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from .models import Deal, StageHistory
+from .models import Deal, StageHistory, DealProgress
 from .serializers import DealSerializer, AdvanceStageSerializer
 from apps.accounts.permissions import IsAssistantOrAbove
+
+TRACKED_FIELDS = ["deal_value", "deal_type", "source", "notes", "tags",
+                  "expected_close_date", "probability", "next_action", "next_action_date"]
 
 
 class DealViewSet(viewsets.ModelViewSet):
     """
     GET  /api/pipeline/deals/?stage=&coach=  — filterable kanban data
     POST /api/pipeline/deals/               — create deal
+    PATCH /api/pipeline/deals/{id}/         — edit deal fields (logs DealProgress)
     POST /api/pipeline/deals/{id}/advance/  — move to next stage
     """
     serializer_class   = DealSerializer
@@ -18,10 +22,28 @@ class DealViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         qs = Deal.objects.filter(workspace=self.request.user.workspace) \
                          .select_related("client", "coach") \
-                         .prefetch_related("stage_history")
+                         .prefetch_related("stage_history", "progress_log")
         stage = self.request.query_params.get("stage")
         if stage: qs = qs.filter(stage=stage)
+        client = self.request.query_params.get("client")
+        if client: qs = qs.filter(client__id=client)
         return qs
+
+    def perform_update(self, serializer):
+        deal = serializer.instance
+        old = {f: str(getattr(deal, f) or "") for f in TRACKED_FIELDS}
+        instance = serializer.save()
+        new = {f: str(getattr(instance, f) or "") for f in TRACKED_FIELDS}
+        for field in TRACKED_FIELDS:
+            if old[field] != new[field]:
+                DealProgress.objects.create(
+                    workspace=instance.workspace,
+                    deal=instance,
+                    changed_by=self.request.user,
+                    field_name=field,
+                    old_value=old[field],
+                    new_value=new[field],
+                )
 
     @action(detail=True, methods=["post"], url_path="advance")
     def advance(self, request, pk=None):

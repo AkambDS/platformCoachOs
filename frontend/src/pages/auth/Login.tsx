@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 
@@ -17,7 +17,7 @@ export default function Login() {
     try {
       const { data } = await authApi.login({ email, password })
       login({ access: data.access, refresh: data.refresh }, data.user, data.workspace)
-      navigate('/dashboard')
+      navigate(data.user?.role === 'platform_admin' ? '/admin' : '/dashboard')
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed. Check your credentials.')
     } finally { setLoading(false) }
@@ -70,7 +70,12 @@ export default function Login() {
               />
             </label>
             <label className="auth-label">
-              <span className="auth-label-text">Password</span>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                <span className="auth-label-text">Password</span>
+                <Link to="/forgot-password" style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 500 }}>
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 className="auth-input"
                 type="password"

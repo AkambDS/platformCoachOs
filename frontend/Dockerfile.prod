@@ -7,6 +7,7 @@ ARG VITE_API_BASE_URL=""
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
 RUN npm run build
 
-# Final image just holds the dist — nginx serves it via volume
+# Minimal image — copies built dist into the shared volume on startup
 FROM alpine:3.19
-COPY --from=builder /app/dist /app/dist
+COPY --from=builder /app/dist /build
+CMD ["sh", "-c", "rm -rf /app/dist/* && cp -r /build/. /app/dist/ && echo '[frontend] dist copied'"]

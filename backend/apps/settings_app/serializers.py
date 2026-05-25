@@ -24,7 +24,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         model  = Workspace
         fields = ["name", "timezone", "workspace_timezone",
                   "buffer_minutes", "cancellation_hours",
-                  "primary_colour", "logo_s3_key", "logo_data"]
+                  "primary_colour", "logo_s3_key", "logo_data", "email_templates"]
         extra_kwargs = {"workspace_timezone": {"required": False}}
 
 

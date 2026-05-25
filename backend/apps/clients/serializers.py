@@ -1,22 +1,38 @@
 """CoachOS — clients/serializers.py"""
 from rest_framework import serializers
-from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress
+from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote
+
+
+class ClientNoteSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
+
+    class Meta:
+        model  = ClientNote
+        fields = ["id", "text", "note_type", "created_by_name", "created_at", "updated_at"]
+        read_only_fields = ["id", "created_at", "updated_at", "created_by_name"]
 
 
 class AssessmentSerializer(serializers.ModelSerializer):
-    presigned_url = serializers.SerializerMethodField()
+    presigned_url    = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.CharField(source="uploaded_by.full_name", read_only=True)
 
     class Meta:
         model  = Assessment
         fields = ["id", "assessment_type", "date", "file_name",
-                  "visible_to_client", "uploaded_by", "created_at", "presigned_url"]
-        read_only_fields = ["id", "created_at", "uploaded_by"]
+                  "visible_to_client", "uploaded_by", "uploaded_by_name",
+                  "created_at", "presigned_url"]
+        read_only_fields = ["id", "created_at", "uploaded_by", "uploaded_by_name"]
 
     def get_presigned_url(self, obj):
-        # Generate 60-second presigned URL via django-storages
         try:
             from django.core.files.storage import default_storage
-            return default_storage.url(obj.file_s3_key)
+            from django.conf import settings
+            url = default_storage.url(obj.file_s3_key)
+            public_url = getattr(settings, 'MINIO_PUBLIC_URL', '')
+            endpoint    = getattr(settings, 'AWS_S3_ENDPOINT_URL', '') or ''
+            if public_url and endpoint and endpoint in url:
+                url = url.replace(endpoint, public_url)
+            return url
         except Exception:
             return None
 
@@ -41,12 +57,16 @@ class CommitmentSerializer(serializers.ModelSerializer):
 
 class ClientListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views."""
-    coach_name = serializers.CharField(source="coach.full_name", read_only=True)
+    coach_name         = serializers.CharField(source="coach.full_name", read_only=True)
+    last_activity_type = serializers.CharField(read_only=True, allow_null=True, default=None)
+    last_activity_at   = serializers.DateTimeField(read_only=True, allow_null=True, default=None)
 
     class Meta:
         model  = Client
-        fields = ["id", "first_name", "last_name", "company", "email",
-                  "active_flag", "tags", "coach_name", "created_at"]
+        fields = ["id", "first_name", "last_name", "job_title", "company", "email",
+                  "phone", "active_flag", "portal_access", "lead_source",
+                  "tags", "coach_name", "created_at",
+                  "last_activity_type", "last_activity_at"]
 
 
 class ClientDetailSerializer(serializers.ModelSerializer):
@@ -54,16 +74,23 @@ class ClientDetailSerializer(serializers.ModelSerializer):
     assessments = AssessmentSerializer(many=True, read_only=True)
     goals       = ClientGoalSerializer(many=True, read_only=True)
     commitments = CommitmentSerializer(many=True, read_only=True)
+    coach_name  = serializers.CharField(source="coach.full_name", read_only=True)
 
     class Meta:
         model  = Client
         fields = "__all__"
         read_only_fields = ["id", "workspace", "created_at", "updated_at"]
 
-    def create(self, validated_data):
-        validated_data["workspace"] = self.context["request"].user.workspace
-        validated_data["coach"]     = self.context["request"].user
-        return super().create(validated_data)
+    def validate_email(self, value):
+        request = self.context.get("request")
+        if not request or not request.user.workspace_id:
+            return value
+        qs = Client.objects.filter(workspace_id=request.user.workspace_id, email=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("A client with this email already exists in your workspace.")
+        return value
 
 
 class GoalProgressSerializer(serializers.ModelSerializer):

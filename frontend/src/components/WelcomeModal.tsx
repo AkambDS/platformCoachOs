@@ -4,29 +4,24 @@ const STORAGE_KEY = 'coachos_welcome_seen'
 
 const slides = [
   {
-    icon: '🎯',
     title: 'Welcome to CoachOS',
     body: 'Your all-in-one coaching management platform. Manage clients, sessions, pipeline, and invoices — all in one place.',
   },
   {
-    icon: '👥',
     title: 'Manage Your Clients',
-    body: 'Add client profiles, track session history, set goals, and monitor progress. Use the Pipeline to move prospects to active clients.',
+    body: 'Add client profiles, track session history, set goals, and monitor progress. Use the Pipeline to move prospects through to active clients.',
   },
   {
-    icon: '📅',
     title: 'Schedule & Remind',
-    body: 'Log activities and sessions. CoachOS automatically sends reminders to your clients before each session.',
+    body: 'Log sessions and activities. CoachOS automatically sends confirmation emails and reminders to your clients before each session.',
   },
   {
-    icon: '💰',
     title: 'Invoicing & Reports',
     body: 'Create professional invoices, record payments, and generate revenue reports. Send invoices directly to clients via email.',
   },
   {
-    icon: '🚀',
-    title: "You're All Set!",
-    body: 'Start by adding your first client. Click "Take a Tour" anytime from the dashboard to see a guided walkthrough.',
+    title: "You're All Set",
+    body: 'Start by adding your first client. Use the top navigation to move between Clients, Pipeline, Schedule, and Invoices.',
   },
 ]
 
@@ -37,20 +32,26 @@ interface Props {
 export default function WelcomeModal({ onStartTour }: Props) {
   const [visible, setVisible] = useState(false)
   const [step, setStep] = useState(0)
+  const [dontShow, setDontShow] = useState(false)
 
   useEffect(() => {
-    if (!localStorage.getItem(STORAGE_KEY)) {
-      setVisible(true)
-    }
+    if (!localStorage.getItem(STORAGE_KEY)) setVisible(true)
   }, [])
 
   const dismiss = () => {
-    localStorage.setItem(STORAGE_KEY, '1')
+    // Only persist if user explicitly checked "don't show again"
+    if (dontShow) localStorage.setItem(STORAGE_KEY, '1')
     setVisible(false)
   }
 
+  const handleNext = () => {
+    setStep(s => s + 1)
+    // Never auto-persist on Next — only the checkbox controls this
+  }
+
   const handleStartTour = () => {
-    dismiss()
+    localStorage.setItem(STORAGE_KEY, '1')
+    setVisible(false)
     onStartTour()
   }
 
@@ -62,75 +63,92 @@ export default function WelcomeModal({ onStartTour }: Props) {
   return (
     <div style={{
       position: 'fixed', inset: 0, zIndex: 9999,
-      background: 'rgba(10,20,40,.55)', backdropFilter: 'blur(3px)',
+      background: 'rgba(26,23,20,.6)', backdropFilter: 'blur(4px)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
     }}>
       <div style={{
-        background: '#fff', borderRadius: 16, padding: '40px 44px',
-        maxWidth: 480, width: '90%', boxShadow: '0 24px 80px rgba(0,0,0,.18)',
+        background: 'var(--white)',
+        border: '1px solid var(--border)',
+        maxWidth: 500, width: '90%',
+        boxShadow: 'var(--shadow-lg)',
         position: 'relative',
       }}>
-        {/* Close */}
-        <button onClick={dismiss} style={{
-          position: 'absolute', top: 16, right: 20,
-          background: 'none', border: 'none', fontSize: 20,
-          color: '#aaa', cursor: 'pointer', lineHeight: 1,
-        }}>×</button>
-
-        {/* Progress dots */}
-        <div style={{ display: 'flex', gap: 6, marginBottom: 28 }}>
-          {slides.map((_, i) => (
-            <div key={i} style={{
-              width: i === step ? 20 : 6, height: 6, borderRadius: 3,
-              background: i === step ? '#1e3a5f' : '#ddd',
-              transition: 'all .3s',
-            }} />
-          ))}
+        {/* Header bar */}
+        <div style={{
+          background: 'var(--ink)',
+          padding: '28px 32px 24px',
+        }}>
+          <div style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontSize: 11, fontWeight: 600,
+            letterSpacing: '.18em', textTransform: 'uppercase',
+            color: 'var(--gold)', marginBottom: 10,
+          }}>
+            CoachOS
+          </div>
+          <div style={{
+            fontFamily: "'Cormorant Garamond', serif",
+            fontSize: 30, fontWeight: 300,
+            color: 'var(--paper)', lineHeight: 1.2,
+          }}>
+            {slide.title}
+          </div>
         </div>
 
-        {/* Icon */}
-        <div style={{ fontSize: 42, marginBottom: 16 }}>{slide.icon}</div>
+        {/* Body */}
+        <div style={{ padding: '24px 32px 20px' }}>
+          {/* Progress dots */}
+          <div style={{ display: 'flex', gap: 5, marginBottom: 20 }}>
+            {slides.map((_, i) => (
+              <div key={i} onClick={() => setStep(i)} style={{
+                width: i === step ? 24 : 6, height: 4,
+                background: i === step ? 'var(--gold)' : 'var(--border)',
+                transition: 'all .3s', cursor: 'pointer',
+              }} />
+            ))}
+          </div>
 
-        {/* Content */}
-        <div style={{
-          fontFamily: 'Cormorant Garamond, serif',
-          fontSize: 26, fontWeight: 500, color: '#1e3a5f',
-          marginBottom: 12, lineHeight: 1.25,
-        }}>{slide.title}</div>
-        <p style={{ fontSize: 15, color: '#555', lineHeight: 1.7, marginBottom: 32 }}>
-          {slide.body}
-        </p>
+          <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.75, marginBottom: 28 }}>
+            {slide.body}
+          </p>
 
-        {/* Actions */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <button onClick={dismiss} style={{
-            background: 'none', border: 'none', color: '#999',
-            fontSize: 13, cursor: 'pointer',
-          }}>Skip</button>
+          {/* Don't show again */}
+          <label style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', marginBottom: 24 }}>
+            <input
+              type="checkbox"
+              checked={dontShow}
+              onChange={e => setDontShow(e.target.checked)}
+              style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }}
+            />
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>Don't show this again</span>
+          </label>
 
-          <div style={{ display: 'flex', gap: 10 }}>
-            {step > 0 && (
-              <button onClick={() => setStep(s => s - 1)} style={{
-                padding: '10px 20px', borderRadius: 8,
-                border: '1.5px solid #ddd', background: '#fff',
-                fontSize: 14, cursor: 'pointer', color: '#555',
-              }}>Back</button>
-            )}
-            {isLast ? (
-              <button onClick={handleStartTour} style={{
-                padding: '10px 24px', borderRadius: 8,
-                background: '#1e3a5f', color: '#fff',
-                border: 'none', fontSize: 14, fontWeight: 600,
-                cursor: 'pointer',
-              }}>Take a Tour</button>
-            ) : (
-              <button onClick={() => setStep(s => s + 1)} style={{
-                padding: '10px 24px', borderRadius: 8,
-                background: '#1e3a5f', color: '#fff',
-                border: 'none', fontSize: 14, fontWeight: 600,
-                cursor: 'pointer',
-              }}>Next →</button>
-            )}
+          {/* Actions */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <button onClick={dismiss} style={{
+              background: 'none', border: 'none',
+              color: 'var(--muted)', fontSize: 12,
+              cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+            }}>
+              Skip
+            </button>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              {step > 0 && (
+                <button onClick={() => setStep(s => s - 1)} className="btn btn-outline btn-sm">
+                  Back
+                </button>
+              )}
+              {isLast ? (
+                <button onClick={handleStartTour} className="btn btn-dark btn-sm">
+                  Take a Tour →
+                </button>
+              ) : (
+                <button onClick={handleNext} className="btn btn-dark btn-sm">
+                  Next →
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>

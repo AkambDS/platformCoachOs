@@ -161,6 +161,8 @@ urlpatterns = [
     path("api/library/",     include("apps.library.urls")),
     path("api/settings/",    include("apps.settings_app.urls")),
     path("api/portal/",      include("apps.portal.urls")),
+    path("api/feedback/",    include("apps.feedback.urls")),
+    path("api/superadmin/",  include("apps.superadmin.urls")),
     path("api/stripe/",      include("djstripe.urls", namespace="djstripe")),
     path("api/internal/reminders/",       run_reminders),
     path("api/internal/invites/",         run_pending_invites),

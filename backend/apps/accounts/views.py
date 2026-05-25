@@ -8,7 +8,7 @@ from django.utils import timezone
 from datetime import timedelta
 import uuid
 
-from .models import User, Workspace, WorkspaceInvitation
+from .models import User, Workspace, WorkspaceInvitation, WorkspaceRegistrationToken
 from .serializers import (
     RegisterWorkspaceSerializer, InviteUserSerializer,
     AcceptInviteSerializer, UserSerializer, WorkspaceSerializer,
@@ -28,8 +28,24 @@ class LoginView(TokenObtainPairView):
             token = AccessToken(response.data["access"])
             try:
                 user = User.objects.select_related("workspace").get(id=token["user_id"])
+                # Superusers created via manage.py createsuperuser have no workspace.
+                # Auto-assign them to the first workspace so they can use the coach UI.
+                if user.workspace_id is None and user.role != User.Role.PLATFORM_ADMIN:
+                    first_ws = Workspace.objects.first()
+                    if first_ws:
+                        user.workspace = first_ws
+                        user.save(update_fields=["workspace"])
+                        # Re-issue tokens so the JWT payload carries the correct workspace_id
+                        from rest_framework_simplejwt.tokens import RefreshToken
+                        new_refresh = RefreshToken.for_user(user)
+                        new_refresh["workspace_id"] = str(user.workspace_id)
+                        new_refresh["role"]         = user.role
+                        new_refresh["full_name"]    = user.full_name
+                        new_refresh["email"]        = user.email
+                        response.data["access"]  = str(new_refresh.access_token)
+                        response.data["refresh"] = str(new_refresh)
                 response.data["user"]      = UserSerializer(user).data
-                response.data["workspace"] = WorkspaceSerializer(user.workspace).data
+                response.data["workspace"] = WorkspaceSerializer(user.workspace).data if user.workspace else None
             except User.DoesNotExist:
                 pass
         return response
@@ -46,19 +62,37 @@ def register(request):
     """
     POST /api/auth/register/
     Bootstrap first workspace + Business Owner account.
-    Blocked by default — only open when REGISTRATION_OPEN=True in settings.
+    Blocked by default — only open when REGISTRATION_OPEN=True in settings,
+    or a valid registration_token (from superadmin) is supplied.
     """
     from django.conf import settings as django_settings
-    if not getattr(django_settings, "REGISTRATION_OPEN", False):
+    reg_token = None
+    token_value = request.data.get("registration_token")
+    if token_value:
+        try:
+            reg_token = WorkspaceRegistrationToken.objects.get(
+                id=token_value, used=False, expires_at__gt=timezone.now()
+            )
+        except (WorkspaceRegistrationToken.DoesNotExist, Exception):
+            return Response(
+                {"detail": "Invalid or expired registration link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+    elif not getattr(django_settings, "REGISTRATION_OPEN", False):
         return Response(
             {"detail": "Workspace registration is currently closed. Contact your administrator."},
             status=status.HTTP_403_FORBIDDEN,
         )
+
     serializer = RegisterWorkspaceSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     user = serializer.save()
+    if reg_token:
+        reg_token.used = True
+        reg_token.used_by = user.workspace
+        reg_token.save(update_fields=["used", "used_by"])
 
     # Return tokens immediately so user lands on dashboard
     from rest_framework_simplejwt.tokens import RefreshToken
@@ -275,3 +309,114 @@ def team_member_detail(request, pk):
     # DELETE
     member.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_request(request):
+    """POST /api/auth/password-reset/ — send reset email if address is registered."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.http import urlsafe_base64_encode
+    from django.utils.encoding import force_bytes
+    from django.core.mail import EmailMultiAlternatives
+    from django.conf import settings as dj_settings
+    import logging
+    logger = logging.getLogger(__name__)
+
+    email = (request.data.get("email") or "").strip().lower()
+    if not email:
+        return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+    # Always return the same message so we don't reveal whether an address is registered
+    ok = Response({"detail": "If that email is registered you'll receive a reset link shortly."})
+
+    try:
+        user = User.objects.get(email=email)
+    except User.DoesNotExist:
+        return ok
+
+    uid       = urlsafe_base64_encode(force_bytes(user.pk))
+    token     = default_token_generator.make_token(user)
+    base_url  = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
+    reset_url = f"{base_url}/reset-password?uid={uid}&token={token}"
+
+    plain = (
+        f"Hi {user.full_name},\n\n"
+        f"Someone requested a password reset for your CoachOS account.\n\n"
+        f"Reset here: {reset_url}\n\n"
+        f"This link expires in 24 hours. If you didn't request this, ignore this email."
+    )
+    html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#eeebe5;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
+  <tr><td align="center">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+    <tr><td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+      <span style="font-family:Georgia,serif;font-size:22px;color:#f5f0e8;">CoachOS</span>
+    </td></tr>
+    <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d9b96a,#b8922e);"></td></tr>
+    <tr><td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:#16130f;">Reset your password</h2>
+      <p style="color:#4a443e;line-height:1.6;">Hi {user.full_name},<br><br>
+         We received a request to reset your CoachOS password. Click below to choose a new one.</p>
+      <div style="text-align:center;margin:32px 0;">
+        <a href="{reset_url}" style="background:#1B3A6B;color:#fff;padding:14px 32px;
+           text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;display:inline-block;">
+          Reset Password
+        </a>
+      </div>
+      <p style="color:#8c8279;font-size:13px;">This link expires in 24 hours.<br>
+         If you didn't request this, you can safely ignore this email.</p>
+    </td></tr>
+  </table></td></tr>
+</table>
+</body></html>"""
+
+    try:
+        msg = EmailMultiAlternatives(
+            subject="Reset your CoachOS password",
+            body=plain,
+            from_email=dj_settings.DEFAULT_FROM_EMAIL,
+            to=[email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+    except Exception as exc:
+        logger.error(f"password_reset_request: email failed for {email}: {exc}")
+
+    return ok
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def password_reset_confirm(request):
+    """POST /api/auth/password-reset/confirm/ — validate token and set new password."""
+    from django.contrib.auth.tokens import default_token_generator
+    from django.utils.http import urlsafe_base64_decode
+    from django.utils.encoding import force_str
+
+    uid      = (request.data.get("uid")      or "").strip()
+    token    = (request.data.get("token")    or "").strip()
+    password = (request.data.get("password") or "").strip()
+
+    if not uid or not token or not password:
+        return Response({"detail": "uid, token and password are all required."},
+                        status=status.HTTP_400_BAD_REQUEST)
+    if len(password) < 8:
+        return Response({"detail": "Password must be at least 8 characters."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        user_id = force_str(urlsafe_base64_decode(uid))
+        user    = User.objects.get(pk=user_id)
+    except (TypeError, ValueError, User.DoesNotExist):
+        return Response({"detail": "Reset link is invalid."}, status=status.HTTP_400_BAD_REQUEST)
+
+    if not default_token_generator.check_token(user, token):
+        return Response({"detail": "Reset link has expired or already been used."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    user.set_password(password)
+    user.save(update_fields=["password"])
+    return Response({"detail": "Password updated. You can now sign in with your new password."})

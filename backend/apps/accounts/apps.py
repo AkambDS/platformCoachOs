@@ -8,6 +8,8 @@ class AccountsConfig(AppConfig):
     def ready(self):
         from django.db.models.signals import post_migrate
         post_migrate.connect(_apply_rls, sender=self)
+        from apps.accounts.error_logging import register_celery_failure_handler
+        register_celery_failure_handler()
 
 
 def _apply_rls(sender, **kwargs):

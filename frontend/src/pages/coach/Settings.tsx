@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { authApi, settingsApi } from '../../api/client'
+import { api, authApi, settingsApi, invoicesApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
@@ -43,7 +43,7 @@ function WorkspaceTab() {
     setSaving(true)
     try {
       const { data } = await settingsApi.updateWorkspace(form)
-      if (user) rehydrate(user, data)
+      if (user) rehydrate(user, { ...workspace, ...data })
       show('Workspace settings saved')
     } catch { show('Failed to save', 'error') }
     finally { setSaving(false) }
@@ -774,20 +774,63 @@ function PipelineTab() {
 }
 
 // ── Activity Types Tab ─────────────────────────────────────────────────────────
-const PRESET_COLORS = ['#1a1714','#c9a84c','#2d6a9f','#4a7c59','#7c4d9f','#8c8279','#a0522d','#c0392b','#16a085','#2980b9']
+const PRESET_COLORS = [
+  // Blues
+  '#1B3A6B','#2d6a9f','#2980b9','#1a6fa8','#0e4d8a','#5b9bd5',
+  // Greens
+  '#4a7c59','#16a085','#27ae60','#2e7d32','#388e3c','#6ab187',
+  // Purples & pinks
+  '#7c4d9f','#9b59b6','#8e24aa','#c2185b','#e91e7a','#7b1fa2',
+  // Warm tones
+  '#c9a84c','#e67e22','#f39c12','#d97706','#a0522d','#8d4e1f',
+  // Reds
+  '#c0392b','#e53935','#b71c1c','#cc4125',
+  // Neutrals
+  '#1a1714','#4a4540','#8c8279','#607d8b',
+]
+
+function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+  return (
+    <div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 4 }}>
+        {PRESET_COLORS.map(c => (
+          <button
+            key={c} type="button"
+            onClick={() => onChange(c)}
+            style={{
+              width: 26, height: 26, borderRadius: '50%', background: c, cursor: 'pointer',
+              border: value === c ? '3px solid var(--ink)' : '2px solid rgba(0,0,0,.08)',
+              boxShadow: value === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none',
+              transition: 'all .1s', padding: 0,
+            }}
+          />
+        ))}
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+        <div style={{ width: 26, height: 26, borderRadius: '50%', background: value, border: '2px solid rgba(0,0,0,.12)', flexShrink: 0 }} />
+        <input
+          type="color" value={value} onChange={e => onChange(e.target.value)}
+          style={{ width: 36, height: 26, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
+        />
+        <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{value}</span>
+      </div>
+    </div>
+  )
+}
 
 function ActivityTypesTab() {
-  const { show } = useToast()
+  const { show, el: toastEl } = useToast()
   const qc = useQueryClient()
   const { data: types = [], isLoading } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
   })
-  const [showAdd, setShowAdd] = useState(false)
+  const [showAdd, setShowAdd]       = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
-  const [newForm, setNewForm] = useState({ name: '', color: '#2d6a9f' })
-  const [editForm, setEditForm] = useState({ name: '', color: '#2d6a9f' })
-  const [saving, setSaving] = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [newForm, setNewForm]       = useState({ name: '', color: '#2d6a9f' })
+  const [editForm, setEditForm]     = useState({ name: '', color: '#2d6a9f' })
+  const [saving, setSaving]         = useState(false)
 
   const handleAdd = async () => {
     if (!newForm.name.trim()) return
@@ -823,13 +866,17 @@ function ActivityTypesTab() {
     } catch { show('Failed to update', 'error') }
   }
 
-  const handleDelete = async (t: any) => {
-    if (!confirm(`Delete activity type "${t.name}"?`)) return
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSaving(true)
     try {
-      await settingsApi.deleteActivityType(t.id)
+      await settingsApi.deleteActivityType(deleteTarget.id)
       qc.invalidateQueries({ queryKey: ['activity-type-configs'] })
-      show('Deleted')
-    } catch { show('Failed to delete', 'error') }
+      setDeleteTarget(null)
+      show('Activity type deleted')
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to delete', 'error')
+    } finally { setSaving(false) }
   }
 
   if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
@@ -848,6 +895,9 @@ function ActivityTypesTab() {
             <div style={{ width: 12, height: 12, borderRadius: '50%', background: t.color, flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: t.is_active ? 'var(--ink)' : 'var(--muted)' }}>
               {t.name}
+              {t.is_builtin && (
+                <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 6, fontWeight: 400, letterSpacing: '.04em' }}>built-in</span>
+              )}
             </div>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--muted)', cursor: 'pointer' }}>
               <input type="checkbox" checked={t.is_active} onChange={() => handleToggle(t)}
@@ -857,7 +907,7 @@ function ActivityTypesTab() {
             <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(t); setEditForm({ name: t.name, color: t.color }) }} style={{ padding: '2px 6px' }}>
               <Pencil size={13} />
             </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(t)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(t)} style={{ color: '#c0392b', padding: '2px 6px' }}>
               <Trash2 size={13} />
             </button>
           </div>
@@ -873,17 +923,12 @@ function ActivityTypesTab() {
         }>
           <div className="fgroup">
             <label className="flabel">Name *</label>
-            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Strategy Session" />
+            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Strategy Session"
+              onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
           </div>
           <div className="fgroup">
             <label className="flabel">Color</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-              {PRESET_COLORS.map(c => (
-                <div key={c} onClick={() => setNewForm(f => ({ ...f, color: c }))}
-                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                    border: newForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
-              ))}
-            </div>
+            <ColorPicker value={newForm.color} onChange={c => setNewForm(f => ({ ...f, color: c }))} />
           </div>
         </Modal>
       )}
@@ -897,20 +942,377 @@ function ActivityTypesTab() {
         }>
           <div className="fgroup">
             <label className="flabel">Name *</label>
-            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} />
+            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
           </div>
           <div className="fgroup">
             <label className="flabel">Color</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-              {PRESET_COLORS.map(c => (
-                <div key={c} onClick={() => setEditForm(f => ({ ...f, color: c }))}
-                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                    border: editForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
-              ))}
+            <ColorPicker value={editForm.color} onChange={c => setEditForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete Activity Type" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Delete <strong>"{deleteTarget.name}"</strong>? Activities already logged with this type will keep their label.
+            {deleteTarget.is_builtin && (
+              <div style={{ marginTop: 8, fontSize: 12, color: 'var(--muted)', background: '#faf9f7', padding: '8px 12px', borderRadius: 6, border: '1px solid var(--border)' }}>
+                This is a built-in type. If you ever need it back, use "+ Add Type" to recreate it.
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
+
+      {toastEl}
+    </div>
+  )
+}
+
+// ── Services Tab ───────────────────────────────────────────────────────────────
+function ServicesTab() {
+  const { show } = useToast()
+  const qc = useQueryClient()
+  const { data: items = [], isLoading } = useQuery({
+    queryKey: ['service-catalog'],
+    queryFn: () => invoicesApi.catalogItems().then(r => r.data),
+  })
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [editForm, setEditForm] = useState({ name: '', description: '', unit_price: '' })
+  const [showAdd, setShowAdd] = useState(false)
+  const [newForm, setNewForm] = useState({ name: '', description: '', unit_price: '' })
+  const [saving, setSaving] = useState(false)
+
+  const openEdit = (item: any) => {
+    setEditTarget(item)
+    setEditForm({ name: item.name, description: item.description, unit_price: item.unit_price })
+  }
+
+  const handleAdd = async () => {
+    if (!newForm.name.trim() || !newForm.unit_price) return
+    setSaving(true)
+    try {
+      await invoicesApi.catalogCreate({ ...newForm, unit_price: Number(newForm.unit_price) })
+      qc.invalidateQueries({ queryKey: ['service-catalog'] })
+      setShowAdd(false)
+      setNewForm({ name: '', description: '', unit_price: '' })
+      show('Service added')
+    } catch { show('Failed to add', 'error') } finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editForm.name.trim() || !editForm.unit_price) return
+    setSaving(true)
+    try {
+      await invoicesApi.catalogUpdate(editTarget.id, { ...editForm, unit_price: Number(editForm.unit_price) })
+      qc.invalidateQueries({ queryKey: ['service-catalog'] })
+      setEditTarget(null)
+      show('Service updated')
+    } catch { show('Failed to update', 'error') } finally { setSaving(false) }
+  }
+
+  const handleDelete = async (item: any) => {
+    if (!confirm(`Delete "${item.name}"?`)) return
+    try {
+      await invoicesApi.catalogDelete(item.id)
+      qc.invalidateQueries({ queryKey: ['service-catalog'] })
+      show('Deleted')
+    } catch { show('Failed to delete', 'error') }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 640 }}>
+      <div className="card-hdr">
+        Service Catalog
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Service
+        </button>
+      </div>
+      <div style={{ padding: '10px 18px 6px', fontSize: 12, color: 'var(--muted)' }}>
+        Saved services appear as autocomplete suggestions when adding line items to invoices.
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {items.length === 0 && (
+          <div style={{ padding: '24px 18px', color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
+            No services yet — add your first one to speed up invoicing.
+          </div>
+        )}
+        {items.map((item: any) => (
+          <div key={item.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{item.name}</div>
+              {item.description && <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>{item.description}</div>}
+            </div>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600, color: 'var(--ink)', flexShrink: 0 }}>
+              ${Number(item.unit_price).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => openEdit(item)} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(item)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Service" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Service Name *</label>
+            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Monthly Coaching Session" autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Short Description</label>
+            <input className="finput" value={newForm.description} onChange={e => setNewForm(f => ({ ...f, description: e.target.value }))} placeholder="Appears on the invoice line item" />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Unit Price *</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: 'var(--muted)', fontSize: 14 }}>$</span>
+              <input className="finput" type="number" min="0" step="0.01" value={newForm.unit_price} onChange={e => setNewForm(f => ({ ...f, unit_price: e.target.value }))} placeholder="0.00" style={{ marginBottom: 0 }} />
             </div>
           </div>
         </Modal>
       )}
+
+      {editTarget && (
+        <Modal title="Edit Service" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Service Name *</label>
+            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Short Description</label>
+            <input className="finput" value={editForm.description} onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Unit Price *</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span style={{ color: 'var(--muted)', fontSize: 14 }}>$</span>
+              <input className="finput" type="number" min="0" step="0.01" value={editForm.unit_price} onChange={e => setEditForm(f => ({ ...f, unit_price: e.target.value }))} style={{ marginBottom: 0 }} />
+            </div>
+          </div>
+        </Modal>
+      )}
+    </div>
+  )
+}
+
+// ── Email Templates Tab ────────────────────────────────────────────────────────
+const EMAIL_TEMPLATE_DEFS = [
+  {
+    key: 'confirmation',
+    label: 'Confirmation',
+    hint: 'Sent when a session is first scheduled.',
+    defaultSubject: 'Confirmed: {session_title} with {coach_name}',
+    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}'],
+  },
+  {
+    key: 'reminder_24h',
+    label: '24h Reminder',
+    hint: 'Sent 24 hours before the session.',
+    defaultSubject: 'Reminder: {session_title} in 24 hours',
+    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}', '{time_label}'],
+  },
+  {
+    key: 'reminder_1h',
+    label: '1h Reminder',
+    hint: 'Sent 1 hour before the session.',
+    defaultSubject: 'Reminder: {session_title} in 1 hour',
+    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}', '{time_label}'],
+  },
+  {
+    key: 'invoice',
+    label: 'Invoice',
+    hint: 'Sent when an invoice is delivered to a client.',
+    defaultSubject: 'Invoice #{invoice_number} from {workspace_name}',
+    vars: ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+  },
+]
+
+function EmailTemplatesTab() {
+  const { workspace, user, rehydrate } = useAuthStore()
+  const { show } = useToast()
+
+  const [activeKey, setActiveKey] = useState('confirmation')
+  const [saving, setSaving]       = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+
+  const saved = (workspace as any)?.email_templates || {}
+  const initField = (key: string) => ({
+    subject: saved[key]?.subject || '',
+    intro:   saved[key]?.intro   || '',
+    closing: saved[key]?.closing || '',
+  })
+  const [fields, setFields] = useState(initField(activeKey))
+
+  const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
+
+  // Render preview from the values the user has typed right now — no DB dependency.
+  // Passing intro/closing as params means the backend renders exactly what's in the form.
+  const renderPreview = async (key: string, f: { intro: string; closing: string }) => {
+    setPreviewLoading(true)
+    try {
+      const { data } = await api.get('/api/settings/email-preview/', {
+        params: { type: key, intro: f.intro, closing: f.closing, _t: Date.now() },
+      })
+      setPreviewHtml(data.html)
+    } catch { setPreviewHtml('') }
+    finally { setPreviewLoading(false) }
+  }
+
+  // Switch tab: load saved fields for new tab, render its preview
+  const switchTab = (key: string) => {
+    const f = initField(key)
+    setActiveKey(key)
+    setFields(f)
+    renderPreview(key, f)
+  }
+
+  // Initial preview on mount
+  useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const newEmailTemplates = { ...(saved), [activeKey]: fields }
+      const { data } = await settingsApi.updateWorkspace({ email_templates: newEmailTemplates })
+      // Merge so workspace.id/slug aren't wiped by the partial PATCH response
+      if (user) rehydrate(user, { ...workspace, ...data, email_templates: newEmailTemplates })
+      show('Template saved')
+      // Re-render preview with current field values (not re-fetched from DB)
+      await renderPreview(activeKey, fields)
+    } catch { show('Failed to save', 'error') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, height: 'calc(100vh - 180px)', minHeight: 560 }}>
+
+      {/* Template type pills */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexShrink: 0 }}>
+        {EMAIL_TEMPLATE_DEFS.map(d => (
+          <button key={d.key} onClick={() => switchTab(d.key)} style={{
+            padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 500,
+            border: '1px solid var(--border)', cursor: 'pointer',
+            background: activeKey === d.key ? 'var(--ink)' : 'var(--white)',
+            color:      activeKey === d.key ? 'var(--white)' : 'var(--ink)',
+          }}>{d.label}</button>
+        ))}
+      </div>
+
+      {/* Split layout */}
+      <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
+
+        {/* Left — edit fields */}
+        <div style={{
+          width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0,
+          background: 'var(--white)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: '20px 20px 16px', overflow: 'auto',
+        }}>
+          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{def.label}</div>
+          <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>{def.hint}</div>
+
+          {/* Variable chips */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 16 }}>
+            {def.vars.map(v => (
+              <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
+                background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
+                padding: '2px 7px', fontSize: 11, fontFamily: 'monospace',
+                cursor: 'pointer', userSelect: 'all',
+              }} title="Click to copy">{v}</span>
+            ))}
+          </div>
+
+          <div className="fgroup">
+            <label className="flabel">Subject line</label>
+            <input className="finput" placeholder="Leave blank for default"
+              value={fields.subject}
+              onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Opening paragraph</label>
+            <textarea className="finput" rows={4} placeholder="Leave blank for default"
+              value={fields.intro} style={{ resize: 'vertical' }}
+              onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Closing paragraph</label>
+            <textarea className="finput" rows={4} placeholder="Leave blank for default"
+              value={fields.closing} style={{ resize: 'vertical' }}
+              onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
+          </div>
+
+          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <button className="btn-outline" style={{ width: '100%', fontSize: 12 }}
+              disabled={previewLoading} onClick={() => renderPreview(activeKey, fields)}>
+              {previewLoading ? 'Loading…' : 'Preview'}
+            </button>
+            <button className="btn-primary" style={{ width: '100%' }}
+              disabled={saving} onClick={handleSave}>
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
+
+        {/* Right — email preview */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+          {/* Subject bar */}
+          <div style={{
+            background: 'var(--white)', border: '1px solid var(--border)', borderRadius: '8px 8px 0 0',
+            borderBottom: 'none', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8,
+          }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.1em', flexShrink: 0 }}>Subject</span>
+            <span style={{ fontSize: 13, color: fields.subject ? 'var(--ink)' : 'var(--muted)', fontStyle: fields.subject ? 'normal' : 'italic' }}>
+              {fields.subject || def.defaultSubject}
+            </span>
+            {!fields.subject && (
+              <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 4, background: '#f5f3ef', borderRadius: 4, padding: '1px 6px' }}>default</span>
+            )}
+          </div>
+          <div style={{
+            flex: 1, border: '1px solid var(--border)', borderRadius: '0 0 8px 8px',
+            overflow: 'hidden', background: '#f5f3ef', position: 'relative',
+          }}>
+            {previewLoading && (
+              <div style={{
+                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+                justifyContent: 'center', background: 'rgba(255,255,255,0.7)', zIndex: 1,
+                fontSize: 13, color: 'var(--muted)',
+              }}>Loading preview…</div>
+            )}
+            <iframe
+              srcDoc={previewHtml}
+              title="Email preview"
+              sandbox="allow-same-origin"
+              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+            />
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
@@ -921,11 +1323,13 @@ export default function Settings() {
   const isOwner = user?.role === 'business_owner'
 
   const ALL_TABS = [
-    { key: 'Workspace',       icon: <Building2 size={13} />,    ownerOnly: true  },
-    { key: 'Profile',         icon: <User size={13} />,         ownerOnly: false },
-    { key: 'Team',            icon: <Mail size={13} />,         ownerOnly: true  },
-    { key: 'Pipeline',        icon: <Kanban size={13} />,       ownerOnly: true  },
-    { key: 'Activity Types',  icon: <CalendarDays size={13} />, ownerOnly: true  },
+    { key: 'Workspace',        icon: <Building2 size={13} />,    ownerOnly: true  },
+    { key: 'Profile',          icon: <User size={13} />,         ownerOnly: false },
+    { key: 'Team',             icon: <Mail size={13} />,         ownerOnly: true  },
+    { key: 'Pipeline',         icon: <Kanban size={13} />,       ownerOnly: true  },
+    { key: 'Activity Types',   icon: <CalendarDays size={13} />, ownerOnly: true  },
+    { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
+    { key: 'Email Templates',  icon: <Mail size={13} />,         ownerOnly: true  },
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
 
@@ -955,6 +1359,8 @@ export default function Settings() {
         {tab === 'Team'           && isOwner && <TeamTab />}
         {tab === 'Pipeline'       && isOwner && <PipelineTab />}
         {tab === 'Activity Types' && isOwner && <ActivityTypesTab />}
+        {tab === 'Services'        && isOwner && <ServicesTab />}
+        {tab === 'Email Templates' && isOwner && <EmailTemplatesTab />}
       </div>
     </AppShell>
   )

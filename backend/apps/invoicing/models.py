@@ -5,6 +5,23 @@ from apps.accounts.models import WorkspaceModel, User
 from apps.clients.models import Client
 
 
+class ServiceCatalogItem(WorkspaceModel):
+    """Reusable service/line-item template for quick invoice population."""
+    id          = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name        = models.CharField(max_length=200)
+    description = models.CharField(max_length=500, blank=True)
+    unit_price  = models.DecimalField(max_digits=12, decimal_places=2)
+    sort_order  = models.PositiveSmallIntegerField(default=0)
+    created_at  = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "invoicing_service_catalog"
+        ordering = ["sort_order", "name"]
+
+    def __str__(self):
+        return f"{self.name} (${self.unit_price})"
+
+
 class Invoice(WorkspaceModel):
     """CoachOS invoice — links to dj-stripe via stripe_invoice_id (FR-INV-01 to 17)."""
 
@@ -13,13 +30,14 @@ class Invoice(WorkspaceModel):
         SUBSCRIPTION = "subscription", "Subscription"
 
     class Status(models.TextChoices):
-        DRAFT            = "draft",            "Draft"
-        SENT             = "sent",             "Sent"
-        PARTIALLY_PAID   = "partially_paid",   "Partially Paid"
-        PAID             = "paid",             "Paid"
-        OVERDUE          = "overdue",          "Overdue"
-        VOID             = "void",             "Void"
-        REFUNDED         = "refunded",         "Refunded"
+        DRAFT              = "draft",              "Draft"
+        SENT               = "sent",              "Sent"
+        PARTIALLY_PAID     = "partially_paid",    "Partially Paid"
+        PAID               = "paid",              "Paid"
+        OVERDUE            = "overdue",           "Overdue"
+        VOID               = "void",             "Void"
+        REFUNDED           = "refunded",          "Refunded"
+        PARTIALLY_REFUNDED = "partially_refunded","Partially Refunded"
 
     id                = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client            = models.ForeignKey(Client, on_delete=models.PROTECT, related_name="invoices")
@@ -43,6 +61,22 @@ class Invoice(WorkspaceModel):
     stripe_invoice_id     = models.CharField(max_length=100, blank=True, db_index=True)
     stripe_payment_link   = models.URLField(blank=True)
     stripe_subscription_id = models.CharField(max_length=100, blank=True)
+    # Dates
+    issue_date        = models.DateField(null=True, blank=True)
+    # Subscription billing
+    class BillingCycle(models.TextChoices):
+        MONTHLY   = "monthly",   "Monthly"
+        QUARTERLY = "quarterly", "Quarterly"
+        YEARLY    = "yearly",    "Yearly"
+
+    billing_cycle         = models.CharField(max_length=20, choices=BillingCycle.choices, blank=True)
+    billing_day           = models.PositiveSmallIntegerField(null=True, blank=True)  # 1-28
+    subscription_start    = models.DateField(null=True, blank=True)
+    subscription_auto_send = models.BooleanField(default=True)
+    # Refunds
+    refund_amount     = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    refund_reason     = models.CharField(max_length=300, blank=True)
+    refunded_at       = models.DateTimeField(null=True, blank=True)
     # PDF
     pdf_s3_key        = models.CharField(max_length=500, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)

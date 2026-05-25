@@ -1,437 +1,199 @@
-import { useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoicesApi, clientsApi } from '../../api/client'
+import { useState, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
+import { invoicesApi, clientsApi, activitiesApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { PageHeader, Modal, StatusBadge, EmptyState, useToast } from '../../components/ui'
+import { StatusBadge, EmptyState } from '../../components/ui'
+
+// ── helpers ───────────────────────────────────────────────────────────────────
 
 function fmtDate(d: string) {
   if (!d) return '—'
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-function InvoiceDetailModal({ invoiceId, onClose, onAction }: any) {
-  const qc = useQueryClient()
-  const { show: showToast } = useToast()
-  const [tab, setTab] = useState<'details' | 'email'>('details')
-  const { data: inv, isLoading } = useQuery({
-    queryKey: ['invoice', invoiceId],
-    queryFn: () => invoicesApi.get(invoiceId).then(r => r.data),
-  })
+function fmtDateTime(d: string) {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
 
-  const handleSend = async () => {
-    try {
-      await invoicesApi.send(invoiceId)
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] })
-      showToast('Invoice sent to client')
-      onAction?.()
-    } catch { showToast('Failed to send', 'error') }
+function fmt$(n: number) {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+}
+
+function exportCSV(invoices: any[]) {
+  const headers = ['Invoice #', 'Issue Date', 'Client', 'Company', 'Amount', 'Paid', 'Status', 'Due Date']
+  const rows = invoices.map(inv => [
+    inv.number,
+    inv.created_at?.slice(0, 10) || '',
+    inv.client_name || '',
+    '',
+    Number(inv.total).toFixed(2),
+    Number(inv.amount_paid || 0).toFixed(2),
+    inv.status,
+    inv.due_date || '',
+  ])
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  a.download = 'invoices.csv'
+  a.click()
+}
+
+// ── Payment progress bar ──────────────────────────────────────────────────────
+
+function PaymentBar({ paid, total, status }: { paid: number; total: number; status: string }) {
+  const pct = total > 0 ? Math.min(100, (paid / total) * 100) : 0
+  const isOverdue = status === 'overdue'
+  const isPaid = status === 'paid'
+  const isRefunded = ['refunded', 'partially_refunded'].includes(status)
+
+  if (isRefunded) {
+    return <span style={{ fontSize: 12, color: 'var(--rust)', fontWeight: 500 }}>Refunded</span>
   }
 
-  const handleVoid = async () => {
-    if (!confirm('Void this invoice?')) return
-    try {
-      await invoicesApi.void(invoiceId)
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] })
-      showToast('Invoice voided')
-      onAction?.()
-    } catch { showToast('Failed to void', 'error') }
-  }
+  const barColor = isPaid ? '#3d6e4a' : isOverdue ? '#c0392b' : '#b8922e'
 
   return (
-    <Modal title={inv ? `Invoice ${inv.number}` : 'Invoice'} onClose={onClose} size="lg"
-      footer={
-        inv && (
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', width: '100%' }}>
-            {inv.status === 'draft' && <button className="btn btn-gold btn-sm" onClick={handleSend}>Send to Client</button>}
-            {!['paid','void','refunded'].includes(inv.status) && <button className="btn btn-outline btn-sm" onClick={handleVoid}>Void</button>}
-            <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
-          </div>
-        )
-      }>
-      {isLoading ? (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading…</div>
-      ) : inv ? (
-        <>
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)', paddingBottom: 0 }}>
-            {(['details', 'email'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)}
-                style={{ padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer',
-                         borderBottom: tab === t ? '2px solid var(--ink)' : '2px solid transparent',
-                         fontWeight: tab === t ? 600 : 400, fontSize: 13, textTransform: 'capitalize',
-                         color: tab === t ? 'var(--ink)' : 'var(--muted)' }}>
-                {t === 'email' ? 'Email Preview' : 'Details'}
-              </button>
-            ))}
-          </div>
-
-          {tab === 'details' && (
-            <>
-              <div style={{ display: 'flex', gap: 24, marginBottom: 20, flexWrap: 'wrap' }}>
-                {[
-                  ['Status', <StatusBadge status={inv.status} />],
-                  ['Client', inv.client_name],
-                  ['Type', inv.invoice_type?.replace('_', '-')],
-                  ['Due', fmtDate(inv.due_date)],
-                  ['Currency', inv.currency],
-                ].map(([l, v]: any) => (
-                  <div key={l}><div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 2 }}>{l}</div><div style={{ fontWeight: 500 }}>{v}</div></div>
-                ))}
-              </div>
-
-              <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 16 }}>
-                <thead>
-                  <tr style={{ borderBottom: '2px solid var(--ink)' }}>
-                    {['Description', 'Qty', 'Unit Price', 'Total'].map(h => (
-                      <th key={h} style={{ textAlign: 'left', padding: '6px 8px', fontSize: 11, textTransform: 'uppercase', letterSpacing: '.08em', color: 'var(--muted)' }}>{h}</th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {(inv.items || []).map((item: any) => (
-                    <tr key={item.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '8px 8px' }}>{item.description}</td>
-                      <td style={{ padding: '8px 8px', color: 'var(--muted)' }}>{item.quantity}</td>
-                      <td style={{ padding: '8px 8px' }}>${Number(item.unit_price).toFixed(2)}</td>
-                      <td style={{ padding: '8px 8px', fontWeight: 600 }}>${Number(item.line_total).toFixed(2)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-end', marginBottom: 16 }}>
-                {[
-                  ['Subtotal', `$${Number(inv.subtotal).toFixed(2)}`],
-                  ['Discount', inv.discount_type === 'percent' ? `${inv.discount_value}%` : `-$${Number(inv.discount_value).toFixed(2)}`],
-                  ['Tax', `${inv.tax_percent}%`],
-                ].map(([l, v]) => (
-                  <div key={l} style={{ display: 'flex', gap: 24, fontSize: 13, color: 'var(--muted)' }}>
-                    <span>{l}</span><span>{v}</span>
-                  </div>
-                ))}
-                <div style={{ display: 'flex', gap: 24, fontWeight: 700, fontSize: 18, borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4, fontFamily: 'Cormorant Garamond, serif' }}>
-                  <span>Total</span><span>${Number(inv.total).toFixed(2)}</span>
-                </div>
-              </div>
-
-              {inv.notes && (
-                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', padding: '10px 14px', fontSize: 13, color: 'var(--muted)', borderRadius: 4 }}>
-                  {inv.notes}
-                </div>
-              )}
-            </>
-          )}
-
-          {tab === 'email' && (
-            inv.email_html ? (
-              <iframe
-                srcDoc={inv.email_html}
-                title="Email Preview"
-                style={{ width: '100%', height: 600, border: '1px solid var(--border)', borderRadius: 4 }}
-                sandbox="allow-same-origin"
-              />
-            ) : (
-              <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Email preview not available</div>
-            )
-          )}
-        </>
-      ) : null}
-    </Modal>
+    <div>
+      <div style={{ fontSize: 12, color: isPaid ? 'var(--success)' : isOverdue ? 'var(--rust)' : 'var(--ink)', fontWeight: 500, marginBottom: 3 }}>
+        {isPaid ? `$${fmt$(paid)} via bank` : `$${fmt$(paid)} of $${fmt$(total)}`}
+      </div>
+      <div style={{ height: 4, background: 'var(--cream)', borderRadius: 2, width: 120 }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2, transition: 'width .3s' }} />
+      </div>
+    </div>
   )
 }
 
-function NewInvoiceModal({ onClose, onSaved }: any) {
-  const qc = useQueryClient()
-  const { data: clientsData } = useQuery({ queryKey: ['clients-all'], queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data) })
-  const clients: any[] = clientsData?.results || clientsData || []
-  const [form, setForm] = useState({
-    client: '', invoice_type: 'one_time', currency: 'USD',
-    due_date: '', notes: '', discount_type: 'percent', discount_value: '0', tax_percent: '0',
+// ── Client hub (shown when a client is selected) ──────────────────────────────
+
+const STAGE_COLOURS: Record<string, string> = {
+  lead: '#6e6560', prospect: '#2d6a9f', proposal: '#b8922e',
+  negotiation: '#a0522d', closed_won: '#3d6e4a', closed_lost: '#c0392b',
+}
+
+function ClientHub({ client, statusFilter, search }: { client: any; statusFilter: string; search: string }) {
+  const navigate = useNavigate()
+
+  const { data: invData } = useQuery({
+    queryKey: ['invoices-client', client.id, statusFilter],
+    queryFn: () => invoicesApi.list({ client: client.id, status: statusFilter || undefined }).then(r => r.data),
   })
-  const [items, setItems] = useState([{ description: '', quantity: '1', unit_price: '' }])
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-  const setItem = (i: number, k: string, v: string) => setItems(arr => arr.map((it, idx) => idx === i ? { ...it, [k]: v } : it))
-  const addItem = () => setItems(arr => [...arr, { description: '', quantity: '1', unit_price: '' }])
-  const removeItem = (i: number) => setItems(arr => arr.filter((_, idx) => idx !== i))
-
-  const subtotal = items.reduce((s, it) => s + (Number(it.quantity) * Number(it.unit_price) || 0), 0)
-  const discount = form.discount_type === 'percent' ? subtotal * Number(form.discount_value) / 100 : Number(form.discount_value)
-  const taxable = subtotal - discount
-  const tax = taxable * Number(form.tax_percent) / 100
-  const total = taxable + tax
-
-  const handleSave = async () => {
-    if (!form.client) { setError('Please select a client'); return }
-    if (items.some(it => !it.description || !it.unit_price)) { setError('Fill in all line items'); return }
-    setSaving(true); setError('')
-    try {
-      await invoicesApi.create({
-        ...form,
-        due_date: form.due_date || null,
-        discount_value: Number(form.discount_value),
-        tax_percent: Number(form.tax_percent),
-        items: items.map(it => ({ ...it, quantity: Number(it.quantity), unit_price: Number(it.unit_price) })),
+  const allInvoices: any[] = invData?.results || invData || []
+  const invoices = search
+    ? allInvoices.filter(inv => {
+        const q = search.toLowerCase()
+        return inv.number?.toLowerCase().includes(q) || String(inv.total).includes(q)
       })
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-      onSaved()
-    } catch (e: any) {
-      const d = e.response?.data
-      if (!d || typeof d !== 'object') { setError('Server error — please try again'); return }
-      if (d.detail) { setError(d.detail); return }
-      const fieldErrors = Object.entries(d)
-        .map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`)
-        .join('; ')
-      setError(fieldErrors || 'Failed to create invoice')
-    } finally { setSaving(false) }
-  }
+    : allInvoices
 
-  return (
-    <Modal title="New Invoice" onClose={onClose} size="lg"
-      footer={
-        <>
-          <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-          <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Create Invoice'}</button>
-        </>
-      }>
-      {error && <div style={{ background: '#fde8dc', color: '#a0400d', padding: '10px 14px', marginBottom: 16, fontSize: 13 }}>{error}</div>}
-
-      <div className="fgrid">
-        <div className="fgroup">
-          <label className="flabel">Client *</label>
-          <select className="fselect" value={form.client} onChange={e => set('client', e.target.value)}>
-            <option value="">Select client…</option>
-            {clients.map((c: any) => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
-          </select>
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Type</label>
-          <select className="fselect" value={form.invoice_type} onChange={e => set('invoice_type', e.target.value)}>
-            <option value="one_time">One-Time</option>
-            <option value="subscription">Subscription</option>
-          </select>
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Due Date</label>
-          <input className="finput" type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Currency</label>
-          <select className="fselect" value={form.currency} onChange={e => set('currency', e.target.value)}>
-            {['USD','EUR','GBP','CAD','AUD'].map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-      </div>
-
-      <div className="fsec">Line Items</div>
-      {items.map((item, i) => (
-        <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 80px 120px auto', gap: 8, marginBottom: 8, alignItems: 'end' }}>
-          <div className="fgroup" style={{ marginBottom: 0 }}>
-            {i === 0 && <label className="flabel">Description</label>}
-            <input className="finput" value={item.description} onChange={e => setItem(i, 'description', e.target.value)} placeholder="Coaching session" />
-          </div>
-          <div className="fgroup" style={{ marginBottom: 0 }}>
-            {i === 0 && <label className="flabel">Qty</label>}
-            <input className="finput" type="number" value={item.quantity} onChange={e => setItem(i, 'quantity', e.target.value)} />
-          </div>
-          <div className="fgroup" style={{ marginBottom: 0 }}>
-            {i === 0 && <label className="flabel">Unit Price</label>}
-            <input className="finput" type="number" value={item.unit_price} onChange={e => setItem(i, 'unit_price', e.target.value)} placeholder="0.00" />
-          </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => removeItem(i)} style={{ marginTop: i === 0 ? 18 : 0 }}>×</button>
-        </div>
-      ))}
-      <button className="btn btn-outline btn-sm" onClick={addItem} style={{ marginTop: 4 }}>+ Add Line</button>
-
-      <div className="fsec">Adjustments</div>
-      <div className="fgrid">
-        <div className="fgroup">
-          <label className="flabel">Discount Type</label>
-          <select className="fselect" value={form.discount_type} onChange={e => set('discount_type', e.target.value)}>
-            <option value="percent">Percent (%)</option>
-            <option value="fixed">Fixed ($)</option>
-          </select>
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Discount Value</label>
-          <input className="finput" type="number" value={form.discount_value} onChange={e => set('discount_value', e.target.value)} />
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Tax (%)</label>
-          <input className="finput" type="number" value={form.tax_percent} onChange={e => set('tax_percent', e.target.value)} />
-        </div>
-      </div>
-
-      {/* Summary */}
-      <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', padding: 16, marginTop: 8 }}>
-        {[
-          ['Subtotal', `$${subtotal.toFixed(2)}`],
-          ['Discount', `-$${discount.toFixed(2)}`],
-          ['Tax', `$${tax.toFixed(2)}`],
-        ].map(([k, v]) => (
-          <div key={k} className="kv"><span className="kvl">{k}</span><span>{v}</span></div>
-        ))}
-        <div className="kv" style={{ borderTop: '1px solid var(--border)', paddingTop: 8, marginTop: 4 }}>
-          <span style={{ fontWeight: 600 }}>Total</span>
-          <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 600 }}>${total.toFixed(2)}</span>
-        </div>
-      </div>
-
-      <div className="fgroup" style={{ marginTop: 16 }}>
-        <label className="flabel">Notes</label>
-        <textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} placeholder="Payment terms, bank details…" />
-      </div>
-    </Modal>
-  )
-}
-
-function RecordPaymentModal({ invoiceId, onClose, onSaved }: any) {
-  const qc = useQueryClient()
-  const [form, setForm] = useState({ amount: '', method: 'stripe', notes: '', paid_at: new Date().toISOString().slice(0, 16) })
-  const [saving, setSaving] = useState(false)
-  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-
-  const handleSave = async () => {
-    if (!form.amount) return
-    setSaving(true)
-    try {
-      await invoicesApi.recordPayment(invoiceId, { ...form, amount: Number(form.amount) })
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-      qc.invalidateQueries({ queryKey: ['invoice', invoiceId] })
-      onSaved()
-    } catch { } finally { setSaving(false) }
-  }
-
-  return (
-    <Modal title="Record Payment" onClose={onClose} footer={
-      <>
-        <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Record Payment'}</button>
-      </>
-    }>
-      <div className="fgroup">
-        <label className="flabel">Amount</label>
-        <input className="finput" type="number" value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00" />
-      </div>
-      <div className="fgroup">
-        <label className="flabel">Method</label>
-        <select className="fselect" value={form.method} onChange={e => set('method', e.target.value)}>
-          {['stripe','cash','bank','cheque'].map(m => <option key={m} value={m}>{m.charAt(0).toUpperCase() + m.slice(1)}</option>)}
-        </select>
-      </div>
-      <div className="fgroup">
-        <label className="flabel">Date</label>
-        <input className="finput" type="datetime-local" value={form.paid_at} onChange={e => set('paid_at', e.target.value)} />
-      </div>
-      <div className="fgroup">
-        <label className="flabel">Notes</label>
-        <textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
-      </div>
-    </Modal>
-  )
-}
-
-export default function Invoices() {
-  const qc = useQueryClient()
-  const { show: showToast, el: toastEl } = useToast()
-  const [statusFilter, setStatusFilter] = useState('')
-  const [showNew, setShowNew] = useState(false)
-  const [detailId, setDetailId] = useState<string | null>(null)
-  const [payingId, setPayingId] = useState<string | null>(null)
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['invoices', statusFilter],
-    queryFn: () => invoicesApi.list({ status: statusFilter || undefined }).then(r => r.data),
+  const { data: dealsData } = useQuery({
+    queryKey: ['pipeline-client', client.id],
+    queryFn: () => pipelineApi.dealsByClient(client.id).then(r => r.data),
   })
-  const invoices: any[] = data?.results || data || []
+  const deals: any[] = dealsData?.results || dealsData || []
+  const activeDeal = deals[0] || null
 
-  const handleSend = async (id: string, e: React.MouseEvent) => {
-    e.stopPropagation()
-    try {
-      await invoicesApi.send(id)
-      qc.invalidateQueries({ queryKey: ['invoices'] })
-      showToast('Invoice sent to client')
-    } catch { showToast('Failed to send', 'error') }
-  }
+  const { data: actData } = useQuery({
+    queryKey: ['activities-client', client.id],
+    queryFn: () => activitiesApi.list({ client: client.id, status: 'scheduled' }).then(r => r.data),
+  })
+  const sessions: any[] = (actData?.results || actData || [])
+    .filter((a: any) => new Date(a.start_at) >= new Date())
+    .sort((a: any, b: any) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
+    .slice(0, 3)
 
-  const totalOutstanding = invoices.filter(i => ['sent','overdue','partially_paid'].includes(i.status)).reduce((s, i) => s + Number(i.total || 0), 0)
-  const totalPaid = invoices.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.total || 0), 0)
+  const totalInvoiced = allInvoices.reduce((s: number, i: any) => s + Number(i.total || 0), 0)
+  const totalPaid = allInvoices.filter((i: any) => i.status === 'paid').reduce((s: number, i: any) => s + Number(i.amount_paid || i.total || 0), 0)
 
   return (
-    <AppShell>
-      <PageHeader
-        title="Invoices"
-        subtitle={`${invoices.length} invoices`}
-        action={<button className="btn btn-dark" onClick={() => setShowNew(true)}>+ New Invoice</button>}
-      />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+      {/* Client banner */}
+      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 24px', display: 'flex', gap: 32, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+        <div>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400 }}>{client.first_name} {client.last_name}</div>
+          {client.company && <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>{client.company}</div>}
+        </div>
+        {client.email && (
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: '.1em', color: 'var(--muted)', fontWeight: 600, marginBottom: 2 }}>EMAIL</div>
+            <a href={`mailto:${client.email}`} style={{ color: 'var(--blue)', fontSize: 13, textDecoration: 'none' }}>{client.email}</a>
+          </div>
+        )}
+        {client.phone && (
+          <div>
+            <div style={{ fontSize: 10, letterSpacing: '.1em', color: 'var(--muted)', fontWeight: 600, marginBottom: 2 }}>PHONE</div>
+            <span style={{ fontSize: 13 }}>{client.phone}</span>
+          </div>
+        )}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 24 }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 600 }}>${fmt$(totalInvoiced)}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '.06em' }}>TOTAL INVOICED</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 600, color: 'var(--success)' }}>${fmt$(totalPaid)}</div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: '.06em' }}>COLLECTED</div>
+          </div>
+        </div>
+      </div>
 
-      <div className="page-body">
-        {/* Summary */}
-        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)', marginBottom: 24 }}>
-          {[
-            { lbl: 'Outstanding', val: `$${totalOutstanding.toLocaleString()}`, colour: 'var(--rust)' },
-            { lbl: 'Paid (All Time)', val: `$${totalPaid.toLocaleString()}`, colour: 'var(--success)' },
-            { lbl: 'Total Invoices', val: invoices.length, colour: 'var(--ink)' },
-          ].map(s => (
-            <div key={s.lbl} className="stat-card">
-              <div className="stat-val" style={{ color: s.colour }}>{s.val}</div>
-              <div className="stat-lbl">{s.lbl}</div>
+      {/* Pipeline + Schedule */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
+          <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 14 }}>PIPELINE</div>
+          {activeDeal ? (
+            <div>
+              <span style={{ display: 'inline-block', padding: '4px 12px', borderRadius: 20, background: (STAGE_COLOURS[activeDeal.stage] || '#6e6560') + '18', color: STAGE_COLOURS[activeDeal.stage] || '#6e6560', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 8 }}>
+                {activeDeal.stage?.replace(/_/g, ' ')}
+              </span>
+              {activeDeal.deal_value && <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 600, marginBottom: 4 }}>${Number(activeDeal.deal_value).toLocaleString()}</div>}
+              {activeDeal.stage_changed_at && <div style={{ fontSize: 12, color: 'var(--muted)' }}>In stage since {fmtDate(activeDeal.stage_changed_at)}</div>}
             </div>
-          ))}
+          ) : <div style={{ color: 'var(--muted)', fontSize: 13 }}>No active pipeline deal</div>}
         </div>
-
-        <div className="toolbar">
-          {['', 'draft','sent','paid','overdue','void'].map(s => (
-            <button key={s} className={`filter-pill${statusFilter === s ? ' active' : ''}`} onClick={() => setStatusFilter(s)}>
-              {s === '' ? 'All' : s.charAt(0).toUpperCase() + s.slice(1)}
-            </button>
-          ))}
+        <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
+          <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 14 }}>UPCOMING SESSIONS</div>
+          {sessions.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {sessions.map((s: any) => (
+                <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{s.title}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, textTransform: 'capitalize' }}>{s.activity_type}</div>
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 500 }}>{fmtDateTime(s.start_at)}</div>
+                </div>
+              ))}
+            </div>
+          ) : <div style={{ color: 'var(--muted)', fontSize: 13 }}>No upcoming sessions</div>}
         </div>
+      </div>
 
-        {isLoading ? (
-          <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading…</div>
-        ) : invoices.length === 0 ? (
-          <EmptyState icon="$" title="No invoices" message="Create your first invoice" />
+      {/* Invoices table */}
+      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ padding: '14px 24px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600 }}>INVOICES ({invoices.length})</div>
+          <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new')} style={{ fontSize: 11 }}>+ New Invoice</button>
+        </div>
+        {invoices.length === 0 ? (
+          <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No invoices for this client</div>
         ) : (
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th>Invoice #</th>
-                <th>Client</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Total</th>
-                <th>Due Date</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
+          <table className="tbl" style={{ margin: 0 }}>
+            <thead><tr><th>INVOICE</th><th>STATUS</th><th>AMOUNT</th><th>PAYMENT</th><th>DUE DATE</th></tr></thead>
             <tbody>
               {invoices.map((inv: any) => (
-                <tr key={inv.id} onClick={() => setDetailId(inv.id)} style={{ cursor: 'pointer' }}>
-                  <td style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</td>
-                  <td>{inv.client_name || inv.client}</td>
-                  <td style={{ fontSize: 12, textTransform: 'capitalize' }}>{inv.invoice_type?.replace('_', '-')}</td>
+                <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: 'pointer' }}>
+                  <td>
+                    <div style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{fmtDate(inv.created_at)}</div>
+                  </td>
                   <td><StatusBadge status={inv.status} /></td>
-                  <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 17, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
-                  <td style={{ color: inv.status === 'overdue' ? 'var(--warn)' : 'inherit', fontSize: 13 }}>{fmtDate(inv.due_date)}</td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {inv.status === 'draft' && (
-                        <button className="btn btn-gold btn-sm" onClick={e => handleSend(inv.id, e)}>Send</button>
-                      )}
-                      {['sent','overdue','partially_paid'].includes(inv.status) && (
-                        <button className="btn btn-dark btn-sm" onClick={e => { e.stopPropagation(); setPayingId(inv.id) }}>Record Payment</button>
-                      )}
-                      {inv.stripe_payment_link && (
-                        <a href={inv.stripe_payment_link} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm" onClick={e => e.stopPropagation()}>
-                          Pay Link ↗
-                        </a>
-                      )}
-                    </div>
+                  <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
+                  <td><PaymentBar paid={Number(inv.amount_paid || 0)} total={Number(inv.total)} status={inv.status} /></td>
+                  <td style={{ fontSize: 13, color: inv.status === 'overdue' ? 'var(--warn)' : 'inherit', fontWeight: inv.status === 'overdue' ? 600 : 400 }}>
+                    {fmtDate(inv.due_date)}{inv.status === 'overdue' ? ' ⚠' : ''}
                   </td>
                 </tr>
               ))}
@@ -439,11 +201,204 @@ export default function Invoices() {
           </table>
         )}
       </div>
+    </div>
+  )
+}
 
-      {showNew && <NewInvoiceModal onClose={() => setShowNew(false)} onSaved={() => { setShowNew(false); showToast('Invoice created') }} />}
-      {detailId && <InvoiceDetailModal invoiceId={detailId} onClose={() => setDetailId(null)} onAction={() => { setDetailId(null); qc.invalidateQueries({ queryKey: ['invoices'] }) }} />}
-      {payingId && <RecordPaymentModal invoiceId={payingId} onClose={() => setPayingId(null)} onSaved={() => { setPayingId(null); showToast('Payment recorded') }} />}
-      {toastEl}
+// ── Main page ─────────────────────────────────────────────────────────────────
+
+export default function Invoices() {
+  const navigate = useNavigate()
+  const [selectedClientId, setSelectedClientId] = useState('')
+  const [statusFilter, setStatusFilter] = useState('')
+  const [search, setSearch] = useState('')
+
+  const { data: clientsData } = useQuery({
+    queryKey: ['clients-all'],
+    queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
+  })
+  const clients: any[] = clientsData?.results || clientsData || []
+  const selectedClient = clients.find((c: any) => String(c.id) === selectedClientId) || null
+
+  const { data: allData, isLoading } = useQuery({
+    queryKey: ['invoices', statusFilter],
+    queryFn: () => invoicesApi.list({ status: statusFilter || undefined }).then(r => r.data),
+    enabled: !selectedClientId,
+  })
+  const allInvoices: any[] = allData?.results || allData || []
+
+  const filtered = useMemo(() => {
+    if (!search.trim()) return allInvoices
+    const q = search.toLowerCase()
+    return allInvoices.filter(inv =>
+      inv.number?.toLowerCase().includes(q) ||
+      (inv.client_name || '').toLowerCase().includes(q) ||
+      String(inv.total).includes(q)
+    )
+  }, [allInvoices, search])
+
+  // Stats
+  const totalInvoiced = allInvoices.reduce((s, i) => s + Number(i.total || 0), 0)
+  const totalCollected = allInvoices.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.amount_paid || i.total || 0), 0)
+  const outstanding = allInvoices.filter(i => ['sent', 'overdue', 'partially_paid'].includes(i.status)).reduce((s, i) => s + (Number(i.total) - Number(i.amount_paid || 0)), 0)
+  const overdueCount = allInvoices.filter(i => i.status === 'overdue').length
+  const totalRefunded = allInvoices.reduce((s, i) => s + Number(i.refund_amount || 0), 0)
+  const collectionRate = totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100) : 0
+
+  const STATUS_PILLS = ['', 'paid', 'partially_paid', 'sent', 'overdue', 'refunded']
+  const STATUS_LABELS: Record<string, string> = { '': 'All', paid: 'Paid', partially_paid: 'Partial', sent: 'Unpaid', overdue: 'Overdue', refunded: 'Refunded' }
+
+  return (
+    <AppShell>
+      {/* ── Header ── */}
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '24px 32px 20px', borderBottom: '1px solid var(--border)', background: 'var(--paper)' }}>
+        <div>
+          <h1 style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: 'var(--ink)' }}>Invoices</h1>
+          <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
+            {allInvoices.length} invoices · ${fmt$(totalInvoiced)} total · ${fmt$(outstanding)} outstanding
+          </div>
+        </div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn btn-outline" onClick={() => exportCSV(allInvoices)} style={{ fontSize: 12, letterSpacing: '.05em', fontWeight: 600 }}>
+            EXPORT CSV
+          </button>
+          <button className="btn btn-dark" onClick={() => navigate('/invoices/new')} style={{ fontSize: 12, letterSpacing: '.05em', fontWeight: 600 }}>
+            + NEW INVOICE
+          </button>
+        </div>
+      </div>
+
+      <div className="page-body">
+        {/* ── Stat cards (all-client view only) ── */}
+        {!selectedClientId && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+            {[
+              { label: 'TOTAL INVOICED (YTD)', value: `$${fmt$(totalInvoiced)}`, sub: `Across ${allInvoices.length} invoices`, color: 'var(--ink)' },
+              { label: 'COLLECTED', value: `$${fmt$(totalCollected)}`, sub: `${collectionRate}% collection rate`, color: 'var(--success)' },
+              { label: 'OUTSTANDING', value: `$${fmt$(outstanding)}`, sub: `${overdueCount > 0 ? overdueCount + ' invoices overdue' : 'All current'}`, color: 'var(--rust)' },
+              { label: 'REFUNDED', value: `$${fmt$(totalRefunded)}`, sub: 'Excluded from revenue', color: '#c0392b' },
+            ].map(card => (
+              <div key={card.label} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
+                <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>{card.label}</div>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: card.color, marginBottom: 4 }}>{card.value}</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{card.sub}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* ── Filters bar ── */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+          {/* Search */}
+          <div style={{ position: 'relative', flex: 1, minWidth: 220, maxWidth: 420 }}>
+            <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontSize: 14 }}>🔍</span>
+            <input
+              className="finput"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search by client, invoice #, amount…"
+              style={{ marginBottom: 0, paddingLeft: 30 }}
+            />
+          </div>
+
+          {/* Client selector */}
+          <select
+            className="fselect"
+            value={selectedClientId}
+            onChange={e => { setSelectedClientId(e.target.value); setStatusFilter(''); setSearch('') }}
+            style={{ width: 220, marginBottom: 0 }}
+          >
+            <option value="">All clients</option>
+            {clients.map((c: any) => (
+              <option key={c.id} value={c.id}>{c.first_name} {c.last_name}{c.company ? ` — ${c.company}` : ''}</option>
+            ))}
+          </select>
+
+          {/* Status pills */}
+          <div style={{ display: 'flex', gap: 4 }}>
+            {STATUS_PILLS.map(s => (
+              <button
+                key={s}
+                onClick={() => setStatusFilter(s)}
+                style={{
+                  padding: '6px 14px', borderRadius: 20, border: '1px solid var(--border)',
+                  background: statusFilter === s ? 'var(--ink)' : '#fff',
+                  color: statusFilter === s ? '#fff' : 'var(--muted)',
+                  cursor: 'pointer', fontSize: 12, fontWeight: statusFilter === s ? 600 : 400,
+                  transition: 'all .15s',
+                }}
+              >
+                {STATUS_LABELS[s]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* ── Client hub OR all-invoices table ── */}
+        {selectedClient ? (
+          <ClientHub client={selectedClient} statusFilter={statusFilter} search={search} />
+        ) : isLoading ? (
+          <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading…</div>
+        ) : filtered.length === 0 ? (
+          <EmptyState icon="$" title="No invoices" message={search || statusFilter ? 'No invoices match your filters' : 'Create your first invoice'} />
+        ) : (
+          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            <table className="tbl" style={{ margin: 0 }}>
+              <thead>
+                <tr>
+                  <th>INVOICE</th>
+                  <th>CLIENT</th>
+                  <th>AMOUNT</th>
+                  <th>STATUS</th>
+                  <th>PAYMENT</th>
+                  <th>DUE DATE</th>
+                  <th>ACTIONS</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((inv: any) => {
+                  const isOverdue = inv.status === 'overdue'
+                  const client = clients.find((c: any) => `${c.first_name} ${c.last_name}` === inv.client_name)
+                  return (
+                    <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: 'pointer' }}>
+                      <td>
+                        <div style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{fmtDate(inv.created_at)}</div>
+                      </td>
+                      <td>
+                        <div
+                          style={{ fontWeight: 500, color: 'var(--ink)', cursor: 'pointer' }}
+                          onClick={e => { e.stopPropagation(); if (client) setSelectedClientId(String(client.id)) }}
+                        >
+                          {inv.client_name || '—'}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{inv.client_company || ''}</div>
+                      </td>
+                      <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
+                      <td><StatusBadge status={inv.status} /></td>
+                      <td><PaymentBar paid={Number(inv.amount_paid || 0)} total={Number(inv.total)} status={inv.status} /></td>
+                      <td style={{ fontSize: 13, color: isOverdue ? 'var(--warn)' : 'inherit', fontWeight: isOverdue ? 600 : 400, whiteSpace: 'nowrap' }}>
+                        {fmtDate(inv.due_date)}{isOverdue ? ' ⚠' : ''}
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        {isOverdue ? (
+                          <span style={{ color: 'var(--gold)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
+                            Send Reminder →
+                          </span>
+                        ) : (
+                          <span style={{ color: 'var(--gold)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
+                            View →
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </AppShell>
   )
 }

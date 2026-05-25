@@ -23,6 +23,13 @@ class IsAssistantOrAbove(BasePermission):
                 and request.user.role in ("business_owner", "coach", "assistant"))
 
 
+class IsBusinessOwnerOrSuperuser(BasePermission):
+    """Business Owner or Django superuser — destructive / admin operations."""
+    def has_permission(self, request, view):
+        return (request.user and request.user.is_authenticated
+                and (request.user.role == "business_owner" or request.user.is_superuser))
+
+
 class IsClientPortalUser(BasePermission):
     """Client portal users only — own data via separate JWT scope."""
     def has_permission(self, request, view):
@@ -35,3 +42,10 @@ class IsWorkspaceMember(BasePermission):
     def has_permission(self, request, view):
         return (request.user and request.user.is_authenticated
                 and request.user.workspace_id is not None)
+
+
+class IsPlatformAdmin(BasePermission):
+    """Platform-admin role or Django is_staff — grants access to superadmin API."""
+    def has_permission(self, request, view):
+        return (request.user and request.user.is_authenticated
+                and (request.user.role == "platform_admin" or request.user.is_staff))

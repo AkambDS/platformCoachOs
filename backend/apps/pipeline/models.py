@@ -24,10 +24,24 @@ class Deal(WorkspaceModel):
     stage            = models.CharField(max_length=50, default=Stage.LEAD_NEW)
     stage_changed_at    = models.DateTimeField(auto_now_add=True)
     pipeline_alert_sent_at = models.DateTimeField(null=True, blank=True)
-    deal_value       = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
-    source           = models.CharField(max_length=100, blank=True)
-    notes            = models.TextField(blank=True)
-    closed_at        = models.DateTimeField(null=True, blank=True)
+    class DealType(models.TextChoices):
+        COACHING_1_1    = "1_1_coaching",       "1:1 Coaching"
+        GROUP_PROGRAM   = "group_program",       "Group Program"
+        CORPORATE       = "corporate_training",  "Corporate Training"
+        WORKSHOP        = "workshop",            "Workshop"
+        RETAINER        = "retainer",            "Retainer"
+        OTHER           = "other",               "Other"
+
+    deal_value         = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    deal_type          = models.CharField(max_length=30, choices=DealType.choices, blank=True)
+    tags               = models.JSONField(default=list, blank=True)
+    source             = models.CharField(max_length=100, blank=True)
+    notes              = models.TextField(blank=True)
+    expected_close_date = models.DateField(null=True, blank=True)
+    probability        = models.PositiveSmallIntegerField(null=True, blank=True)  # 0-100
+    next_action        = models.CharField(max_length=300, blank=True)
+    next_action_date   = models.DateField(null=True, blank=True)
+    closed_at          = models.DateTimeField(null=True, blank=True)
     created_at       = models.DateTimeField(auto_now_add=True)
     updated_at       = models.DateTimeField(auto_now=True)
 
@@ -76,4 +90,20 @@ class StageHistory(WorkspaceModel):
 
     class Meta:
         db_table = "pipeline_stagehistory"
+        ordering = ["-changed_at"]
+
+
+class DealProgress(WorkspaceModel):
+    """Tracks every field edit on a deal (value, source, notes, tags). Stage moves go to StageHistory."""
+    id         = models.BigAutoField(primary_key=True)
+    deal       = models.ForeignKey(Deal, on_delete=models.CASCADE, related_name="progress_log")
+    changed_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    field_name = models.CharField(max_length=50)
+    old_value  = models.TextField(blank=True)
+    new_value  = models.TextField(blank=True)
+    note       = models.TextField(blank=True)
+    changed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "pipeline_dealprogress"
         ordering = ["-changed_at"]

@@ -51,11 +51,34 @@ class Client(WorkspaceModel):
         return f"{self.first_name} {self.last_name}"
 
 
+class ClientNote(WorkspaceModel):
+    """Date-stamped coach notes per client."""
+    class NoteType(models.TextChoices):
+        GENERAL     = "general",     "General"
+        SESSION     = "session",     "Session Note"
+        OBSERVATION = "observation", "Observation"
+        COMMITMENT  = "commitment",  "Commitment"
+
+    id         = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client     = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="client_notes")
+    text       = models.TextField()
+    note_type  = models.CharField(max_length=20, choices=NoteType.choices, default=NoteType.GENERAL)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "clients_clientnote"
+        ordering = ["-created_at"]
+
+
 class Assessment(WorkspaceModel):
-    """Assessment PDFs uploaded per client (FR-CRM-10 to 13)."""
+    """Files uploaded per client — assessments, contracts, reports."""
     class AssessmentType(models.TextChoices):
-        DISC       = "disc",       "DISC"
+        CONTRACT   = "contract",   "Contract"
+        DISC       = "disc",       "DISC Assessment"
         MOTIVATORS = "motivators", "Motivators"
+        BEHAVIORAL = "behavioral", "Behavioral Assessment"
         OTHER      = "other",      "Other"
 
     id               = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

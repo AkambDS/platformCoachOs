@@ -29,6 +29,9 @@ class Workspace(models.Model):
     buffer_minutes     = models.PositiveSmallIntegerField(default=15)
     cancellation_hours = models.PositiveSmallIntegerField(default=48)
     is_active          = models.BooleanField(default=True)
+    # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice
+    # Each entry: {subject, intro, closing}
+    email_templates    = models.JSONField(default=dict, blank=True)
     created_at         = models.DateTimeField(auto_now_add=True)
     updated_at         = models.DateTimeField(auto_now=True)
 
@@ -64,11 +67,14 @@ class UserManager(BaseUserManager):
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
         extra.setdefault("role", "business_owner")
+        if "workspace" not in extra and extra.get("role") != "platform_admin":
+            extra["workspace"] = Workspace.objects.first()
         return self.create_user(email, password, **extra)
 
 
 class User(AbstractBaseUser, PermissionsMixin):
     class Role(models.TextChoices):
+        PLATFORM_ADMIN = "platform_admin", "Platform Admin"
         BUSINESS_OWNER = "business_owner", "Business Owner"
         COACH          = "coach",          "Coach"
         ASSISTANT      = "assistant",      "Assistant"
@@ -126,6 +132,29 @@ class WorkspaceInvitation(models.Model):
         return f"Invite → {self.email} ({self.role})"
 
 
+class WorkspaceRegistrationToken(models.Model):
+    """One-time link a superuser can generate to let someone register a new workspace."""
+    id         = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    note       = models.CharField(max_length=200, blank=True)
+    used       = models.BooleanField(default=False)
+    used_by    = models.ForeignKey(
+        Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
+    )
+    expires_at = models.DateTimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "workspace_registration_tokens"
+        ordering = ["-created_at"]
+
+    def is_valid(self):
+        return not self.used and self.expires_at > tz.now()
+
+    def __str__(self):
+        return f"RegToken {'used' if self.used else 'active'} — {self.note or self.id}"
+
+
 class AuditLog(models.Model):
     """Immutable audit trail. Append-only."""
     id         = models.BigAutoField(primary_key=True)
@@ -144,3 +173,33 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.action} {self.table_name}:{self.record_id}"
+
+
+class ErrorLog(models.Model):
+    """Captured API and Celery errors, scoped to a workspace where possible."""
+    class Severity(models.TextChoices):
+        WARNING  = "warning",  "Warning"
+        ERROR    = "error",    "Error"
+        CRITICAL = "critical", "Critical"
+
+    class Source(models.TextChoices):
+        API    = "api",    "API"
+        CELERY = "celery", "Celery"
+
+    id         = models.BigAutoField(primary_key=True)
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True, blank=True)
+    user       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    severity   = models.CharField(max_length=20, choices=Severity.choices, default=Severity.ERROR)
+    source     = models.CharField(max_length=20, choices=Source.choices, default=Source.API)
+    error_type = models.CharField(max_length=200, blank=True)
+    message    = models.TextField()
+    traceback  = models.TextField(blank=True)
+    endpoint   = models.CharField(max_length=500, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        db_table = "error_log"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.severity} {self.error_type}: {self.message[:60]}"

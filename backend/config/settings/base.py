@@ -58,6 +58,7 @@ LOCAL_APPS = [
     "apps.portal",
     "apps.library",
     "apps.settings_app",
+    "apps.feedback",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -129,6 +130,7 @@ REST_FRAMEWORK = {
         "rest_framework.permissions.IsAuthenticated",
     ),
     "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+    "EXCEPTION_HANDLER": "apps.accounts.error_logging.drf_exception_handler",
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 25,
     "DEFAULT_FILTER_BACKENDS": [
@@ -140,8 +142,8 @@ REST_FRAMEWORK = {
 
 # ── JWT ───────────────────────────────────────────────────────────────────
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME":   timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME":  timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME":   timedelta(hours=8),
+    "REFRESH_TOKEN_LIFETIME":  timedelta(days=30),
     "ROTATE_REFRESH_TOKENS":   True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN":       True,
@@ -190,8 +192,19 @@ SOCIALACCOUNT_PROVIDERS = {
 }
 
 # ── Email ─────────────────────────────────────────────────────────────────
-# Default to console backend in dev — overridden to SMTP in production.py
-EMAIL_BACKEND      = "django.core.mail.backends.console.EmailBackend"
+# Use SMTP when EMAIL_HOST is set (e.g. Mailpit on port 1025 in dev).
+# Falls back to console backend so local dev without Docker still works.
+_EMAIL_HOST = env("EMAIL_HOST", default="")
+if _EMAIL_HOST:
+    EMAIL_BACKEND  = "django.core.mail.backends.smtp.EmailBackend"
+    EMAIL_HOST     = _EMAIL_HOST
+    EMAIL_PORT     = env.int("EMAIL_PORT",     default=1025)
+    EMAIL_USE_TLS  = env.bool("EMAIL_USE_TLS", default=False)
+    EMAIL_USE_SSL  = env.bool("EMAIL_USE_SSL", default=False)
+    EMAIL_HOST_USER     = env("EMAIL_HOST_USER",     default="")
+    EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 DEFAULT_FROM_EMAIL = env("DEFAULT_FROM_EMAIL", default="CoachOS <noreply@coachos.app>")
 
 # ── Celery ────────────────────────────────────────────────────────────────
@@ -219,15 +232,38 @@ DJSTRIPE_WEBHOOK_SECRET   = env("STRIPE_WEBHOOK_SECRET", default="")
 DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
 
 # ── File Storage ─────────────────────────────────────────────────────────
-_minio_endpoint         = env("MINIO_ENDPOINT",    default="")
+# Dev: set MINIO_ENDPOINT to use local MinIO.
+# Prod: leave MINIO_ENDPOINT empty → uses real AWS S3 via IAM instance role.
+_minio_endpoint         = env("MINIO_ENDPOINT", default="")
 AWS_S3_ENDPOINT_URL     = _minio_endpoint if _minio_endpoint else None
-AWS_ACCESS_KEY_ID       = env("MINIO_ACCESS_KEY",  default="coachos")
-AWS_SECRET_ACCESS_KEY   = env("MINIO_SECRET_KEY",  default="coachos_minio_secret")
-AWS_STORAGE_BUCKET_NAME = env("MINIO_BUCKET",      default="coachos-files")
-MINIO_PUBLIC_URL        = env("MINIO_PUBLIC_URL",  default="")
-AWS_DEFAULT_ACL         = "private"
-AWS_S3_FILE_OVERWRITE   = False
-DEFAULT_FILE_STORAGE    = "storages.backends.s3boto3.S3Boto3Storage"
+
+# Bucket — prefer AWS_S3_BUCKET_NAME in prod; fall back to MINIO_BUCKET for dev
+AWS_STORAGE_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", default=env("MINIO_BUCKET", default="coachos-files"))
+AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
+
+# Credentials — only set explicitly when running with MinIO (dev).
+# In production on EC2 with IAM instance role, boto3 picks up credentials
+# automatically via the instance metadata service — no keys needed.
+_access_key = env("AWS_ACCESS_KEY_ID",     default=env("MINIO_ACCESS_KEY", default=""))
+_secret_key = env("AWS_SECRET_ACCESS_KEY", default=env("MINIO_SECRET_KEY", default=""))
+if _access_key:
+    AWS_ACCESS_KEY_ID     = _access_key
+    AWS_SECRET_ACCESS_KEY = _secret_key
+
+MINIO_PUBLIC_URL      = env("MINIO_PUBLIC_URL", default="")
+AWS_DEFAULT_ACL       = "private"
+AWS_S3_FILE_OVERWRITE = False
+AWS_QUERYSTRING_AUTH  = True          # presigned URLs for private objects
+
+# Django 4.2+ requires STORAGES dict — DEFAULT_FILE_STORAGE alone is ignored.
+STORAGES = {
+    "default": {
+        "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+    },
+    "staticfiles": {
+        "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
+    },
+}
 
 # ── SMS ───────────────────────────────────────────────────────────────────
 SMS_BACKEND        = env("SMS_BACKEND",        default="mock")

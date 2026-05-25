@@ -12,4 +12,5 @@ urlpatterns = [
     path("pipeline-stages/<int:pk>/", views.pipeline_stage_config_detail,    name="settings-pipeline-stage-detail"),
     path("activity-types/",        views.activity_type_configs,            name="settings-activity-types"),
     path("activity-types/<int:pk>/", views.activity_type_config_detail,    name="settings-activity-type-detail"),
+    path("email-preview/",           views.email_preview,                  name="settings-email-preview"),
 ]

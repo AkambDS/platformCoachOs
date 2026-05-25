@@ -18,11 +18,22 @@ const TYPE_COLOURS: Record<string, string> = {
   custom:      '#a0522d',
 }
 const STATUS_TABS = [
-  { label: 'All',       value: '' },
-  { label: 'Scheduled', value: 'scheduled' },
-  { label: 'Completed', value: 'completed' },
-  { label: 'Missed',    value: 'missed' },
-  { label: 'Cancelled', value: 'cancelled' },
+  { label: 'All',         value: '' },
+  { label: 'Scheduled',   value: 'scheduled' },
+  { label: 'Completed',   value: 'completed' },
+  { label: 'Late',        value: 'late' },
+  { label: 'Rescheduled', value: 'rescheduled' },
+  { label: 'Missed',      value: 'missed' },
+  { label: 'Cancelled',   value: 'cancelled' },
+]
+
+const EDITABLE_STATUSES = [
+  { value: 'scheduled',   label: 'Scheduled' },
+  { value: 'completed',   label: 'Completed' },
+  { value: 'late',        label: 'Late' },
+  { value: 'rescheduled', label: 'Rescheduled' },
+  { value: 'missed',      label: 'Missed' },
+  { value: 'cancelled',   label: 'Cancelled' },
 ]
 
 function toLocalInput(utc: string) {
@@ -61,6 +72,7 @@ function ActivityFormModal({
   const [form, setForm] = useState({
     client:        initial?.client        || '',
     activity_type: initial?.activity_type || 'session',
+    status:        initial?.status        || 'scheduled',
     title:         initial?.title         || '',
     start_at:      initial?.start_at ? toLocalInput(initial.start_at) : '',
     end_at:        initial?.end_at   ? toLocalInput(initial.end_at)   : '',
@@ -120,6 +132,16 @@ function ActivityFormModal({
           </select>
         </div>
       </div>
+      {isEdit && (
+        <div className="fgroup">
+          <label className="flabel">Status</label>
+          <select className="fselect" value={form.status} onChange={e => set('status', e.target.value)}>
+            {EDITABLE_STATUSES.map(s => (
+              <option key={s.value} value={s.value}>{s.label}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="fgroup">
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
@@ -279,8 +301,8 @@ function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }
 }
 
 // ── Activity Detail Side Panel ─────────────────────────────────────────────────
-function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
-  const canAct = activity.status === 'scheduled'
+function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onStatusChange }: any) {
+  const isActive = ['scheduled', 'late', 'rescheduled'].includes(activity.status)
   const [showEmailPreview, setShowEmailPreview] = useState(false)
 
   return (
@@ -290,7 +312,7 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
       onClose={onClose}
       footer={
         <div style={{ display: 'flex', gap: 8, width: '100%', flexWrap: 'wrap' }}>
-          {canAct && (
+          {isActive && (
             <button className="btn btn-sm btn-outline" onClick={() => onEdit(activity)} style={{ marginRight: 'auto' }}>
               Edit
             </button>
@@ -300,18 +322,39 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
             <Mail size={12} /> Emails
           </button>
           <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
-          {canAct && (
+          {isActive && activity.status !== 'completed' && (
+            <button className="btn btn-sm"
+              style={{ background: '#16a085', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
+              onClick={() => onStatusChange(activity.id, 'completed')}>
+              Complete
+            </button>
+          )}
+          {isActive && activity.status !== 'late' && (
+            <button className="btn btn-sm"
+              style={{ background: '#d97706', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
+              onClick={() => onStatusChange(activity.id, 'late')}>
+              Late
+            </button>
+          )}
+          {isActive && activity.status !== 'rescheduled' && (
+            <button className="btn btn-sm"
+              style={{ background: '#2d6a9f', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
+              onClick={() => onStatusChange(activity.id, 'rescheduled')}>
+              Reschedule
+            </button>
+          )}
+          {isActive && (
             <button
               className="btn btn-sm"
               style={{ background: 'var(--rust)', color: 'white', borderRadius: 'var(--radius-sm)' }}
               onClick={() => onMissed(activity.id)}
             >
-              Mark Missed
+              Missed
             </button>
           )}
-          {canAct && (
+          {isActive && (
             <button className="btn btn-danger btn-sm" onClick={() => onCancel(activity)}>
-              Cancel Session
+              Cancel
             </button>
           )}
         </div>
@@ -393,6 +436,16 @@ export default function Activities() {
       setCancelTarget(null)
       showToast('Session cancelled — client notified by email')
     } catch { showToast('Cancellation failed', 'error') }
+  }
+
+  const handleStatusChange = async (id: string, newStatus: string) => {
+    try {
+      await activitiesApi.patch(id, { status: newStatus })
+      qc.invalidateQueries({ queryKey: ['activities-list'] })
+      setDetailTarget(null)
+      const labels: Record<string, string> = { completed: 'Marked complete', late: 'Marked late', rescheduled: 'Marked rescheduled' }
+      showToast(labels[newStatus] || 'Status updated')
+    } catch { showToast('Failed to update status', 'error') }
   }
 
   return (
@@ -552,6 +605,7 @@ export default function Activities() {
           onMissed={handleMarkMissed}
           onEdit={(a: any) => { setEditTarget(a); setDetailTarget(null) }}
           onCancel={(a: any) => { setCancelTarget(a); setDetailTarget(null) }}
+          onStatusChange={handleStatusChange}
         />
       )}
 
