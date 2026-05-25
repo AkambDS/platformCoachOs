@@ -135,6 +135,8 @@ _BUILTIN_STAGES = [
 
 
 def _seed_pipeline_stages(workspace):
+    if PipelineStageConfig.objects.filter(workspace=workspace).exists():
+        return
     for s in _BUILTIN_STAGES:
         PipelineStageConfig.objects.get_or_create(
             workspace=workspace, slug=s["slug"],
