@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoicesApi, settingsApi } from '../../api/client'
@@ -18,6 +18,9 @@ function fmt$(n: number | string) {
 }
 
 const METHODS = ['bank', 'cash', 'cheque', 'stripe']
+const METHOD_LABELS: Record<string, string> = {
+  bank: 'Bank Transfer', cash: 'Cash', cheque: 'Cheque', stripe: 'Stripe (card)',
+}
 const REFUND_REASONS = [
   'Client dissatisfied',
   'Duplicate charge',
@@ -59,9 +62,7 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
   const balance     = Math.max(0, total - paid)
   const stamp       = STATUS_STAMP_COLOR[inv.status] || STATUS_STAMP_COLOR.draft
 
-  const logoUrl = workspace?.logo_data
-    ? `/api/settings/logo/${workspace.id}/`
-    : null
+  const logoUrl = workspace?.logo_data || null
 
   const firstPayment = (inv.payments || [])[0]
   const paidLabel    = firstPayment
@@ -107,8 +108,8 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
           {inv.due_date && (
             <div style={{ fontSize: 12, color: '#6e6560' }}>Due: {fmtDateShort(inv.due_date)}</div>
           )}
-          {/* Status stamp */}
-          <div style={{
+          {/* Status stamp — hidden in PDF/print */}
+          <div className="invoice-status-stamp" style={{
             display: 'inline-block',
             marginTop: 10,
             padding: '5px 14px',
@@ -254,6 +255,7 @@ function RecordPaymentModal({ inv, onClose, onSaved }: {
   const remaining = Math.max(0, total - paid)
   const pct       = total > 0 ? Math.min(100, (paid / total) * 100) : 0
 
+  const [payType, setPayType] = useState<'full' | 'partial'>(remaining > 0 ? 'full' : 'partial')
   const [form, setForm] = useState({
     amount: remaining.toFixed(2),
     method: 'bank',
@@ -263,22 +265,18 @@ function RecordPaymentModal({ inv, onClose, onSaved }: {
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
-  const enteredAmt = Number(form.amount) || 0
+  const enteredAmt = payType === 'full' ? remaining : (Number(form.amount) || 0)
   const willSettle = enteredAmt >= remaining && remaining > 0
 
   const handleSave = async () => {
-    if (!form.amount || Number(form.amount) <= 0) return
+    if (enteredAmt <= 0) return
     setSaving(true)
     try {
-      await invoicesApi.recordPayment(inv.id, { ...form, amount: Number(form.amount) })
+      await invoicesApi.recordPayment(inv.id, { ...form, amount: enteredAmt })
       qc.invalidateQueries({ queryKey: ['invoices'] })
       qc.invalidateQueries({ queryKey: ['invoice', inv.id] })
       onSaved()
     } catch { } finally { setSaving(false) }
-  }
-
-  const METHOD_LABELS: Record<string, string> = {
-    bank: 'Bank Transfer', cash: 'Cash', cheque: 'Cheque', stripe: 'Stripe (card)',
   }
 
   return (
@@ -304,14 +302,36 @@ function RecordPaymentModal({ inv, onClose, onSaved }: {
       }
     >
       {/* Subtitle */}
-      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 20, marginTop: -4 }}>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, marginTop: -4 }}>
         {inv.number} · {inv.client_name} · Total: ${fmt$(total)} · Already paid: ${fmt$(paid)} · Remaining: ${fmt$(remaining)}
+      </div>
+
+      {/* Full / Partial toggle */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 16 }}>
+        {(['full', 'partial'] as const).map(t => (
+          <button
+            key={t}
+            type="button"
+            onClick={() => {
+              setPayType(t)
+              if (t === 'full') set('amount', remaining.toFixed(2))
+            }}
+            style={{
+              padding: '10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+              border: payType === t ? '2px solid #1a2f4e' : '1px solid var(--border)',
+              background: payType === t ? '#1a2f4e' : '#fff',
+              color: payType === t ? '#fff' : 'var(--ink)',
+            }}
+          >
+            {t === 'full' ? `Full Payment — $${fmt$(remaining)}` : 'Partial Payment'}
+          </button>
+        ))}
       </div>
 
       {/* Progress box */}
       <div style={{
         background: '#faf9f7', border: '1px solid var(--border)', borderRadius: 8,
-        padding: '16px 20px', marginBottom: 20,
+        padding: '16px 20px', marginBottom: 16,
       }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 8 }}>
           <span style={{ fontWeight: 700, fontSize: 16 }}>${fmt$(paid)} paid</span>
@@ -333,8 +353,11 @@ function RecordPaymentModal({ inv, onClose, onSaved }: {
             PAYMENT AMOUNT *
           </label>
           <input className="finput" type="number" step="0.01" min="0"
-            value={form.amount} onChange={e => set('amount', e.target.value)} placeholder="0.00"
-            style={{ margin: 0 }} />
+            value={payType === 'full' ? remaining.toFixed(2) : form.amount}
+            onChange={e => set('amount', e.target.value)}
+            disabled={payType === 'full'}
+            placeholder="0.00"
+            style={{ margin: 0, background: payType === 'full' ? '#f5f5f5' : '#fff' }} />
         </div>
         <div>
           <label style={{ fontSize: 10, letterSpacing: '.1em', fontWeight: 600, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
@@ -538,7 +561,9 @@ export default function InvoiceDetail() {
 
   const [showPayment,    setShowPayment]    = useState(false)
   const [showRefund,     setShowRefund]     = useState(false)
-  const [showEmailPreview, setShowEmailPreview] = useState(false)
+  const [showEmailPreview, setShowEmailPreview] = useState(true)
+  const [emailPreviewHtml, setEmailPreviewHtml] = useState('')
+  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false)
   const [sending,        setSending]        = useState(false)
 
   const { data: inv, isLoading } = useQuery({
@@ -551,6 +576,15 @@ export default function InvoiceDetail() {
     queryKey: ['workspace'],
     queryFn: () => settingsApi.getWorkspace().then(r => r.data),
   })
+
+  useEffect(() => {
+    if (!inv) return
+    setEmailPreviewLoading(true)
+    settingsApi.emailPreview('invoice')
+      .then(r => setEmailPreviewHtml(r.data.html))
+      .catch(() => setEmailPreviewHtml(''))
+      .finally(() => setEmailPreviewLoading(false))
+  }, [inv?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = async () => {
     setSending(true)
@@ -578,6 +612,54 @@ export default function InvoiceDetail() {
       await invoicesApi.remind(id!)
       showToast('Reminder sent to client')
     } catch { showToast('Failed to send reminder', 'error') }
+  }
+
+  const handlePrint = () => {
+    const el = document.getElementById('invoice-print-area')
+    if (!el) return
+    const win = window.open('', '_blank', 'width=900,height=700')
+    if (!win) return
+    const businessName  = workspace?.name  || ''
+    const businessEmail = workspace?.email || ''
+    const footer = [businessName, businessEmail].filter(Boolean).join(' · ')
+
+    win.document.documentElement.innerHTML = `
+<head>
+  <meta charset="utf-8">
+  <title>${inv.number}</title>
+  <base href="${window.location.origin}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    @page { margin: 0; size: A4 portrait; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 1.2cm 1.4cm 0;
+      font-family: Inter, system-ui, sans-serif;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    .invoice-status-stamp { display: none !important; }
+    .print-footer {
+      margin-top: auto;
+      padding: 10px 0 14px;
+      border-top: 1px solid #e4dfd6;
+      text-align: center;
+      font-size: 10px;
+      color: #9e9890;
+      letter-spacing: .06em;
+    }
+  </style>
+</head>
+<body>
+${el.innerHTML}
+<div class="print-footer">${footer}</div>
+</body>`
+    win.onload = () => { win.print() }
   }
 
   if (isLoading) return (
@@ -678,190 +760,175 @@ export default function InvoiceDetail() {
       </div>
 
       {/* ── Body ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', minHeight: 'calc(100vh - 145px)' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', height: 'calc(100vh - 145px)', overflow: 'hidden' }}>
 
         {/* ── Left: invoice document ── */}
-        <div style={{ overflowY: 'auto', padding: '32px 40px', borderRight: '1px solid var(--border)', background: '#f7f5f2' }}>
+        <div id="invoice-print-area" style={{ overflowY: 'auto', padding: '32px 40px', borderRight: '1px solid var(--border)', background: '#f7f5f2' }}>
           <InvoiceDoc inv={inv} workspace={workspace} />
         </div>
 
         {/* ── Right: sidebar ── */}
-        <div style={{ overflowY: 'auto', background: '#f5f4f1', padding: 14, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: '#f5f4f1' }}>
 
-          {/* Payment History */}
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 16px' }}>
-            <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 14 }}>
-              PAYMENT HISTORY
-            </div>
-            {(inv.payments || []).length === 0 ? (
-              <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>No payments recorded</div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {(inv.payments || []).map((p: any) => (
-                  <div key={p.id} style={{
-                    display: 'flex', gap: 12, alignItems: 'flex-start',
-                    background: '#fafaf9', borderRadius: 8, padding: '12px 14px',
-                    border: '1px solid var(--border)',
-                  }}>
-                    <div style={{
-                      width: 32, height: 32, borderRadius: '50%',
-                      background: '#e8f5e9', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      fontSize: 14, flexShrink: 0,
-                    }}>
-                      💳
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
-                        <span style={{ fontSize: 13, fontWeight: 600 }}>
-                          {p.notes || `${p.method.charAt(0).toUpperCase() + p.method.slice(1)} payment`}
-                        </span>
-                        <span style={{ fontSize: 14, fontWeight: 700, color: '#22c55e', flexShrink: 0, marginLeft: 8 }}>
-                          +${fmt$(p.amount)}
-                        </span>
-                      </div>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>
-                        {fmtDate(p.paid_at)}
-                        {p.stripe_payment_id && (
-                          <span style={{ marginLeft: 6, fontFamily: 'monospace', fontSize: 10 }}>
-                            · {p.stripe_payment_id.slice(0, 12)}…
-                          </span>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+          {/* Top cards — scroll if content overflows */}
+          <div style={{ flexShrink: 0, overflowY: 'auto', padding: '14px 14px 0', display: 'flex', flexDirection: 'column', gap: 10 }}>
 
-          {/* Invoice Status */}
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 16px' }}>
-            <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 14 }}>
-              INVOICE STATUS
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>Status</span>
+            {/* Invoice Status + Payment summary — compact single card */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <span style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600 }}>INVOICE STATUS</span>
                 <StatusBadge status={inv.status} />
               </div>
-              {[
-                { label: 'Total',   value: `$${fmt$(total)}`,     color: 'var(--ink)' },
-                { label: 'Paid',    value: `$${fmt$(paid)}`,      color: paid > 0 ? '#22c55e' : 'var(--muted)' },
-                { label: 'Balance', value: `$${fmt$(remaining)}`, color: remaining > 0 && isOverdue ? '#e67e22' : remaining > 0 ? '#e67e22' : 'var(--muted)' },
-                { label: 'Due Date', value: fmtDate(inv.due_date), color: isOverdue ? '#e67e22' : 'var(--ink)' },
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <span style={{ color: 'var(--muted)' }}>{label}</span>
-                  <span style={{ color, fontWeight: label === 'Balance' || label === 'Total' ? 600 : 400 }}>{value}</span>
-                </div>
-              ))}
-              {Number(inv.refund_amount) > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                  <span style={{ color: 'var(--muted)' }}>Refunded</span>
-                  <span style={{ color: '#b91c1c', fontWeight: 600 }}>-${fmt$(inv.refund_amount)}</span>
-                </div>
-              )}
-              {inv.sent_at && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
-                  <span style={{ color: 'var(--muted)' }}>Sent</span>
-                  <span style={{ color: 'var(--muted)' }}>{fmtDate(inv.sent_at)}</span>
-                </div>
-              )}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+                {[
+                  { label: 'Total',    value: `$${fmt$(total)}`,     bold: true,  color: 'var(--ink)' },
+                  { label: 'Paid',     value: `$${fmt$(paid)}`,      bold: false, color: paid > 0 ? '#22c55e' : 'var(--muted)' },
+                  { label: 'Balance',  value: `$${fmt$(remaining)}`, bold: true,  color: remaining > 0 ? (isOverdue ? '#e67e22' : '#e67e22') : 'var(--muted)' },
+                  { label: 'Due Date', value: fmtDate(inv.due_date), bold: false, color: isOverdue ? '#e67e22' : 'var(--ink)' },
+                ].map(({ label, value, bold, color }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span style={{ color: 'var(--muted)' }}>{label}</span>
+                    <span style={{ color, fontWeight: bold ? 600 : 400 }}>{value}</span>
+                  </div>
+                ))}
+                {Number(inv.refund_amount) > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+                    <span style={{ color: 'var(--muted)' }}>Refunded</span>
+                    <span style={{ color: '#b91c1c', fontWeight: 600 }}>-${fmt$(inv.refund_amount)}</span>
+                  </div>
+                )}
+                {inv.sent_at && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+                    <span style={{ color: 'var(--muted)' }}>Sent</span>
+                    <span style={{ color: 'var(--muted)' }}>{fmtDate(inv.sent_at)}</span>
+                  </div>
+                )}
+              </div>
             </div>
+
+            {/* Payment History — compact */}
+            {(inv.payments || []).length > 0 && (
+              <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
+                <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>
+                  PAYMENT HISTORY
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {(inv.payments || []).map((p: any) => (
+                    <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', fontSize: 12 }}>
+                      <div>
+                        <div style={{ fontWeight: 600, color: 'var(--ink)' }}>
+                          {METHOD_LABELS[p.method] || p.method}
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
+                          {fmtDate(p.paid_at)}{p.notes ? ` · ${p.notes}` : ''}
+                        </div>
+                      </div>
+                      <span style={{ fontWeight: 600, color: '#22c55e', flexShrink: 0, marginLeft: 10, paddingTop: 1 }}>+${fmt$(p.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Send Reminder — prominent when due/overdue */}
+            {canRemind && (
+              <div style={{
+                background: isOverdue ? '#fff8f0' : '#fff',
+                border: `1px solid ${isOverdue ? '#e67e22' : 'var(--border)'}`,
+                borderRadius: 8, padding: '12px 14px',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div>
+                    <div style={{ fontSize: 10, letterSpacing: '.12em', color: isOverdue ? '#e67e22' : 'var(--muted)', fontWeight: 600 }}>
+                      {isOverdue ? 'OVERDUE REMINDER' : 'PAYMENT REMINDER'}
+                    </div>
+                    {inv.due_date && (
+                      <div style={{ fontSize: 11, color: isOverdue ? '#e67e22' : 'var(--muted)', marginTop: 2 }}>
+                        Due {fmtDate(inv.due_date)}
+                      </div>
+                    )}
+                  </div>
+                  <button onClick={handleRemind} style={{
+                    padding: '7px 14px', borderRadius: 6,
+                    background: isOverdue ? '#e67e22' : '#1a2f4e', color: '#fff', border: 'none',
+                    fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
+                  }}>Send Reminder →</button>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
+                  Sends a payment reminder email to {inv.client_name?.split(' ')[0]}.
+                </div>
+              </div>
+            )}
+
+            {/* Actions — horizontal row */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>ACTIONS</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {canPay && (
+                  <button onClick={() => setShowPayment(true)} style={{
+                    flex: 1, minWidth: 120, padding: '8px 10px', borderRadius: 6,
+                    background: '#1a2f4e', color: '#fff', border: 'none',
+                    fontSize: 11, fontWeight: 600, letterSpacing: '.04em', cursor: 'pointer',
+                  }}>Record Payment</button>
+                )}
+                <button onClick={handlePrint} style={{
+                  flex: 1, minWidth: 100, padding: '8px 10px', borderRadius: 6,
+                  background: '#fff', color: 'var(--ink)', border: '1px solid var(--border)',
+                  fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                }}>Download PDF</button>
+                {canRefund && (
+                  <button onClick={() => setShowRefund(true)} style={{
+                    flex: 1, minWidth: 100, padding: '8px 10px', borderRadius: 6,
+                    background: '#b91c1c', color: '#fff', border: 'none',
+                    fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  }}>Issue Refund</button>
+                )}
+                {canVoid && (
+                  <button onClick={handleVoid} style={{
+                    flex: 1, minWidth: 80, padding: '7px 10px', borderRadius: 6,
+                    background: 'none', color: 'var(--muted)', border: '1px solid var(--border)',
+                    fontSize: 11, cursor: 'pointer',
+                  }}>Void</button>
+                )}
+              </div>
+            </div>
+
+            {/* Email Preview header toggle */}
+            <button
+              onClick={() => setShowEmailPreview(v => !v)}
+              style={{
+                width: '100%', padding: '10px 16px', borderRadius: 8,
+                background: '#fff', border: '1px solid var(--border)', cursor: 'pointer',
+                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600,
+              }}
+            >
+              <span>EMAIL PREVIEW</span>
+              <span style={{ fontSize: 13 }}>{showEmailPreview ? '▲' : '▼'}</span>
+            </button>
           </div>
 
-          {/* Email Preview (collapsible) */}
-          {inv.email_html && (
-            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-              <button
-                onClick={() => setShowEmailPreview(v => !v)}
-                style={{
-                  width: '100%', padding: '16px 20px',
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600,
-                }}
-              >
-                <span>EMAIL PREVIEW</span>
-                <span style={{ fontSize: 14 }}>{showEmailPreview ? '▲' : '▼'}</span>
-              </button>
-              {showEmailPreview && (
+          {/* Email Preview — fills remaining sidebar height */}
+          {showEmailPreview && (
+            <div style={{ flex: 1, margin: '8px 14px 14px', minHeight: 0, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: '#fff' }}>
+              {emailPreviewLoading ? (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
+                  Loading preview…
+                </div>
+              ) : emailPreviewHtml ? (
                 <iframe
-                  srcDoc={inv.email_html}
+                  srcDoc={emailPreviewHtml}
                   title="Email Preview"
-                  style={{ width: '100%', height: 420, border: 'none', borderTop: '1px solid var(--border)', display: 'block' }}
+                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
                   sandbox="allow-same-origin"
                 />
+              ) : (
+                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
+                  No preview available.
+                </div>
               )}
             </div>
           )}
-
-          {/* Actions */}
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 16px' }}>
-            <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 14 }}>
-              ACTIONS
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {canPay && (
-                <button
-                  onClick={() => setShowPayment(true)}
-                  style={{
-                    width: '100%', padding: '11px 16px', borderRadius: 6,
-                    background: '#1a2f4e', color: '#fff', border: '1.5px solid #1a2f4e',
-                    fontSize: 12, fontWeight: 700, letterSpacing: '.06em', cursor: 'pointer',
-                  }}
-                >
-                  RECORD ADDITIONAL PAYMENT
-                </button>
-              )}
-              {canRemind && (
-                <button
-                  onClick={handleRemind}
-                  style={{
-                    width: '100%', padding: '11px 16px', borderRadius: 6,
-                    background: '#fff', color: 'var(--ink)', border: '1.5px solid var(--border)',
-                    fontSize: 12, fontWeight: 600, letterSpacing: '.05em', cursor: 'pointer',
-                  }}
-                >
-                  SEND PAYMENT REMINDER
-                </button>
-              )}
-              <button
-                onClick={() => window.print()}
-                style={{
-                  width: '100%', padding: '11px 16px', borderRadius: 6,
-                  background: '#fff', color: 'var(--ink)', border: '1.5px solid var(--border)',
-                  fontSize: 12, fontWeight: 600, letterSpacing: '.05em', cursor: 'pointer',
-                }}
-              >
-                DOWNLOAD PDF
-              </button>
-              {canRefund && (
-                <button
-                  onClick={() => setShowRefund(true)}
-                  style={{
-                    width: '100%', padding: '11px 16px', borderRadius: 6,
-                    background: '#b91c1c', color: '#fff', border: '1.5px solid #b91c1c',
-                    fontSize: 12, fontWeight: 700, letterSpacing: '.06em', cursor: 'pointer',
-                  }}
-                >
-                  ISSUE REFUND
-                </button>
-              )}
-              {canVoid && (
-                <button
-                  onClick={handleVoid}
-                  style={{
-                    width: '100%', padding: '9px 16px', borderRadius: 6,
-                    background: 'none', color: 'var(--muted)', border: '1px solid var(--border)',
-                    fontSize: 11, fontWeight: 500, letterSpacing: '.04em', cursor: 'pointer',
-                  }}
-                >
-                  Void Invoice
-                </button>
-              )}
-            </div>
-          </div>
         </div>
       </div>
 

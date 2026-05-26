@@ -119,10 +119,16 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
   )
 }
 
-// ── New Goal Modal ─────────────────────────────────────────────────────────────
-function NewGoalModal({ clientId, onClose, onSaved }: any) {
+// ── Goal Modal (create + edit) ─────────────────────────────────────────────────
+function GoalModal({ clientId, goal, onClose, onSaved }: any) {
   const qc = useQueryClient()
-  const [form, setForm] = useState({ title: '', description: '', target_date: '', status: 'active' })
+  const isEdit = !!goal
+  const [form, setForm] = useState({
+    title:       goal?.title       || '',
+    description: goal?.description || '',
+    target_date: goal?.target_date ? goal.target_date.slice(0, 10) : '',
+    status:      goal?.status      || 'active',
+  })
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -130,17 +136,23 @@ function NewGoalModal({ clientId, onClose, onSaved }: any) {
     if (!form.title) return
     setSaving(true)
     try {
-      await clientsApi.createGoal(clientId, form)
+      if (isEdit) {
+        await clientsApi.updateGoal(clientId, goal.id, form)
+      } else {
+        await clientsApi.createGoal(clientId, form)
+      }
       qc.invalidateQueries({ queryKey: ['client-goals', clientId] })
       onSaved()
     } catch { } finally { setSaving(false) }
   }
 
   return (
-    <Modal title="New Goal" onClose={onClose} footer={
+    <Modal title={isEdit ? 'Edit Goal' : 'New Goal'} onClose={onClose} footer={
       <>
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Create Goal'}</button>
+        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>
+          {saving ? 'Saving…' : isEdit ? 'Save Changes' : 'Create Goal'}
+        </button>
       </>
     }>
       <div className="fgroup">
@@ -697,7 +709,8 @@ export default function ClientDetail() {
   const { show: showToast, el: toastEl } = useToast()
   const [tab, setTab] = useState('Overview')
   const [showActivity, setShowActivity] = useState(false)
-  const [showGoal, setShowGoal] = useState(false)
+  const [showGoal, setShowGoal]       = useState(false)
+  const [editingGoal, setEditingGoal] = useState<any>(null)
   const [editMode, setEditMode] = useState(false)
   const [editForm, setEditForm] = useState<Client | null>(null)
 
@@ -831,7 +844,16 @@ export default function ClientDetail() {
                 <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300 }}>
                   {client.first_name} {client.last_name}
                 </span>
-                <span className={`pill ${client.active_flag ? 'pill-green' : 'pill-grey'}`}>{client.active_flag ? 'Active' : 'Inactive'}</span>
+                <button
+                  className={`pill ${client.active_flag ? 'pill-green' : 'pill-grey'}`}
+                  style={{ cursor: 'pointer', border: 'none' }}
+                  title={client.active_flag ? 'Click to mark Inactive' : 'Click to mark Active'}
+                  onClick={async () => {
+                    await clientsApi.patch(id!, { active_flag: !client.active_flag })
+                    qc.invalidateQueries({ queryKey: ['client', id] })
+                    showToast(client.active_flag ? 'Client marked inactive' : 'Client marked active')
+                  }}
+                >{client.active_flag ? 'Active' : 'Inactive'}</button>
                 {client.portal_access && <span className="pill pill-blue">Portal</span>}
               </div>
               <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -1203,14 +1225,31 @@ export default function ClientDetail() {
               ? <EmptyState icon="◎" title="No goals set" message="Set your client's first coaching goal" />
               : goalList.map((g: any) => (
                 <div key={g.id} className="card" style={{ marginBottom: 12, padding: '16px 18px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 4 }}>{g.title}</div>
                       {g.description && <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>{g.description}</div>}
+                      {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Target: {fmtDate(g.target_date)}</div>}
                     </div>
-                    <StatusBadge status={g.status} />
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      <StatusBadge status={g.status} />
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: 11 }}
+                        onClick={() => setEditingGoal(g)}
+                      >Edit</button>
+                      <button
+                        className="btn btn-ghost btn-sm"
+                        style={{ fontSize: 11, color: 'var(--danger, #c0392b)' }}
+                        onClick={async () => {
+                          if (!window.confirm('Delete this goal?')) return
+                          await clientsApi.deleteGoal(id!, g.id)
+                          qc.invalidateQueries({ queryKey: ['client-goals', id] })
+                          showToast('Goal deleted')
+                        }}
+                      >Delete</button>
+                    </div>
                   </div>
-                  {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8 }}>Target: {fmtDate(g.target_date)}</div>}
                 </div>
               ))
             }
@@ -1257,7 +1296,8 @@ export default function ClientDetail() {
       </div>
 
       {showActivity && <NewActivityModal clientId={id} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
-      {showGoal && <NewGoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
+      {showGoal && <GoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
+      {editingGoal && <GoalModal clientId={id} goal={editingGoal} onClose={() => setEditingGoal(null)} onSaved={() => { setEditingGoal(null); showToast('Goal updated') }} />}
       {toastEl}
     </AppShell>
   )

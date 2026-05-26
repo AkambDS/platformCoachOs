@@ -328,7 +328,7 @@ export default function NewInvoice() {
     queryFn: () => invoicesApi.catalogItems().then(r => r.data),
   })
   const workspaceName = wsSettings?.name || workspace?.name || ''
-  const logoUrl = wsSettings?.logo_url || ''
+  const logoUrl = wsSettings?.logo_data || ''
 
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
   const setItem = (i: number, k: string, v: string) =>

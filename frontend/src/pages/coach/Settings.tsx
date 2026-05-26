@@ -1171,8 +1171,6 @@ function EmailTemplatesTab() {
 
   const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
 
-  // Render preview from the values the user has typed right now — no DB dependency.
-  // Passing intro/closing as params means the backend renders exactly what's in the form.
   const renderPreview = async (key: string, f: { intro: string; closing: string }) => {
     setPreviewLoading(true)
     try {
@@ -1184,7 +1182,6 @@ function EmailTemplatesTab() {
     finally { setPreviewLoading(false) }
   }
 
-  // Switch tab: load saved fields for new tab, render its preview
   const switchTab = (key: string) => {
     const f = initField(key)
     setActiveKey(key)
@@ -1194,6 +1191,12 @@ function EmailTemplatesTab() {
 
   // Initial preview on mount
   useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Auto-refresh preview 700ms after user stops typing intro/closing
+  useEffect(() => {
+    const t = setTimeout(() => renderPreview(activeKey, fields), 700)
+    return () => clearTimeout(t)
+  }, [fields.intro, fields.closing]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true)
@@ -1267,10 +1270,6 @@ function EmailTemplatesTab() {
           </div>
 
           <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button className="btn-outline" style={{ width: '100%', fontSize: 12 }}
-              disabled={previewLoading} onClick={() => renderPreview(activeKey, fields)}>
-              {previewLoading ? 'Loading…' : 'Preview'}
-            </button>
             <button className="btn-primary" style={{ width: '100%' }}
               disabled={saving} onClick={handleSave}>
               {saving ? 'Saving…' : 'Save'}

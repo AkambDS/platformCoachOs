@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { invoicesApi, clientsApi, activitiesApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { StatusBadge, EmptyState } from '../../components/ui'
+import { StatusBadge, EmptyState, useToast } from '../../components/ui'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -44,24 +44,36 @@ function exportCSV(invoices: any[]) {
 
 function PaymentBar({ paid, total, status }: { paid: number; total: number; status: string }) {
   const pct = total > 0 ? Math.min(100, (paid / total) * 100) : 0
-  const isOverdue = status === 'overdue'
-  const isPaid = status === 'paid'
-  const isRefunded = ['refunded', 'partially_refunded'].includes(status)
+  const isOverdue   = status === 'overdue'
+  const isPaid      = status === 'paid'
+  const isPartial   = status === 'partially_paid'
+  const isRefunded  = ['refunded', 'partially_refunded'].includes(status)
+  const isDraft     = status === 'draft'
 
-  if (isRefunded) {
-    return <span style={{ fontSize: 12, color: 'var(--rust)', fontWeight: 500 }}>Refunded</span>
-  }
+  const textColor = isPaid ? '#3d6e4a'
+    : isOverdue   ? '#c0392b'
+    : isPartial   ? '#b8922e'
+    : isRefunded  ? '#8b5cf6'
+    : 'var(--muted)'
 
-  const barColor = isPaid ? '#3d6e4a' : isOverdue ? '#c0392b' : '#b8922e'
+  const barColor = isPaid ? '#3d6e4a'
+    : isOverdue   ? '#c0392b'
+    : isPartial   ? '#b8922e'
+    : '#d1ccc4'
+
+  const label = isPaid     ? `$${fmt$(paid)} paid`
+    : isRefunded            ? `−$${fmt$(paid)} refunded`
+    : isDraft               ? '—'
+    : `$${fmt$(paid)} of $${fmt$(total)}`
 
   return (
     <div>
-      <div style={{ fontSize: 12, color: isPaid ? 'var(--success)' : isOverdue ? 'var(--rust)' : 'var(--ink)', fontWeight: 500, marginBottom: 3 }}>
-        {isPaid ? `$${fmt$(paid)} via bank` : `$${fmt$(paid)} of $${fmt$(total)}`}
-      </div>
-      <div style={{ height: 4, background: 'var(--cream)', borderRadius: 2, width: 120 }}>
-        <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2, transition: 'width .3s' }} />
-      </div>
+      <div style={{ fontSize: 12, color: textColor, fontWeight: 500, marginBottom: 3 }}>{label}</div>
+      {!isDraft && (
+        <div style={{ height: 4, background: '#e9e5df', borderRadius: 2, width: 120 }}>
+          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2, transition: 'width .3s' }} />
+        </div>
+      )}
     </div>
   )
 }
@@ -209,9 +221,21 @@ function ClientHub({ client, statusFilter, search }: { client: any; statusFilter
 
 export default function Invoices() {
   const navigate = useNavigate()
+  const { show: showToast, el: toastEl } = useToast()
   const [selectedClientId, setSelectedClientId] = useState('')
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
+  const [reminding, setReminding] = useState<string | null>(null)
+
+  const handleRemind = async (e: React.MouseEvent, invId: string) => {
+    e.stopPropagation()
+    setReminding(invId)
+    try {
+      await invoicesApi.remind(invId)
+      showToast('Reminder sent')
+    } catch { showToast('Failed to send reminder', 'error') }
+    finally { setReminding(null) }
+  }
 
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
@@ -227,6 +251,16 @@ export default function Invoices() {
   })
   const allInvoices: any[] = allData?.results || allData || []
 
+  const { data: clientInvData } = useQuery({
+    queryKey: ['invoices-client-stats', selectedClientId],
+    queryFn: () => invoicesApi.list({ client: selectedClientId }).then(r => r.data),
+    enabled: !!selectedClientId,
+  })
+  const clientInvoices: any[] = clientInvData?.results || clientInvData || []
+
+  // Use client invoices for stats when a client is selected
+  const statsSource = selectedClientId ? clientInvoices : allInvoices
+
   const filtered = useMemo(() => {
     if (!search.trim()) return allInvoices
     const q = search.toLowerCase()
@@ -237,12 +271,12 @@ export default function Invoices() {
     )
   }, [allInvoices, search])
 
-  // Stats
-  const totalInvoiced = allInvoices.reduce((s, i) => s + Number(i.total || 0), 0)
-  const totalCollected = allInvoices.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.amount_paid || i.total || 0), 0)
-  const outstanding = allInvoices.filter(i => ['sent', 'overdue', 'partially_paid'].includes(i.status)).reduce((s, i) => s + (Number(i.total) - Number(i.amount_paid || 0)), 0)
-  const overdueCount = allInvoices.filter(i => i.status === 'overdue').length
-  const totalRefunded = allInvoices.reduce((s, i) => s + Number(i.refund_amount || 0), 0)
+  // Stats — from client invoices when filtered, all invoices otherwise
+  const totalInvoiced  = statsSource.reduce((s, i) => s + Number(i.total || 0), 0)
+  const totalCollected = statsSource.filter(i => i.status === 'paid').reduce((s, i) => s + Number(i.amount_paid || i.total || 0), 0)
+  const outstanding    = statsSource.filter(i => ['sent', 'overdue', 'partially_paid'].includes(i.status)).reduce((s, i) => s + (Number(i.total) - Number(i.amount_paid || 0)), 0)
+  const overdueCount   = statsSource.filter(i => i.status === 'overdue').length
+  const totalRefunded  = statsSource.reduce((s, i) => s + Number(i.refund_amount || 0), 0)
   const collectionRate = totalInvoiced > 0 ? Math.round((totalCollected / totalInvoiced) * 100) : 0
 
   const STATUS_PILLS = ['', 'paid', 'partially_paid', 'sent', 'overdue', 'refunded']
@@ -255,7 +289,10 @@ export default function Invoices() {
         <div>
           <h1 style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: 'var(--ink)' }}>Invoices</h1>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>
-            {allInvoices.length} invoices · ${fmt$(totalInvoiced)} total · ${fmt$(outstanding)} outstanding
+            {selectedClient
+              ? `${selectedClient.first_name} ${selectedClient.last_name} · ${statsSource.length} invoices · $${fmt$(totalInvoiced)} total · $${fmt$(outstanding)} outstanding`
+              : `${allInvoices.length} invoices · $${fmt$(totalInvoiced)} total · $${fmt$(outstanding)} outstanding`
+            }
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
@@ -269,23 +306,21 @@ export default function Invoices() {
       </div>
 
       <div className="page-body">
-        {/* ── Stat cards (all-client view only) ── */}
-        {!selectedClientId && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
-            {[
-              { label: 'TOTAL INVOICED (YTD)', value: `$${fmt$(totalInvoiced)}`, sub: `Across ${allInvoices.length} invoices`, color: 'var(--ink)' },
-              { label: 'COLLECTED', value: `$${fmt$(totalCollected)}`, sub: `${collectionRate}% collection rate`, color: 'var(--success)' },
-              { label: 'OUTSTANDING', value: `$${fmt$(outstanding)}`, sub: `${overdueCount > 0 ? overdueCount + ' invoices overdue' : 'All current'}`, color: 'var(--rust)' },
-              { label: 'REFUNDED', value: `$${fmt$(totalRefunded)}`, sub: 'Excluded from revenue', color: '#c0392b' },
-            ].map(card => (
-              <div key={card.label} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
-                <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>{card.label}</div>
-                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: card.color, marginBottom: 4 }}>{card.value}</div>
-                <div style={{ fontSize: 12, color: 'var(--muted)' }}>{card.sub}</div>
-              </div>
-            ))}
-          </div>
-        )}
+        {/* ── Stat cards ── */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+          {[
+            { label: 'TOTAL INVOICED (YTD)', value: `$${fmt$(totalInvoiced)}`, sub: `Across ${statsSource.length} invoices${selectedClient ? ` · ${selectedClient.first_name} ${selectedClient.last_name}` : ''}`, color: 'var(--ink)' },
+            { label: 'COLLECTED', value: `$${fmt$(totalCollected)}`, sub: `${collectionRate}% collection rate`, color: 'var(--success)' },
+            { label: 'OUTSTANDING', value: `$${fmt$(outstanding)}`, sub: `${overdueCount > 0 ? overdueCount + ' invoices overdue' : 'All current'}`, color: 'var(--rust)' },
+            { label: 'REFUNDED', value: `$${fmt$(totalRefunded)}`, sub: 'Excluded from revenue', color: '#c0392b' },
+          ].map(card => (
+            <div key={card.label} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>{card.label}</div>
+              <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: card.color, marginBottom: 4 }}>{card.value}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{card.sub}</div>
+            </div>
+          ))}
+        </div>
 
         {/* ── Filters bar ── */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -377,19 +412,42 @@ export default function Invoices() {
                       <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
                       <td><StatusBadge status={inv.status} /></td>
                       <td><PaymentBar paid={Number(inv.amount_paid || 0)} total={Number(inv.total)} status={inv.status} /></td>
-                      <td style={{ fontSize: 13, color: isOverdue ? 'var(--warn)' : 'inherit', fontWeight: isOverdue ? 600 : 400, whiteSpace: 'nowrap' }}>
-                        {fmtDate(inv.due_date)}{isOverdue ? ' ⚠' : ''}
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const daysLeft = inv.due_date ? Math.ceil((new Date(inv.due_date).getTime() - Date.now()) / 86400000) : null
+                          const isDueSoon = daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !isOverdue
+                          const color = isOverdue ? '#c0392b' : isDueSoon ? '#e67e22' : 'inherit'
+                          const suffix = isOverdue ? ' ✕' : isDueSoon ? ' ⚠' : ''
+                          return (
+                            <span style={{ fontSize: 13, color, fontWeight: isOverdue || isDueSoon ? 600 : 400 }}>
+                              {fmtDate(inv.due_date)}{suffix}
+                            </span>
+                          )
+                        })()}
                       </td>
-                      <td onClick={e => e.stopPropagation()}>
-                        {isOverdue ? (
-                          <span style={{ color: 'var(--gold)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
-                            Send Reminder →
-                          </span>
-                        ) : (
+                      <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                          {['sent', 'overdue', 'partially_paid'].includes(inv.status) && (() => {
+                            const daysLeft = inv.due_date ? Math.ceil((new Date(inv.due_date).getTime() - Date.now()) / 86400000) : null
+                            const isDueSoon = daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !isOverdue
+                            const reminderColor = isOverdue ? '#c0392b' : isDueSoon ? '#e67e22' : 'var(--muted)'
+                            return (
+                              <span
+                                onClick={e => handleRemind(e, String(inv.id))}
+                                style={{
+                                  color: reminderColor,
+                                  fontSize: 13, fontWeight: 600, cursor: reminding === String(inv.id) ? 'default' : 'pointer',
+                                  opacity: reminding === String(inv.id) ? 0.5 : 1,
+                                }}
+                              >
+                                {reminding === String(inv.id) ? 'Sending…' : 'Send Reminder →'}
+                              </span>
+                            )
+                          })()}
                           <span style={{ color: 'var(--gold)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
                             View →
                           </span>
-                        )}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -399,6 +457,7 @@ export default function Invoices() {
           </div>
         )}
       </div>
+      {toastEl}
     </AppShell>
   )
 }

@@ -29,6 +29,7 @@ api.interceptors.response.use((res) => res, async (error) => {
       if (!status || status === 401 || status === 403) {
         sessionStorage.removeItem('access_token')
         sessionStorage.removeItem('refresh_token')
+        import('../lib/queryClient').then(({ queryClient }) => queryClient.clear())
         window.location.href = '/login'
       }
     }
@@ -79,6 +80,8 @@ export const clientsApi = {
   delete:       (id: string)           => api.delete(`/api/clients/${id}/`),
   listGoals:    (id: string)           => api.get(`/api/clients/${id}/goals/`),
   createGoal:   (id: string, d: any)   => api.post(`/api/clients/${id}/goals/`, d),
+  updateGoal:   (id: string, gid: string, d: any) => api.patch(`/api/clients/${id}/goals/${gid}/`, d),
+  deleteGoal:   (id: string, gid: string)         => api.delete(`/api/clients/${id}/goals/${gid}/`),
   listNotes:    (id: string)                    => api.get(`/api/clients/${id}/notes/`),
   createNote:   (id: string, d: any)            => api.post(`/api/clients/${id}/notes/`, d),
   updateNote:   (id: string, nid: string, d: any) => api.patch(`/api/clients/${id}/notes/${nid}/`, d),
@@ -146,6 +149,7 @@ export const adminApi = {
   feedbackPatch:   (id: string, d: any)    => api.patch(`/api/superadmin/feedback/${id}/`, d),
   feedbackComment:     (id: string, text: string) => api.post(`/api/superadmin/feedback/${id}/comment/`, { text }),
   resetUserPassword:   (wsId: string, userId: string) => api.post(`/api/superadmin/workspaces/${wsId}/reset-password/`, { user_id: userId }),
+  setUserPassword:     (wsId: string, userId: string, password: string) => api.post(`/api/superadmin/workspaces/${wsId}/users/${userId}/set-password/`, { password }),
   activityTypes:        (wsId: string)             => api.get(`/api/superadmin/workspaces/${wsId}/activity-types/`),
   createActivityType:   (wsId: string, d: any)     => api.post(`/api/superadmin/workspaces/${wsId}/activity-types/`, d),
   updateActivityType:   (wsId: string, typeId: number, d: any) => api.patch(`/api/superadmin/workspaces/${wsId}/activity-types/${typeId}/`, d),

@@ -22,9 +22,10 @@ class WorkspaceSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Workspace
-        fields = ["name", "timezone", "workspace_timezone",
+        fields = ["id", "name", "timezone", "workspace_timezone",
                   "buffer_minutes", "cancellation_hours",
                   "primary_colour", "logo_s3_key", "logo_data", "email_templates"]
+        read_only_fields = ["id"]
         extra_kwargs = {"workspace_timezone": {"required": False}}
 
 

@@ -28,12 +28,26 @@ export default function NewClient() {
     if (!form.first_name || !form.email) { setError('First name and email are required'); return }
     setSaving(true); setError('')
     try {
-      const res = await clientsApi.create({ ...form })
+      // Strip empty strings from optional fields so Django doesn't reject them
+      const payload = Object.fromEntries(
+        Object.entries(form).filter(([, v]) => v !== '')
+      )
+      const res = await clientsApi.create(payload)
       qc.invalidateQueries({ queryKey: ['clients'] })
       showToast('Client created')
       navigate(`/clients/${res.data.id}`)
     } catch (e: any) {
-      setError(e.response?.data?.email?.[0] || e.response?.data?.detail || 'Failed to create client')
+      const data = e.response?.data
+      if (data) {
+        // Show first field-level error found, or fall back to detail
+        const fieldError = Object.entries(data)
+          .filter(([k]) => k !== 'detail')
+          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`)
+          .join(', ')
+        setError(fieldError || data.detail || 'Failed to create client')
+      } else {
+        setError('Failed to create client')
+      }
       setSaving(false)
     }
   }

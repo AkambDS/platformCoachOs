@@ -486,6 +486,33 @@ def workspace_activity_type_detail(request, pk, type_pk):
     return Response(_serialize_type(obj))
 
 
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def workspace_user_set_password(request, pk, user_pk):
+    """
+    POST /api/superadmin/workspaces/{pk}/users/{user_pk}/set-password/
+    Body: { "password": "newpassword" }
+    Directly sets a user's password without sending any email.
+    """
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Workspace not found."}, status=404)
+
+    try:
+        user = User.objects.get(pk=user_pk, workspace=ws)
+    except User.DoesNotExist:
+        return Response({"detail": "User not found in this workspace."}, status=404)
+
+    password = (request.data.get("password") or "").strip()
+    if len(password) < 8:
+        return Response({"detail": "Password must be at least 8 characters."}, status=400)
+
+    user.set_password(password)
+    user.save(update_fields=["password"])
+    return Response({"detail": f"Password updated for {user.email}."})
+
+
 @api_view(["GET"])
 @permission_classes([IsPlatformAdmin])
 def workspace_errors(request, pk):

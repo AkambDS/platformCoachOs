@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuthStore, User } from '../../store/auth'
 import { authApi } from '../../api/client'
+import { queryClient } from '../../lib/queryClient'
 import {
   LayoutDashboard,
   Users,
@@ -58,6 +59,7 @@ export default function Sidebar() {
   const handleLogout = async () => {
     try { await authApi.logout() } catch {}
     logout()
+    queryClient.clear()
     navigate('/login')
   }
 

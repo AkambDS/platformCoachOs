@@ -88,6 +88,9 @@ export default function AdminWorkspace() {
   const [expandedError, setExpandedError] = useState<number | null>(null)
   const [resetingId, setResetingId]       = useState<string | null>(null)
   const [resetFeedback, setResetFeedback] = useState<Record<string, string>>({})
+  const [setPwdUserId, setSetPwdUserId]   = useState<string | null>(null)
+  const [setPwdValue, setSetPwdValue]     = useState('')
+  const [setPwdLoading, setSetPwdLoading] = useState(false)
 
   const handleResetPassword = async (userId: string, email: string) => {
     if (!window.confirm(`Send a password reset email to ${email}?`)) return
@@ -100,6 +103,21 @@ export default function AdminWorkspace() {
       setResetFeedback(prev => ({ ...prev, [userId]: '✗ Failed' }))
       setTimeout(() => setResetFeedback(prev => { const n = { ...prev }; delete n[userId]; return n }), 4000)
     } finally { setResetingId(null) }
+  }
+
+  const handleSetPassword = async (userId: string) => {
+    if (setPwdValue.length < 8) return
+    setSetPwdLoading(true)
+    try {
+      await adminApi.setUserPassword(id!, userId, setPwdValue)
+      setResetFeedback(prev => ({ ...prev, [userId]: '✓ Password updated' }))
+      setTimeout(() => setResetFeedback(prev => { const n = { ...prev }; delete n[userId]; return n }), 4000)
+      setSetPwdUserId(null)
+      setSetPwdValue('')
+    } catch {
+      setResetFeedback(prev => ({ ...prev, [userId]: '✗ Failed' }))
+      setTimeout(() => setResetFeedback(prev => { const n = { ...prev }; delete n[userId]; return n }), 4000)
+    } finally { setSetPwdLoading(false) }
   }
 
   const { data: stages = [], isLoading: stagesLoading } = useQuery({
@@ -264,15 +282,52 @@ export default function AdminWorkspace() {
                       <span style={{ fontSize: 12, color: resetFeedback[u.id].startsWith('✓') ? '#4a7c59' : '#c0392b' }}>
                         {resetFeedback[u.id]}
                       </span>
+                    ) : setPwdUserId === u.id ? (
+                      <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                        <input
+                          className="form-input"
+                          type="password"
+                          placeholder="New password (8+ chars)"
+                          style={{ padding: '3px 7px', fontSize: 12, width: 170 }}
+                          value={setPwdValue}
+                          onChange={e => setSetPwdValue(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSetPassword(u.id); if (e.key === 'Escape') { setSetPwdUserId(null); setSetPwdValue('') } }}
+                          autoFocus
+                        />
+                        <button
+                          className="btn btn-dark btn-sm"
+                          style={{ fontSize: 11 }}
+                          disabled={setPwdLoading || setPwdValue.length < 8}
+                          onClick={() => handleSetPassword(u.id)}
+                        >
+                          {setPwdLoading ? '…' : 'Save'}
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-sm"
+                          style={{ fontSize: 11 }}
+                          onClick={() => { setSetPwdUserId(null); setSetPwdValue('') }}
+                        >
+                          ✕
+                        </button>
+                      </div>
                     ) : (
-                      <button
-                        className="btn btn-outline btn-sm"
-                        style={{ fontSize: 11, whiteSpace: 'nowrap' }}
-                        disabled={resetingId === u.id}
-                        onClick={() => handleResetPassword(u.id, u.email)}
-                      >
-                        {resetingId === u.id ? 'Sending…' : 'Reset pwd'}
-                      </button>
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                          disabled={resetingId === u.id}
+                          onClick={() => handleResetPassword(u.id, u.email)}
+                        >
+                          {resetingId === u.id ? 'Sending…' : 'Email reset'}
+                        </button>
+                        <button
+                          className="btn btn-outline btn-sm"
+                          style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                          onClick={() => { setSetPwdUserId(u.id); setSetPwdValue('') }}
+                        >
+                          Set pwd
+                        </button>
+                      </div>
                     )}
                   </td>
                 </tr>

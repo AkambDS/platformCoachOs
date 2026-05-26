@@ -1,6 +1,7 @@
 import { useEffect } from "react"
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom"
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { QueryClientProvider } from "@tanstack/react-query"
+import { queryClient } from "./lib/queryClient"
 import { useAuthStore } from "./store/auth"
 import { authApi } from "./api/client"
 import Login     from "./pages/auth/Login"
@@ -27,9 +28,6 @@ import FeedbackDetail from "./pages/coach/FeedbackDetail"
 import AdminDashboard  from "./pages/superadmin/AdminDashboard"
 import AdminWorkspace  from "./pages/superadmin/AdminWorkspace"
 
-const queryClient = new QueryClient({
-  defaultOptions: { queries: { retry: 1, staleTime: 30_000 } }
-})
 
 function PrivateRoute({ children }: { children: JSX.Element }) {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated)
