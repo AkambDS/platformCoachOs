@@ -2,6 +2,7 @@
 # Usage: make <target>
 # Requires: Docker installed, ubuntu user in docker group
 
+export DOCKER_BUILDKIT=1
 COMPOSE = docker compose -f docker-compose.prod.yml
 
 # ── Status ────────────────────────────────────────────────────────────────────
