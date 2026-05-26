@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 
-type Tab = 'users' | 'activity_types' | 'errors' | 'pipeline'
+type Tab = 'overview' | 'users' | 'activity_types' | 'errors' | 'pipeline'
 
 const PLAN_OPTIONS = ['trial', 'starter', 'growth', 'enterprise']
 const PLAN_COLORS: Record<string, string> = {
@@ -30,7 +30,7 @@ export default function AdminWorkspace() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const qc = useQueryClient()
-  const [tab, setTab] = useState<Tab>('users')
+  const [tab, setTab] = useState<Tab>('overview')
   const [editPlan, setEditPlan] = useState(false)
   const [planDraft, setPlanDraft] = useState('')
 
@@ -224,7 +224,7 @@ export default function AdminWorkspace() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['users', 'activity_types', 'errors', 'pipeline'] as Tab[]).map(t => (
+          {(['overview', 'users', 'activity_types', 'errors', 'pipeline'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -233,15 +233,89 @@ export default function AdminWorkspace() {
                 fontFamily: "'DM Sans', sans-serif",
                 background: 'none', borderBottom: tab === t ? '2px solid var(--ink)' : '2px solid transparent',
                 color: tab === t ? 'var(--ink)' : 'var(--muted)', transition: 'color .15s',
+                position: 'relative',
               }}
             >
-              {t === 'users' ? 'Users' : t === 'activity_types' ? 'Activity Types' : t === 'errors' ? 'Error log' : 'Pipeline stages'}
+              {t === 'overview' ? 'Overview'
+                : t === 'users' ? 'Users'
+                : t === 'activity_types' ? 'Activity Types'
+                : t === 'errors'
+                  ? <>Error log{ws.stats?.error_count > 0 && <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 700 }}>{ws.stats.error_count}</span>}</>
+                  : 'Pipeline stages'}
             </button>
           ))}
         </div>
       </div>
 
       <div className="page-body">
+        {/* ── Overview tab ──────────────────────────────────── */}
+        {tab === 'overview' && (
+          <div>
+            {/* Stat cards */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 14, marginBottom: 24 }}>
+              {[
+                { label: 'Clients',     value: ws.stats?.clients   ?? '—', color: '#2d6a9f' },
+                { label: 'Deals',       value: ws.stats?.deals     ?? '—', color: '#c8a96a' },
+                { label: 'Invoices',    value: ws.stats?.invoices  ?? '—', color: '#1a1714' },
+                { label: 'Activities',  value: ws.stats?.activities ?? '—', color: '#7c4d9f' },
+              ].map(s => (
+                <div key={s.label} style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: `3px solid ${s.color}`, padding: '18px 22px' }}>
+                  <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 36, fontWeight: 300 }}>{s.value}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginTop: 4 }}>{s.label}</div>
+                </div>
+              ))}
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 14, marginBottom: 24 }}>
+              {/* Revenue */}
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: '3px solid #4a7c59', padding: '18px 22px' }}>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 36, fontWeight: 300, color: '#4a7c59' }}>
+                  {ws.stats ? `$${Number(ws.stats.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginTop: 4 }}>Revenue Collected</div>
+              </div>
+              {/* Outstanding */}
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: `3px solid ${(ws.stats?.overdue ?? 0) > 0 ? '#e67e22' : '#94a3b8'}`, padding: '18px 22px' }}>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 36, fontWeight: 300, color: (ws.stats?.overdue ?? 0) > 0 ? '#e67e22' : 'var(--ink)' }}>
+                  {ws.stats?.outstanding ?? '—'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginTop: 4 }}>
+                  Outstanding invoices{(ws.stats?.overdue ?? 0) > 0 ? ` · ${ws.stats!.overdue} overdue` : ''}
+                </div>
+              </div>
+              {/* Errors */}
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: `3px solid ${(ws.stats?.error_count ?? 0) > 0 ? '#dc2626' : '#4a7c59'}`, padding: '18px 22px' }}>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 36, fontWeight: 300, color: (ws.stats?.error_count ?? 0) > 0 ? '#dc2626' : '#4a7c59' }}>
+                  {ws.stats?.error_count ?? '—'}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginTop: 4 }}>
+                  {(ws.stats?.error_count ?? 0) > 0 ? 'Errors — check error log' : 'Errors — all clear'}
+                </div>
+              </div>
+            </div>
+
+            {/* Workspace info */}
+            <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: '20px 24px' }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 14, fontWeight: 600 }}>Workspace details</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                {[
+                  { label: 'Owner', value: ws.owner_name || '—' },
+                  { label: 'Owner email', value: ws.owner_email || '—' },
+                  { label: 'Created', value: new Date(ws.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) },
+                  { label: 'Plan', value: ws.plan },
+                  { label: 'Slug', value: ws.slug },
+                  { label: 'Status', value: ws.is_active ? 'Active' : 'Suspended' },
+                ].map(({ label, value }) => (
+                  <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
+                    <span style={{ fontSize: 13, fontWeight: 500 }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* ── Users tab ─────────────────────────────────────── */}
         {tab === 'users' && (
           <table className="tbl">

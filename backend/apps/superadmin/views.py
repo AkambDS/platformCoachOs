@@ -20,21 +20,32 @@ from apps.pipeline.models import Deal
 @permission_classes([IsPlatformAdmin])
 def dashboard(request):
     """GET /api/superadmin/dashboard/"""
+    from django.db.models import Sum
     workspaces = Workspace.objects.all()
     users      = User.objects.filter(is_superuser=False)
     plan_counts = {}
     for p in ["trial", "starter", "growth", "enterprise"]:
         plan_counts[p] = workspaces.filter(plan=p).count()
 
+    seven_days_ago = timezone.now() - timedelta(days=7)
+    revenue_total = Invoice.objects.aggregate(s=Sum("amount_paid"))["s"] or 0
+    overdue_count = Invoice.objects.filter(status="overdue").count()
+    new_workspaces_7d = workspaces.filter(created_at__gte=seven_days_ago).count()
+    total_errors = ErrorLog.objects.count()
+
     return Response({
-        "workspaces":       workspaces.count(),
-        "workspaces_active": workspaces.filter(is_active=True).count(),
-        "users":            users.count(),
-        "plans":            plan_counts,
-        "clients":          Client.objects.count(),
-        "deals":            Deal.objects.count(),
-        "invoices":         Invoice.objects.count(),
-        "activities":       Activity.objects.count(),
+        "workspaces":         workspaces.count(),
+        "workspaces_active":  workspaces.filter(is_active=True).count(),
+        "new_workspaces_7d":  new_workspaces_7d,
+        "users":              users.count(),
+        "plans":              plan_counts,
+        "clients":            Client.objects.count(),
+        "deals":              Deal.objects.count(),
+        "invoices":           Invoice.objects.count(),
+        "activities":         Activity.objects.count(),
+        "revenue_total":      float(revenue_total),
+        "overdue_count":      overdue_count,
+        "total_errors":       total_errors,
     })
 
 
@@ -44,12 +55,18 @@ def dashboard(request):
 @permission_classes([IsPlatformAdmin])
 def workspace_list(request):
     """GET /api/superadmin/workspaces/"""
+    from django.db.models import Sum, Count, Q
     workspaces = Workspace.objects.all().order_by("-created_at")
     result = []
     for ws in workspaces:
-        user_count   = User.objects.filter(workspace=ws).count()
-        client_count = Client.objects.filter(workspace=ws).count()
-        deal_count   = Deal.objects.filter(workspace=ws).count()
+        user_count    = User.objects.filter(workspace=ws).count()
+        client_count  = Client.objects.filter(workspace=ws).count()
+        deal_count    = Deal.objects.filter(workspace=ws).count()
+        invoice_stats = Invoice.objects.filter(workspace=ws).aggregate(
+            total=Count("id"), revenue=Sum("amount_paid"),
+            overdue=Count("id", filter=Q(status="overdue")),
+        )
+        error_count   = ErrorLog.objects.filter(workspace=ws).count()
         last_activity = AuditLog.objects.filter(workspace=ws).order_by("-created_at").first()
         owner = User.objects.filter(workspace=ws, role="business_owner").first()
         result.append({
@@ -62,6 +79,10 @@ def workspace_list(request):
             "users":         user_count,
             "clients":       client_count,
             "deals":         deal_count,
+            "invoices":      invoice_stats["total"] or 0,
+            "revenue":       float(invoice_stats["revenue"] or 0),
+            "overdue":       invoice_stats["overdue"] or 0,
+            "error_count":   error_count,
             "last_activity": last_activity.created_at.isoformat() if last_activity else None,
             "owner_email":   owner.email if owner else None,
         })
@@ -88,14 +109,33 @@ def workspace_detail(request, pk):
             ws.name = request.data["name"]
         ws.save()
 
+    from django.db.models import Sum, Count, Q
+    invoice_stats = Invoice.objects.filter(workspace=ws).aggregate(
+        total=Count("id"), revenue=Sum("amount_paid"),
+        overdue=Count("id", filter=Q(status="overdue")),
+        outstanding=Count("id", filter=Q(status__in=["sent","overdue","partially_paid"])),
+    )
+    owner = User.objects.filter(workspace=ws, role="business_owner").first()
     return Response({
-        "id":         str(ws.id),
-        "name":       ws.name,
-        "slug":       ws.slug,
-        "plan":       ws.plan,
-        "is_active":  ws.is_active,
-        "created_at": ws.created_at.isoformat(),
-        "updated_at": ws.updated_at.isoformat(),
+        "id":           str(ws.id),
+        "name":         ws.name,
+        "slug":         ws.slug,
+        "plan":         ws.plan,
+        "is_active":    ws.is_active,
+        "created_at":   ws.created_at.isoformat(),
+        "updated_at":   ws.updated_at.isoformat(),
+        "owner_email":  owner.email if owner else None,
+        "owner_name":   owner.full_name if owner else None,
+        "stats": {
+            "clients":    Client.objects.filter(workspace=ws).count(),
+            "deals":      Deal.objects.filter(workspace=ws).count(),
+            "activities": Activity.objects.filter(workspace=ws).count(),
+            "invoices":   invoice_stats["total"] or 0,
+            "revenue":    float(invoice_stats["revenue"] or 0),
+            "overdue":    invoice_stats["overdue"] or 0,
+            "outstanding": invoice_stats["outstanding"] or 0,
+            "error_count": ErrorLog.objects.filter(workspace=ws).count(),
+        },
     })
 
 

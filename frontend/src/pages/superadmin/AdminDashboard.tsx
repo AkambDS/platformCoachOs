@@ -194,12 +194,13 @@ export default function AdminDashboard() {
             ) : stats ? (
               <>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
-                  <StatCard label="Workspaces" value={stats.workspaces} sub={`${stats.workspaces_active} active`} />
+                  <StatCard label="Workspaces" value={stats.workspaces} sub={`${stats.workspaces_active} active · ${stats.new_workspaces_7d} new this week`} />
                   <StatCard label="Users" value={stats.users} />
                   <StatCard label="Clients" value={stats.clients} />
                   <StatCard label="Deals" value={stats.deals} />
-                  <StatCard label="Invoices" value={stats.invoices} />
-                  <StatCard label="Activities" value={stats.activities} />
+                  <StatCard label="Invoices" value={stats.invoices} sub={`${stats.overdue_count} overdue`} />
+                  <StatCard label="Revenue Collected" value={`$${Number(stats.revenue_total || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`} />
+                  <StatCard label="Errors Logged" value={stats.total_errors} sub={stats.total_errors > 0 ? 'check error logs' : 'all clear'} />
                 </div>
 
                 <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
@@ -223,8 +224,9 @@ export default function AdminDashboard() {
                       <th>Workspace</th>
                       <th>Plan</th>
                       <th>Owner</th>
-                      <th>Users</th>
                       <th>Clients</th>
+                      <th>Revenue</th>
+                      <th>Errors</th>
                       <th>Last activity</th>
                       <th>Status</th>
                     </tr>
@@ -238,8 +240,15 @@ export default function AdminDashboard() {
                         </td>
                         <td><span className={`pill ${PLAN_COLORS[ws.plan] || 'pill-grey'}`}>{ws.plan}</span></td>
                         <td style={{ fontSize: 13, color: 'var(--muted)' }}>{ws.owner_email || '—'}</td>
-                        <td style={{ fontSize: 14 }}>{ws.users}</td>
                         <td style={{ fontSize: 14 }}>{ws.clients}</td>
+                        <td style={{ fontSize: 13, color: '#4a7c59', fontWeight: 600 }}>
+                          {ws.revenue > 0 ? `$${Number(ws.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
+                        </td>
+                        <td>
+                          {ws.error_count > 0
+                            ? <span className="pill pill-red" style={{ fontSize: 11 }}>{ws.error_count} errors</span>
+                            : <span style={{ fontSize: 12, color: 'var(--muted)' }}>—</span>}
+                        </td>
                         <td style={{ fontSize: 13, color: 'var(--muted)' }}>{timeAgo(ws.last_activity)}</td>
                         <td>
                           <span className={`pill ${ws.is_active ? 'pill-green' : 'pill-grey'}`}>
@@ -270,6 +279,9 @@ export default function AdminDashboard() {
                     <th>Users</th>
                     <th>Clients</th>
                     <th>Deals</th>
+                    <th>Invoices</th>
+                    <th>Revenue</th>
+                    <th>Errors</th>
                     <th>Last activity</th>
                     <th>Status</th>
                     <th></th>
@@ -287,6 +299,18 @@ export default function AdminDashboard() {
                       <td style={{ fontSize: 14 }}>{ws.users}</td>
                       <td style={{ fontSize: 14 }}>{ws.clients}</td>
                       <td style={{ fontSize: 14 }}>{ws.deals}</td>
+                      <td style={{ fontSize: 14 }}>
+                        {ws.invoices}
+                        {ws.overdue > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: '#e67e22' }}>({ws.overdue} overdue)</span>}
+                      </td>
+                      <td style={{ fontSize: 13, color: '#4a7c59', fontWeight: 600 }}>
+                        {ws.revenue > 0 ? `$${Number(ws.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
+                      </td>
+                      <td>
+                        {ws.error_count > 0
+                          ? <span className="pill pill-red" style={{ fontSize: 11 }}>{ws.error_count}</span>
+                          : <span style={{ fontSize: 12, color: 'var(--muted)' }}>—</span>}
+                      </td>
                       <td style={{ fontSize: 13, color: 'var(--muted)' }}>{timeAgo(ws.last_activity)}</td>
                       <td>
                         <span className={`pill ${ws.is_active ? 'pill-green' : 'pill-grey'}`}>

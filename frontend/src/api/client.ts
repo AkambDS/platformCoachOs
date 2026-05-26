@@ -130,6 +130,7 @@ export const pipelineApi = {
 export const reportsApi = {
   revenue:     (year: number) => api.get('/api/reports/revenue/', { params: { year } }),
   outstanding: ()             => api.get('/api/reports/outstanding/'),
+  exportCsv:   ()             => api.get('/api/reports/export.csv', { responseType: 'blob' }),
 }
 export const adminApi = {
   dashboard:       ()                       => api.get('/api/superadmin/dashboard/'),
