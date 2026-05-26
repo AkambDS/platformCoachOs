@@ -23,12 +23,30 @@ restart:
 
 # ── Deploy (pull code + rebuild + restart) ────────────────────────────────────
 
+# Full deploy — rebuilds everything including frontend on EC2 (slow on small instances)
 deploy:
 	git pull
 	$(COMPOSE) build backend celery celery-beat
 	$(COMPOSE) build frontend
 	$(COMPOSE) up -d --force-recreate frontend
 	$(COMPOSE) up -d
+
+# Backend-only deploy — skips frontend build (fastest, use when only backend changed)
+deploy-backend:
+	git pull
+	$(COMPOSE) build backend celery celery-beat
+	$(COMPOSE) up -d
+
+# Deploy frontend only — build locally, push dist to EC2 via rsync
+# Usage from your Mac: make deploy-frontend HOST=ubuntu@<ec2-ip>
+deploy-frontend:
+	cd frontend && npm run build
+	rsync -az --delete frontend/dist/ $(HOST):/home/ubuntu/coachos/frontend-dist/
+	ssh $(HOST) "cd /home/ubuntu/coachos && docker compose -f docker-compose.prod.yml up -d --force-recreate frontend"
+
+# Prune old Docker images/layers to free disk space (run periodically on EC2)
+prune:
+	docker system prune -f --volumes
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 
