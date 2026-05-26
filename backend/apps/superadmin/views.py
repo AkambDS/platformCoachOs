@@ -116,16 +116,21 @@ def workspace_detail(request, pk):
         outstanding=Count("id", filter=Q(status__in=["sent","overdue","partially_paid"])),
     )
     owner = User.objects.filter(workspace=ws, role="business_owner").first()
+    last_activity = AuditLog.objects.filter(workspace=ws).order_by("-created_at").first()
     return Response({
-        "id":           str(ws.id),
-        "name":         ws.name,
-        "slug":         ws.slug,
-        "plan":         ws.plan,
-        "is_active":    ws.is_active,
-        "created_at":   ws.created_at.isoformat(),
-        "updated_at":   ws.updated_at.isoformat(),
-        "owner_email":  owner.email if owner else None,
-        "owner_name":   owner.full_name if owner else None,
+        "id":            str(ws.id),
+        "name":          ws.name,
+        "slug":          ws.slug,
+        "plan":          ws.plan,
+        "is_active":     ws.is_active,
+        "created_at":    ws.created_at.isoformat(),
+        "updated_at":    ws.updated_at.isoformat(),
+        "last_activity": last_activity.created_at.isoformat() if last_activity else None,
+        "owner_email":   owner.email if owner else None,
+        "owner_name":    owner.full_name if owner else None,
+        "owner_id":      str(owner.id) if owner else None,
+        "owner_joined":  owner.date_joined.isoformat() if owner else None,
+        "owner_last_login": owner.last_login.isoformat() if owner and owner.last_login else None,
         "stats": {
             "clients":    Client.objects.filter(workspace=ws).count(),
             "deals":      Deal.objects.filter(workspace=ws).count(),
@@ -551,6 +556,30 @@ def workspace_user_set_password(request, pk, user_pk):
     user.set_password(password)
     user.save(update_fields=["password"])
     return Response({"detail": f"Password updated for {user.email}."})
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def workspace_invoices(request, pk):
+    """GET /api/superadmin/workspaces/{pk}/invoices/"""
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    invoices = Invoice.objects.filter(workspace=ws).select_related("client").order_by("-created_at")
+    return Response([{
+        "id":          str(inv.id),
+        "number":      inv.number,
+        "client_name": inv.client.full_name if inv.client else "—",
+        "status":      inv.status,
+        "total":       float(inv.total),
+        "amount_paid": float(inv.amount_paid),
+        "currency":    inv.currency,
+        "issue_date":  inv.issue_date.isoformat() if inv.issue_date else None,
+        "due_date":    inv.due_date.isoformat() if inv.due_date else None,
+        "sent_at":     inv.sent_at.isoformat() if inv.sent_at else None,
+    } for inv in invoices])
 
 
 @api_view(["GET"])

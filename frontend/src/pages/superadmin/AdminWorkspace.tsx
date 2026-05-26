@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 
-type Tab = 'overview' | 'users' | 'activity_types' | 'errors' | 'pipeline'
+type Tab = 'overview' | 'clients' | 'invoices' | 'users' | 'activity_types' | 'errors' | 'pipeline'
 
 const PLAN_OPTIONS = ['trial', 'starter', 'growth', 'enterprise']
 const PLAN_COLORS: Record<string, string> = {
@@ -120,6 +120,12 @@ export default function AdminWorkspace() {
     } finally { setSetPwdLoading(false) }
   }
 
+  const { data: invoices = [] } = useQuery({
+    queryKey: ['admin', 'workspace', id, 'invoices'],
+    queryFn: () => adminApi.workspaceInvoices(id!).then(r => r.data),
+    enabled: !!id && tab === 'invoices',
+  })
+
   const { data: stages = [], isLoading: stagesLoading } = useQuery({
     queryKey: ['admin', 'workspace', id, 'pipeline'],
     queryFn: () => adminApi.pipelineStages(id!).then(r => r.data),
@@ -224,7 +230,7 @@ export default function AdminWorkspace() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['overview', 'users', 'activity_types', 'errors', 'pipeline'] as Tab[]).map(t => (
+          {(['overview', 'clients', 'invoices', 'users', 'activity_types', 'errors', 'pipeline'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -237,11 +243,13 @@ export default function AdminWorkspace() {
               }}
             >
               {t === 'overview' ? 'Overview'
+                : t === 'clients' ? 'Client'
+                : t === 'invoices' ? 'Invoices'
                 : t === 'users' ? 'Users'
                 : t === 'activity_types' ? 'Activity Types'
                 : t === 'errors'
                   ? <>Error log{ws.stats?.error_count > 0 && <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 700 }}>{ws.stats.error_count}</span>}</>
-                  : 'Pipeline stages'}
+                  : 'Pipeline Stages'}
             </button>
           ))}
         </div>
@@ -302,6 +310,7 @@ export default function AdminWorkspace() {
                   { label: 'Owner', value: ws.owner_name || '—' },
                   { label: 'Owner email', value: ws.owner_email || '—' },
                   { label: 'Created', value: new Date(ws.created_at).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) },
+                  { label: 'Last activity', value: timeAgo(ws.last_activity) },
                   { label: 'Plan', value: ws.plan },
                   { label: 'Slug', value: ws.slug },
                   { label: 'Status', value: ws.is_active ? 'Active' : 'Suspended' },
@@ -314,6 +323,104 @@ export default function AdminWorkspace() {
               </div>
             </div>
           </div>
+        )}
+
+        {/* ── Client tab (workspace owner profile) ──────────── */}
+        {tab === 'clients' && (
+          <div style={{ maxWidth: 640 }}>
+            <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: '3px solid var(--gold, #c8a96a)', padding: '24px 28px', marginBottom: 16 }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600, marginBottom: 16 }}>Account Owner</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+                <div style={{
+                  width: 48, height: 48, borderRadius: '50%', background: 'var(--ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  color: 'var(--paper)', fontSize: 18, fontFamily: 'Cormorant Garamond, serif', flexShrink: 0,
+                }}>
+                  {(ws.owner_name || ws.owner_email || '?')[0].toUpperCase()}
+                </div>
+                <div>
+                  <div style={{ fontSize: 18, fontFamily: 'Cormorant Garamond, serif', fontWeight: 400 }}>{ws.owner_name || '—'}</div>
+                  <div style={{ fontSize: 13, color: 'var(--muted)' }}>{ws.owner_email || '—'}</div>
+                </div>
+              </div>
+              {[
+                { label: 'Plan', value: <span className={`pill ${({ trial:'pill-grey', starter:'pill-blue', growth:'pill-green', enterprise:'pill-gold' } as any)[ws.plan] || 'pill-grey'}`}>{ws.plan}</span> },
+                { label: 'Status', value: <span className={`pill ${ws.is_active ? 'pill-green' : 'pill-grey'}`}>{ws.is_active ? 'Active' : 'Suspended'}</span> },
+                { label: 'Workspace', value: ws.name },
+                { label: 'Member since', value: ws.owner_joined ? new Date(ws.owner_joined).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }) : '—' },
+                { label: 'Last login', value: timeAgo(ws.owner_last_login) },
+                { label: 'Last activity', value: timeAgo(ws.last_activity) },
+              ].map(({ label, value }) => (
+                <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
+                  <span style={{ fontSize: 13 }}>{value}</span>
+                </div>
+              ))}
+            </div>
+            <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: '18px 28px' }}>
+              <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600, marginBottom: 14 }}>Usage Summary</div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+                {[
+                  { label: 'Clients', value: ws.stats?.clients ?? '—' },
+                  { label: 'Invoices', value: ws.stats?.invoices ?? '—' },
+                  { label: 'Revenue', value: ws.stats ? `$${Number(ws.stats.revenue).toLocaleString()}` : '—' },
+                  { label: 'Deals', value: ws.stats?.deals ?? '—' },
+                  { label: 'Activities', value: ws.stats?.activities ?? '—' },
+                  { label: 'Overdue', value: ws.stats?.overdue ?? '—' },
+                ].map(s => (
+                  <div key={s.label} style={{ textAlign: 'center', padding: '12px 8px', border: '1px solid var(--border)' }}>
+                    <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300 }}>{s.value}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginTop: 2 }}>{s.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Invoices tab ──────────────────────────────────── */}
+        {tab === 'invoices' && (
+          (invoices as any[]).length === 0 ? (
+            <div style={{ color: 'var(--muted)', padding: 60, textAlign: 'center', fontSize: 14 }}>No invoices yet.</div>
+          ) : (
+            <table className="tbl">
+              <thead>
+                <tr>
+                  <th>Invoice #</th>
+                  <th>Client</th>
+                  <th>Status</th>
+                  <th style={{ textAlign: 'right' }}>Total</th>
+                  <th style={{ textAlign: 'right' }}>Paid</th>
+                  <th>Issue date</th>
+                  <th>Due date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(invoices as any[]).map((inv: any) => {
+                  const statusColor: Record<string, string> = {
+                    paid: 'pill-green', draft: 'pill-grey', sent: 'pill-blue',
+                    overdue: 'pill-red', void: 'pill-grey', partially_paid: 'pill-gold',
+                  }
+                  const balance = inv.total - inv.amount_paid
+                  return (
+                    <tr key={inv.id}>
+                      <td style={{ fontFamily: 'monospace', fontSize: 13 }}>{inv.number}</td>
+                      <td style={{ fontWeight: 500 }}>{inv.client_name}</td>
+                      <td><span className={`pill ${statusColor[inv.status] || 'pill-grey'}`} style={{ textTransform: 'capitalize' }}>{inv.status.replace('_', ' ')}</span></td>
+                      <td style={{ textAlign: 'right', fontWeight: 500 }}>{inv.currency} {Number(inv.total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                      <td style={{ textAlign: 'right', color: balance > 0 ? '#c0392b' : '#4a7c59' }}>
+                        {inv.currency} {Number(inv.amount_paid).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td style={{ fontSize: 13, color: 'var(--muted)' }}>{inv.issue_date ? new Date(inv.issue_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}</td>
+                      <td style={{ fontSize: 13, color: inv.due_date && new Date(inv.due_date) < new Date() && inv.status !== 'paid' ? '#c0392b' : 'var(--muted)' }}>
+                        {inv.due_date ? new Date(inv.due_date).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          )
         )}
 
         {/* ── Users tab ─────────────────────────────────────── */}
