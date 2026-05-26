@@ -1,10 +1,14 @@
 #!/bin/bash
 set -e
 
-echo "[entrypoint] Running migrations..."
-python manage.py migrate --noinput
+# Only run migrations from the web/api process — celery containers skip this
+# to avoid concurrent deadlocks on the post-migrate RLS policy setup.
+if [[ "${1:-}" != celery* ]]; then
+    echo "[entrypoint] Running migrations..."
+    python manage.py migrate --noinput
+fi
 
-# Collect static files only when starting the web server, not celery
+# Collect static files only when starting the web server (gunicorn), not dev server or celery
 if [[ "${1:-}" == gunicorn* ]]; then
     echo "[entrypoint] Collecting static files..."
     python manage.py collectstatic --noinput --clear

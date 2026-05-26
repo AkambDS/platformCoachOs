@@ -15,7 +15,7 @@ class AccountsConfig(AppConfig):
 def _apply_rls(sender, **kwargs):
     """
     Apply PostgreSQL RLS policies after all migrations complete.
-    Uses IF NOT EXISTS so it's safe to run multiple times.
+    Uses an advisory lock so concurrent startups (e.g. api + celery) don't deadlock.
     """
     from django.db import connection
 
@@ -35,57 +35,67 @@ def _apply_rls(sender, **kwargs):
     ]
 
     with connection.cursor() as cursor:
-        for table in RLS_TABLES:
-            # Check table exists before applying RLS
-            cursor.execute("""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables
-                    WHERE table_name = %s
-                )
-            """, [table])
-            exists = cursor.fetchone()[0]
-            if not exists:
-                continue
+        # Acquire session-level advisory lock so only one process at a time
+        # runs the DROP/CREATE POLICY block, preventing deadlocks on startup.
+        cursor.execute("SELECT pg_advisory_lock(771234567)")
+        try:
+            _do_apply_rls(cursor, RLS_TABLES)
+        finally:
+            cursor.execute("SELECT pg_advisory_unlock(771234567)")
 
-            # Enable RLS
-            cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
 
-            # Drop and recreate policy (idempotent)
-            cursor.execute(f"""
-                DO $$ BEGIN
-                    DROP POLICY IF EXISTS tenant_isolation ON {table};
-                    CREATE POLICY tenant_isolation ON {table}
-                      USING (workspace_id = current_setting('app.workspace_id', TRUE)::uuid);
-                END $$
-            """)
-
-        # Portal isolation on clientgoal — checks both workspace AND client
+def _do_apply_rls(cursor, RLS_TABLES):
+    for table in RLS_TABLES:
+        # Check table exists before applying RLS
         cursor.execute("""
             SELECT EXISTS (
                 SELECT 1 FROM information_schema.tables
-                WHERE table_name = 'clients_clientgoal'
+                WHERE table_name = %s
             )
-        """)
-        if cursor.fetchone()[0]:
-            cursor.execute("""
-                DO $$ BEGIN
-                    DROP POLICY IF EXISTS portal_isolation ON clients_clientgoal;
-                    CREATE POLICY portal_isolation ON clients_clientgoal
-                      USING (
-                        workspace_id = current_setting('app.workspace_id', TRUE)::uuid
-                        AND (
-                          current_setting('app.client_id', TRUE) IS NULL
-                          OR client_id::text = current_setting('app.client_id', TRUE)
-                        )
-                      );
-                END $$
-            """)
+        """, [table])
+        exists = cursor.fetchone()[0]
+        if not exists:
+            continue
 
-        # Audit log — revoke DELETE from app user (safe if role doesn't exist)
-        cursor.execute("""
+        # Enable RLS
+        cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+
+        # Drop and recreate policy (idempotent)
+        cursor.execute(f"""
             DO $$ BEGIN
-              IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coachos') THEN
-                REVOKE DELETE ON audit_log FROM coachos;
-              END IF;
+                DROP POLICY IF EXISTS tenant_isolation ON {table};
+                CREATE POLICY tenant_isolation ON {table}
+                  USING (workspace_id = current_setting('app.workspace_id', TRUE)::uuid);
             END $$
         """)
+
+    # Portal isolation on clientgoal — checks both workspace AND client
+    cursor.execute("""
+        SELECT EXISTS (
+            SELECT 1 FROM information_schema.tables
+            WHERE table_name = 'clients_clientgoal'
+        )
+    """)
+    if cursor.fetchone()[0]:
+        cursor.execute("""
+            DO $$ BEGIN
+                DROP POLICY IF EXISTS portal_isolation ON clients_clientgoal;
+                CREATE POLICY portal_isolation ON clients_clientgoal
+                  USING (
+                    workspace_id = current_setting('app.workspace_id', TRUE)::uuid
+                    AND (
+                      current_setting('app.client_id', TRUE) IS NULL
+                      OR client_id::text = current_setting('app.client_id', TRUE)
+                    )
+                  );
+            END $$
+        """)
+
+    # Audit log — revoke DELETE from app user (safe if role doesn't exist)
+    cursor.execute("""
+        DO $$ BEGIN
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'coachos') THEN
+            REVOKE DELETE ON audit_log FROM coachos;
+          END IF;
+        END $$
+    """)
