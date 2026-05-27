@@ -711,13 +711,16 @@ def workspace_client_statuses(request, pk):
     _seed_client_statuses(ws)
 
     if request.method == "GET":
-        qs = ClientStatusConfig.objects.filter(workspace=ws).order_by("order", "label")
+        qs = ClientStatusConfig.objects.filter(workspace=ws).order_by("sort_order", "label")
         return Response(ClientStatusConfigSerializer(qs, many=True).data)
 
     ser = ClientStatusConfigSerializer(data=request.data)
     if ser.is_valid():
-        ser.save(workspace=ws, is_builtin=False)
-        return Response(ser.data, status=201)
+        try:
+            ser.save(workspace=ws, is_builtin=False)
+            return Response(ser.data, status=201)
+        except Exception:
+            return Response({"detail": "A status with that label already exists."}, status=400)
     return Response(ser.errors, status=400)
 
 
