@@ -8,10 +8,12 @@ from datetime import timedelta
 
 from apps.accounts.models import Workspace, User, WorkspaceInvitation, WorkspaceRegistrationToken, AuditLog, ErrorLog
 from apps.pipeline.models import PipelineStageConfig
-from apps.clients.models import Client
+from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig
 from apps.activities.models import Activity
 from apps.invoicing.models import Invoice
 from apps.pipeline.models import Deal
+from apps.settings_app.serializers import ClientStatusConfigSerializer, ClientTagConfigSerializer
+from apps.settings_app.views import _seed_client_statuses
 
 
 # ── Dashboard ─────────────────────────────────────────────────────────────────
@@ -693,3 +695,93 @@ def workspace_reset_password(request, pk):
                          "reset_url": reset_url}, status=http_status.HTTP_207_MULTI_STATUS)
 
     return Response({"detail": f"Password reset email sent to {user.email}.", "email": user.email})
+
+
+# ── Client statuses for workspace ─────────────────────────────────────────────
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformAdmin])
+def workspace_client_statuses(request, pk):
+    """GET/POST /api/superadmin/workspaces/{pk}/client-statuses/"""
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    _seed_client_statuses(ws)
+
+    if request.method == "GET":
+        qs = ClientStatusConfig.objects.filter(workspace=ws).order_by("order", "label")
+        return Response(ClientStatusConfigSerializer(qs, many=True).data)
+
+    ser = ClientStatusConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=ws, is_builtin=False)
+        return Response(ser.data, status=201)
+    return Response(ser.errors, status=400)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsPlatformAdmin])
+def workspace_client_status_detail(request, pk, status_pk):
+    """PATCH/DELETE /api/superadmin/workspaces/{pk}/client-statuses/{status_pk}/"""
+    try:
+        ws = Workspace.objects.get(pk=pk)
+        obj = ClientStatusConfig.objects.get(pk=status_pk, workspace=ws)
+    except (Workspace.DoesNotExist, ClientStatusConfig.DoesNotExist):
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        if obj.is_builtin:
+            return Response({"detail": "Cannot delete built-in statuses."}, status=400)
+        obj.delete()
+        return Response(status=204)
+
+    ser = ClientStatusConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=400)
+
+
+# ── Client tags for workspace ──────────────────────────────────────────────────
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformAdmin])
+def workspace_client_tags(request, pk):
+    """GET/POST /api/superadmin/workspaces/{pk}/client-tags/"""
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "GET":
+        qs = ClientTagConfig.objects.filter(workspace=ws).order_by("name")
+        return Response(ClientTagConfigSerializer(qs, many=True).data)
+
+    ser = ClientTagConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=ws)
+        return Response(ser.data, status=201)
+    return Response(ser.errors, status=400)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsPlatformAdmin])
+def workspace_client_tag_detail(request, pk, tag_pk):
+    """PATCH/DELETE /api/superadmin/workspaces/{pk}/client-tags/{tag_pk}/"""
+    try:
+        ws = Workspace.objects.get(pk=pk)
+        obj = ClientTagConfig.objects.get(pk=tag_pk, workspace=ws)
+    except (Workspace.DoesNotExist, ClientTagConfig.DoesNotExist):
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=204)
+
+    ser = ClientTagConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=400)

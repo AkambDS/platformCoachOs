@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 
-type Tab = 'overview' | 'clients' | 'invoices' | 'users' | 'activity_types' | 'errors' | 'pipeline'
+type Tab = 'overview' | 'clients' | 'invoices' | 'users' | 'activity_types' | 'errors' | 'pipeline' | 'statuses' | 'tags'
 
 const PLAN_OPTIONS = ['trial', 'starter', 'growth', 'enterprise']
 const PLAN_COLORS: Record<string, string> = {
@@ -135,6 +135,40 @@ export default function AdminWorkspace() {
   const [stagesDraft, setStagesDraft] = useState<any[] | null>(null)
   const currentStages = stagesDraft ?? (stages as any[])
 
+  // Client statuses
+  const { data: clientStatuses = [] } = useQuery({
+    queryKey: ['admin', 'workspace', id, 'client_statuses'],
+    queryFn: () => adminApi.clientStatuses(id!).then(r => r.data),
+    enabled: !!id && tab === 'statuses',
+  })
+  const [newStatusLabel, setNewStatusLabel] = useState('')
+  const [newStatusColor, setNewStatusColor] = useState('#1a1714')
+  const createStatus = useMutation({
+    mutationFn: () => adminApi.createClientStatus(id!, { label: newStatusLabel, color: newStatusColor }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'workspace', id, 'client_statuses'] }); setNewStatusLabel(''); setNewStatusColor('#1a1714') },
+  })
+  const deleteStatus = useMutation({
+    mutationFn: (sid: number) => adminApi.deleteClientStatus(id!, sid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'workspace', id, 'client_statuses'] }),
+  })
+
+  // Client tags
+  const { data: clientTags = [] } = useQuery({
+    queryKey: ['admin', 'workspace', id, 'client_tags'],
+    queryFn: () => adminApi.clientTags(id!).then(r => r.data),
+    enabled: !!id && tab === 'tags',
+  })
+  const [newTagName, setNewTagName] = useState('')
+  const [newTagColor, setNewTagColor] = useState('#1a1714')
+  const createTag = useMutation({
+    mutationFn: () => adminApi.createClientTag(id!, { name: newTagName, color: newTagColor }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['admin', 'workspace', id, 'client_tags'] }); setNewTagName(''); setNewTagColor('#1a1714') },
+  })
+  const deleteTag = useMutation({
+    mutationFn: (tid: number) => adminApi.deleteClientTag(id!, tid),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'workspace', id, 'client_tags'] }),
+  })
+
   const patchWs = useMutation({
     mutationFn: (d: any) => adminApi.patchWorkspace(id!, d),
     onSuccess: (res) => {
@@ -230,7 +264,7 @@ export default function AdminWorkspace() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['overview', 'clients', 'invoices', 'users', 'activity_types', 'errors', 'pipeline'] as Tab[]).map(t => (
+          {(['overview', 'clients', 'invoices', 'users', 'activity_types', 'statuses', 'tags', 'errors', 'pipeline'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -247,6 +281,8 @@ export default function AdminWorkspace() {
                 : t === 'invoices' ? 'Invoices'
                 : t === 'users' ? 'Users'
                 : t === 'activity_types' ? 'Activity Types'
+                : t === 'statuses' ? 'Client Statuses'
+                : t === 'tags' ? 'Client Tags'
                 : t === 'errors'
                   ? <>Error log{ws.stats?.error_count > 0 && <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 700 }}>{ws.stats.error_count}</span>}</>
                   : 'Pipeline Stages'}
@@ -856,6 +892,114 @@ export default function AdminWorkspace() {
               </>
             )}
           </>
+        )}
+
+        {/* ── Client Statuses tab ───────────────────────────── */}
+        {tab === 'statuses' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Add new */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 20px' }}>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', fontWeight: 600, color: 'var(--muted)', marginBottom: 12 }}>ADD STATUS</div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input className="finput" style={{ margin: 0, flex: 1 }} placeholder="Status label…"
+                  value={newStatusLabel} onChange={e => setNewStatusLabel(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && newStatusLabel.trim() && createStatus.mutate()} />
+                <input type="color" value={newStatusColor} onChange={e => setNewStatusColor(e.target.value)}
+                  style={{ width: 36, height: 36, border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', padding: 2 }} />
+                <button className="btn btn-dark btn-sm" onClick={() => newStatusLabel.trim() && createStatus.mutate()}
+                  disabled={createStatus.isPending || !newStatusLabel.trim()}>
+                  {createStatus.isPending ? 'Adding…' : '+ Add'}
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <table className="tbl" style={{ margin: 0 }}>
+                <thead><tr><th>Label</th><th>Color</th><th>Built-in</th><th></th></tr></thead>
+                <tbody>
+                  {(clientStatuses as any[]).length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)', padding: 32 }}>No statuses yet</td></tr>
+                  )}
+                  {(clientStatuses as any[]).map((s: any) => (
+                    <tr key={s.id}>
+                      <td style={{ fontWeight: 500 }}>{s.label}</td>
+                      <td>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 14, height: 14, borderRadius: '50%', background: s.color, display: 'inline-block', border: '1px solid var(--border)' }} />
+                          <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'monospace' }}>{s.color}</span>
+                        </span>
+                      </td>
+                      <td><span style={{ fontSize: 11, color: s.is_builtin ? 'var(--muted)' : 'var(--success)' }}>{s.is_builtin ? 'Yes' : 'Custom'}</span></td>
+                      <td>
+                        {!s.is_builtin && (
+                          <button className="btn btn-ghost btn-sm" style={{ color: '#c0392b' }}
+                            onClick={() => window.confirm(`Delete "${s.label}"?`) && deleteStatus.mutate(s.id)}>
+                            Delete
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* ── Client Tags tab ───────────────────────────────── */}
+        {tab === 'tags' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {/* Add new */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '16px 20px' }}>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', fontWeight: 600, color: 'var(--muted)', marginBottom: 12 }}>ADD TAG</div>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                <input className="finput" style={{ margin: 0, flex: 1 }} placeholder="Tag name…"
+                  value={newTagName} onChange={e => setNewTagName(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && newTagName.trim() && createTag.mutate()} />
+                <input type="color" value={newTagColor} onChange={e => setNewTagColor(e.target.value)}
+                  style={{ width: 36, height: 36, border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer', padding: 2 }} />
+                <button className="btn btn-dark btn-sm" onClick={() => newTagName.trim() && createTag.mutate()}
+                  disabled={createTag.isPending || !newTagName.trim()}>
+                  {createTag.isPending ? 'Adding…' : '+ Add'}
+                </button>
+              </div>
+            </div>
+
+            {/* List */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+              <table className="tbl" style={{ margin: 0 }}>
+                <thead><tr><th>Name</th><th>Color</th><th>Preview</th><th></th></tr></thead>
+                <tbody>
+                  {(clientTags as any[]).length === 0 && (
+                    <tr><td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)', padding: 32 }}>No tags yet</td></tr>
+                  )}
+                  {(clientTags as any[]).map((t: any) => (
+                    <tr key={t.id}>
+                      <td style={{ fontWeight: 500 }}>{t.name}</td>
+                      <td>
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 14, height: 14, borderRadius: '50%', background: t.color, display: 'inline-block', border: '1px solid var(--border)' }} />
+                          <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'monospace' }}>{t.color}</span>
+                        </span>
+                      </td>
+                      <td>
+                        <span style={{ display: 'inline-block', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, background: t.color + '22', color: t.color }}>
+                          {t.name}
+                        </span>
+                      </td>
+                      <td>
+                        <button className="btn btn-ghost btn-sm" style={{ color: '#c0392b' }}
+                          onClick={() => window.confirm(`Delete tag "${t.name}"?`) && deleteTag.mutate(t.id)}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         )}
       </div>
     </AppShell>
