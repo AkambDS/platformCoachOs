@@ -1,7 +1,7 @@
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQuery } from '@tanstack/react-query'
-import { clientsApi } from '../../api/client'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { EmptyState, useToast } from '../../components/ui'
 
@@ -14,6 +14,7 @@ function initials(first: string, last: string) {
 function timeAgo(dateStr: string | null | undefined): string {
   if (!dateStr) return ''
   const diff = Date.now() - new Date(dateStr).getTime()
+  if (diff < 0) return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
   const mins  = Math.floor(diff / 60_000)
   const hours = Math.floor(diff / 3_600_000)
   const days  = Math.floor(diff / 86_400_000)
@@ -38,27 +39,74 @@ function lastActivityLabel(c: any): { label: string; when: string } | null {
 
 export default function Clients() {
   const navigate = useNavigate()
-  const { el: toastEl } = useToast()
+  const queryClient = useQueryClient()
+  const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
-  const [activeFilter, setActiveFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<string>('all')
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
+  const [importing, setImporting] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const { data: statusConfigs = [] } = useQuery({
+    queryKey: ['client-status-configs'],
+    queryFn: () => settingsApi.getClientStatuses().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const { data: tagConfigs = [] } = useQuery({
+    queryKey: ['client-tag-configs'],
+    queryFn: () => settingsApi.getClientTags().then(r => r.data),
+    staleTime: 0,
+  })
+  const statusMap = useMemo(() => {
+    const m: Record<string, any> = {}
+    ;(statusConfigs as any[]).forEach(s => { m[s.label] = s })
+    return m
+  }, [statusConfigs])
+
+  const tagMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    ;(tagConfigs as any[]).forEach(t => { m[t.name] = t.color })
+    return m
+  }, [tagConfigs])
+
+  async function handleExport() {
+    const { data } = await clientsApi.exportCsv()
+    const url = URL.createObjectURL(new Blob([data], { type: 'text/csv' }))
+    const a = document.createElement('a')
+    a.href = url; a.download = 'clients.csv'; a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  async function handleImport(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    setImporting(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const { data } = await clientsApi.importCsv(fd)
+      toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}${data.errors.length ? ` · ${data.errors.length} error(s)` : ''}`, 'success')
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+    } catch {
+      toast('Import failed. Check the file format.', 'error')
+    } finally {
+      setImporting(false)
+    }
+  }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['clients', search, activeFilter, selectedTag],
+    queryKey: ['clients', search, statusFilter, selectedTag],
     queryFn: () => clientsApi.list({
       search: search || undefined,
-      active_flag:
-        activeFilter === 'active' ? true :
-        activeFilter === 'inactive' ? false :
-        undefined,
+      status: statusFilter !== 'all' ? statusFilter : undefined,
       tag: selectedTag || undefined,
     }).then(r => r.data),
   })
 
   const clients: any[] = data?.results || data || []
-  const activeCount = clients.filter((c: any) => c.active_flag).length
-  const inactiveCount = clients.filter((c: any) => !c.active_flag).length
 
   // Collect all unique tags from loaded clients for the tag dropdown
   const allTags = useMemo(() => {
@@ -75,10 +123,15 @@ export default function Clients() {
           <div>
             <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300, marginBottom: 4 }}>Clients</div>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {clients.length} total · {activeCount} active · {inactiveCount} inactive
+              {clients.length} {statusFilter === 'all' ? 'total' : statusFilter}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
+            <button className="btn btn-ghost" onClick={handleExport}>↓ Export CSV</button>
+            <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
+              {importing ? 'Importing…' : '↑ Import CSV'}
+            </button>
+            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
             <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
           </div>
         </div>
@@ -97,17 +150,21 @@ export default function Clients() {
           </div>
 
           {/* Status filters */}
-          {[
-            { key: 'all',      label: 'All' },
-            { key: 'active',   label: 'Active' },
-            { key: 'inactive', label: 'Inactive' },
-          ].map(f => (
+          <button
+            className={`filter-pill${statusFilter === 'all' ? ' active' : ''}`}
+            onClick={() => setStatusFilter('all')}
+          >All</button>
+          {(statusConfigs as any[]).map((s: any) => (
             <button
-              key={f.key}
-              className={`filter-pill${activeFilter === f.key ? ' active' : ''}`}
-              onClick={() => setActiveFilter(f.key)}
+              key={s.label}
+              className={`filter-pill${statusFilter === s.label ? ' active' : ''}`}
+              onClick={() => setStatusFilter(s.label)}
+              style={statusFilter === s.label
+                ? { background: s.color + '18', borderColor: s.color, color: s.color }
+                : {}}
             >
-              {f.label}
+              <span style={{ display: 'inline-block', width: 7, height: 7, borderRadius: '50%', background: s.color, marginRight: 5, verticalAlign: 'middle' }} />
+              {s.label}
             </button>
           ))}
 
@@ -218,23 +275,46 @@ export default function Clients() {
                     </div>
                   </td>
                   <td>
-                    <span className={`pill ${c.active_flag ? 'pill-green' : 'pill-grey'}`}>
-                      {c.active_flag ? 'Active' : 'Inactive'}
-                    </span>
+                    {(() => {
+                      const cfg = statusMap[c.status] || null
+                      const color = cfg?.color || '#b8b2ab'
+                      return (
+                        <span style={{
+                          display: 'inline-block', fontSize: 11, fontWeight: 600,
+                          padding: '2px 10px', borderRadius: 12,
+                          background: color + '20', color, border: `1px solid ${color}40`,
+                        }}>{c.status || 'Lead'}</span>
+                      )
+                    })()}
                     {c.portal_access && (
                       <span className="pill pill-blue" style={{ marginLeft: 4 }}>Portal</span>
                     )}
                   </td>
                   <td>
                     <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                      {(c.tags || []).map((t: string) => (
-                        <span
-                          key={t}
-                          className={`tag${selectedTag === t ? ' active' : ''}`}
-                          style={{ cursor: 'pointer' }}
-                          onClick={e => { e.stopPropagation(); setSelectedTag(selectedTag === t ? '' : t) }}
-                        >{t}</span>
-                      ))}
+                      {(c.tags || []).map((t: string) => {
+                        const color = tagMap[t]
+                        return color ? (
+                          <span
+                            key={t}
+                            onClick={e => { e.stopPropagation(); setSelectedTag(selectedTag === t ? '' : t) }}
+                            style={{
+                              cursor: 'pointer', fontSize: 11, fontWeight: 600,
+                              padding: '2px 8px', borderRadius: 10,
+                              background: color + '20', color,
+                              border: `1px solid ${color}${selectedTag === t ? 'cc' : '40'}`,
+                              outline: selectedTag === t ? `2px solid ${color}60` : 'none',
+                            }}
+                          >{t}</span>
+                        ) : (
+                          <span
+                            key={t}
+                            className={`tag${selectedTag === t ? ' active' : ''}`}
+                            style={{ cursor: 'pointer' }}
+                            onClick={e => { e.stopPropagation(); setSelectedTag(selectedTag === t ? '' : t) }}
+                          >{t}</span>
+                        )
+                      })}
                     </div>
                   </td>
                   <td style={{ fontSize: 13, color: 'var(--muted)' }}>

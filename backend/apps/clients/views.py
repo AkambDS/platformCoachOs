@@ -33,11 +33,11 @@ class ClientViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         # Assistants can only read — all writes require Coach+
-        if self.action in ("create", "update", "partial_update", "destroy", "csv_import"):
+        if self.action in ("create", "update", "partial_update", "destroy", "csv_import", "csv_export"):
             return [IsCoachOrAbove()]
         return [IsAssistantOrAbove()]
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
-    filterset_fields   = ["active_flag", "coach"]
+    filterset_fields   = ["active_flag", "status", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]
     ordering_fields    = ["last_name", "created_at"]
     ordering           = ["last_name"]
@@ -70,35 +70,82 @@ class ClientViewSet(viewsets.ModelViewSet):
             coach=self.request.user,
         )
 
+    @action(detail=False, methods=["get"], url_path="export")
+    def csv_export(self, request):
+        """GET /api/clients/export/ — download all clients as CSV"""
+        if not request.user.workspace_id:
+            return Response({"detail": "Your account is not linked to a workspace."}, status=400)
+
+        fields = ["first_name", "last_name", "email", "phone", "company",
+                  "job_title", "tags", "status", "notes"]
+
+        def rows():
+            yield ",".join(fields) + "\r\n"
+            for c in Client.objects.filter(workspace=request.user.workspace).order_by("last_name"):
+                row = [
+                    c.first_name, c.last_name, c.email, c.phone or "",
+                    c.company or "", c.job_title or "",
+                    "|".join(c.tags or []),
+                    c.status or "Lead",
+                    (c.notes or "").replace("\r\n", " ").replace("\n", " "),
+                ]
+                yield ",".join(f'"{v.replace(chr(34), chr(34)+chr(34))}"' for v in row) + "\r\n"
+
+        resp = StreamingHttpResponse(rows(), content_type="text/csv")
+        resp["Content-Disposition"] = 'attachment; filename="clients.csv"'
+        return resp
+
     @action(detail=False, methods=["post"], url_path="import",
             parser_classes=[MultiPartParser])
     def csv_import(self, request):
-        """POST /api/clients/import/ — CSV bulk import (FR-CRM-07)"""
+        """POST /api/clients/import/ — CSV bulk import"""
         if not request.user.workspace_id:
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
         file = request.FILES.get("file")
         if not file:
             return Response({"detail": "No file provided."}, status=400)
 
-        reader  = csv.DictReader(chunk.decode() for chunk in file.chunks())
+        import io
+        try:
+            text = file.read().decode("utf-8-sig")
+        except UnicodeDecodeError:
+            return Response({"detail": "File must be UTF-8 encoded."}, status=400)
+
+        reader  = csv.DictReader(io.StringIO(text))
         created = 0
+        skipped = 0
         errors  = []
         for i, row in enumerate(reader, start=2):
+            first = row.get("first_name", "").strip()
+            last  = row.get("last_name", "").strip()
+            email = row.get("email", "").strip()
+            if not first and not last and not email:
+                skipped += 1
+                continue
+            raw_tags = row.get("tags", "").strip()
+            tags = [t.strip() for t in raw_tags.replace(",", "|").split("|") if t.strip()]
+            client_status = row.get("status", "Lead").strip() or "Lead"
+            active = client_status.lower() == "active"
             try:
                 Client.objects.create(
                     workspace=request.user.workspace,
                     coach=request.user,
-                    first_name=row.get("first_name", "").strip(),
-                    last_name=row.get("last_name", "").strip(),
-                    email=row.get("email", "").strip(),
+                    first_name=first,
+                    last_name=last,
+                    email=email,
+                    phone=row.get("phone", "").strip(),
                     company=row.get("company", "").strip(),
                     job_title=row.get("job_title", "").strip(),
+                    tags=tags,
+                    status=client_status,
+                    active_flag=active,
+                    notes=row.get("notes", "").strip(),
                 )
                 created += 1
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})
 
-        return Response({"created": created, "errors": errors}, status=201)
+        return Response({"created": created, "skipped": skipped, "errors": errors}, status=201)
 
 
 class ClientNoteViewSet(viewsets.ModelViewSet):

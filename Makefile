@@ -38,7 +38,7 @@ deploy-backend:
 	$(COMPOSE) up -d
 
 # Deploy frontend only — build locally, push dist to EC2 via rsync
-# Usage from your Mac: make deploy-frontend HOST=ubuntu@<ec2-ip>
+# Usage from your Mac: make deploy-frontend HOST=ubuntu@<ec2-ip>  (repo lives at ~/platformCoachOs on EC2)
 deploy-frontend:
 	cd frontend && npm run build
 	rsync -az --delete frontend/dist/ $(HOST):/home/ubuntu/coachos/frontend-dist/

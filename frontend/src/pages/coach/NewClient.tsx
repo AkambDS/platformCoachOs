@@ -1,21 +1,33 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useQueryClient } from '@tanstack/react-query'
-import { clientsApi } from '../../api/client'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { useToast } from '../../components/ui'
 
 const LEAD_SOURCES = ['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other']
-const TAGS_OPTIONS = ['VIP', 'New', 'Finance', 'Tech Sector', 'Referral', 'On Hold', 'Executive', 'Leadership', 'Career', 'Health', 'Strategy', 'Startup']
 
 export default function NewClient() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { show: showToast, el: toastEl } = useToast()
+
+  const { data: statusConfigs = [] } = useQuery({
+    queryKey: ['client-status-configs'],
+    queryFn: () => settingsApi.getClientStatuses().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const { data: tagConfigs = [] } = useQuery({
+    queryKey: ['client-tag-configs'],
+    queryFn: () => settingsApi.getClientTags().then(r => r.data),
+    staleTime: 0,
+  })
+
   const [form, setForm] = useState({
     first_name: '', last_name: '', email: '', phone: '',
     company: '', job_title: '', lead_source: '', birth_date: '',
-    notes: '', tags: [] as string[], create_deal: true,
+    notes: '', tags: [] as string[], status: 'Lead', create_deal: true,
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -120,6 +132,17 @@ export default function NewClient() {
                 <input className="finput" value={form.company} onChange={e => set('company', e.target.value)} placeholder="NovaBridge Capital" />
               </div>
               <div className="fgroup">
+                <label className="flabel">Status</label>
+                <select className="fselect" value={form.status} onChange={e => set('status', e.target.value)}>
+                  {(statusConfigs as any[]).map((s: any) => (
+                    <option key={s.label} value={s.label}>{s.label}</option>
+                  ))}
+                  {(statusConfigs as any[]).length === 0 && (
+                    <option value="Lead">Lead</option>
+                  )}
+                </select>
+              </div>
+              <div className="fgroup">
                 <label className="flabel">Lead Source</label>
                 <select className="fselect" value={form.lead_source} onChange={e => set('lead_source', e.target.value)}>
                   <option value="">Select source…</option>
@@ -143,21 +166,27 @@ export default function NewClient() {
             <div className="fgroup" style={{ marginBottom: 20 }}>
               <label className="flabel">Tags</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
-                {TAGS_OPTIONS.map(t => (
-                  <button
-                    key={t}
-                    type="button"
-                    onClick={() => toggleTag(t)}
-                    style={{
-                      padding: '7px 16px', fontSize: 12, cursor: 'pointer',
-                      border: '1px solid var(--border)',
-                      background: form.tags.includes(t) ? 'var(--ink)' : 'var(--white)',
-                      color: form.tags.includes(t) ? 'var(--paper)' : 'var(--ink)',
-                      fontFamily: "'DM Sans', sans-serif",
-                      transition: 'all .15s',
-                    }}
-                  >{t}</button>
-                ))}
+                {(tagConfigs as any[]).map((tc: any) => {
+                  const selected = form.tags.includes(tc.name)
+                  return (
+                    <button
+                      key={tc.name}
+                      type="button"
+                      onClick={() => toggleTag(tc.name)}
+                      style={{
+                        padding: '5px 14px', fontSize: 12, cursor: 'pointer',
+                        fontFamily: "'DM Sans', sans-serif", transition: 'all .15s',
+                        border: `1px solid ${tc.color}60`,
+                        background: selected ? tc.color : tc.color + '18',
+                        color: selected ? '#fff' : tc.color,
+                        fontWeight: selected ? 600 : 400,
+                      }}
+                    >{tc.name}</button>
+                  )
+                })}
+                {(tagConfigs as any[]).length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>No tags configured — add some in Settings → Tags</div>
+                )}
               </div>
             </div>
             <div className="fgroup">

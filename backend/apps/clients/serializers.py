@@ -64,7 +64,7 @@ class ClientListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Client
         fields = ["id", "first_name", "last_name", "job_title", "company", "email",
-                  "phone", "active_flag", "portal_access", "lead_source",
+                  "phone", "active_flag", "status", "portal_access", "lead_source",
                   "tags", "coach_name", "created_at",
                   "last_activity_type", "last_activity_at"]
 

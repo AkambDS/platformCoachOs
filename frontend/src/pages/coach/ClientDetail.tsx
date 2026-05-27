@@ -774,6 +774,28 @@ export default function ClientDetail() {
   const stageMap: Record<string, any> = {}
   ;(stagesData as any[]).forEach((s: any) => { stageMap[s.slug] = s })
 
+  const { data: statusConfigs = [] } = useQuery({
+    queryKey: ['client-status-configs'],
+    queryFn: () => settingsApi.getClientStatuses().then(r => r.data),
+    staleTime: 0,
+  })
+  const statusMap = useMemo(() => {
+    const m: Record<string, any> = {}
+    ;(statusConfigs as any[]).forEach((s: any) => { m[s.label] = s })
+    return m
+  }, [statusConfigs])
+
+  const { data: tagConfigs = [] } = useQuery({
+    queryKey: ['client-tag-configs'],
+    queryFn: () => settingsApi.getClientTags().then(r => r.data),
+    staleTime: 0,
+  })
+  const tagMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    ;(tagConfigs as any[]).forEach((t: any) => { m[t.name] = t.color })
+    return m
+  }, [tagConfigs])
+
   const handleSave = async () => {
     try {
       await clientsApi.update(id!, editForm)
@@ -844,16 +866,16 @@ export default function ClientDetail() {
                 <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300 }}>
                   {client.first_name} {client.last_name}
                 </span>
-                <button
-                  className={`pill ${client.active_flag ? 'pill-green' : 'pill-grey'}`}
-                  style={{ cursor: 'pointer', border: 'none' }}
-                  title={client.active_flag ? 'Click to mark Inactive' : 'Click to mark Active'}
-                  onClick={async () => {
-                    await clientsApi.patch(id!, { active_flag: !client.active_flag })
-                    qc.invalidateQueries({ queryKey: ['client', id] })
-                    showToast(client.active_flag ? 'Client marked inactive' : 'Client marked active')
-                  }}
-                >{client.active_flag ? 'Active' : 'Inactive'}</button>
+                {(() => {
+                  const cfg = statusMap[(client as any).status]
+                  const color = cfg?.color || '#b8b2ab'
+                  return (
+                    <span style={{
+                      fontSize: 12, fontWeight: 600, padding: '3px 12px', borderRadius: 12,
+                      background: color + '20', color, border: `1px solid ${color}40`,
+                    }}>{(client as any).status || 'Lead'}</span>
+                  )
+                })()}
                 {client.portal_access && <span className="pill pill-blue">Portal</span>}
               </div>
               <div style={{ fontSize: 12, color: 'var(--muted)', display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -862,7 +884,17 @@ export default function ClientDetail() {
                 )}
                 {client.email && <><span>·</span><span>{client.email}</span></>}
                 {(client as any).coach_name && <><span>·</span><span>Coach: {(client as any).coach_name}</span></>}
-                {(client.tags || []).length > 0 && <><span>·</span>{(client.tags || []).map((t: string) => <span key={t} className="tag">{t}</span>)}</>}
+                {(client.tags || []).length > 0 && (
+                  <><span>·</span>{(client.tags || []).map((t: string) => {
+                    const color = tagMap[t]
+                    return color ? (
+                      <span key={t} style={{
+                        fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                        background: color + '20', color, border: `1px solid ${color}40`,
+                      }}>{t}</span>
+                    ) : <span key={t} className="tag">{t}</span>
+                  })}</>
+                )}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
@@ -1045,6 +1077,15 @@ export default function ClientDetail() {
                 </div>
                 {editMode ? (
                   <div style={{ padding: '16px 20px' }}>
+                    <div className="fgroup" style={{ marginBottom: 12 }}>
+                      <label className="flabel">Status</label>
+                      <select className="fselect" value={(ef as any).status || 'Lead'} onChange={e => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
+                        {(statusConfigs as any[]).map((s: any) => (
+                          <option key={s.label} value={s.label}>{s.label}</option>
+                        ))}
+                        {(statusConfigs as any[]).length === 0 && <option value="Lead">Lead</option>}
+                      </select>
+                    </div>
                     {[
                       { k: 'email',     label: 'Email' },
                       { k: 'phone',     label: 'Phone' },

@@ -10,9 +10,11 @@ from apps.accounts.models import Workspace
 from .serializers import (
     BrandingSerializer, SchedulingSerializer, WorkspaceSerializer,
     PipelineStageConfigSerializer, ActivityTypeConfigSerializer,
+    ClientStatusConfigSerializer, ClientTagConfigSerializer,
 )
 from apps.pipeline.models import PipelineStageConfig
 from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES
+from apps.clients.models import ClientStatusConfig, ClientTagConfig
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
 
 
@@ -329,6 +331,107 @@ def email_preview(request):
         return Response({"detail": "Unknown type."}, status=status.HTTP_400_BAD_REQUEST)
 
     return Response({"html": html})
+
+
+_BUILTIN_CLIENT_STATUSES = [
+    {"label": "Lead",     "color": "#8c8279", "sort_order": 0},
+    {"label": "Active",   "color": "#4a7c59", "sort_order": 1},
+    {"label": "Inactive", "color": "#b8b2ab", "sort_order": 2},
+    {"label": "Archive",  "color": "#c8c4bc", "sort_order": 3},
+]
+
+
+def _seed_client_statuses(workspace):
+    if ClientStatusConfig.objects.filter(workspace=workspace, is_builtin=True).exists():
+        return
+    for s in _BUILTIN_CLIENT_STATUSES:
+        ClientStatusConfig.objects.get_or_create(
+            workspace=workspace, label=s["label"],
+            defaults={**s, "is_builtin": True},
+        )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def client_status_configs(request):
+    """GET /api/settings/client-statuses/ — list; POST — create custom status."""
+    workspace = request.user.workspace
+    _seed_client_statuses(workspace)
+
+    if request.method == "GET":
+        qs = ClientStatusConfig.objects.filter(workspace=workspace)
+        return Response(ClientStatusConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = ClientStatusConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace, is_builtin=False)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def client_status_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/client-statuses/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = ClientStatusConfig.objects.get(pk=pk, workspace=workspace)
+    except ClientStatusConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        if obj.is_builtin:
+            return Response({"detail": "Cannot delete built-in statuses."}, status=status.HTTP_400_BAD_REQUEST)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = ClientStatusConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def client_tag_configs(request):
+    """GET /api/settings/client-tags/ — list; POST — create tag."""
+    workspace = request.user.workspace
+
+    if request.method == "GET":
+        qs = ClientTagConfig.objects.filter(workspace=workspace)
+        return Response(ClientTagConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = ClientTagConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def client_tag_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/client-tags/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = ClientTagConfig.objects.get(pk=pk, workspace=workspace)
+    except ClientTagConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = ClientTagConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 def serve_workspace_logo(request, workspace_id):

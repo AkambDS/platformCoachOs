@@ -978,6 +978,287 @@ function ActivityTypesTab() {
   )
 }
 
+// ── Client Statuses Tab ────────────────────────────────────────────────────────
+function ClientStatusesTab() {
+  const { show, el: toastEl } = useToast()
+  const qc = useQueryClient()
+  const { data: statuses = [], isLoading } = useQuery({
+    queryKey: ['client-status-configs'],
+    queryFn: () => settingsApi.getClientStatuses().then(r => r.data),
+  })
+  const [showAdd, setShowAdd]           = useState(false)
+  const [editTarget, setEditTarget]     = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [newForm, setNewForm]           = useState({ label: '', color: '#2d6a9f' })
+  const [editForm, setEditForm]         = useState({ label: '', color: '#2d6a9f' })
+  const [saving, setSaving]             = useState(false)
+
+  const handleAdd = async () => {
+    if (!newForm.label.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.createClientStatus(newForm)
+      qc.invalidateQueries({ queryKey: ['client-status-configs'] })
+      setShowAdd(false); setNewForm({ label: '', color: '#2d6a9f' })
+      show('Status added')
+    } catch (e: any) { show(e?.response?.data?.label?.[0] || 'Failed to add', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editForm.label.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.updateClientStatus(editTarget.id, editForm)
+      qc.invalidateQueries({ queryKey: ['client-status-configs'] })
+      setEditTarget(null); show('Status updated')
+    } catch (e: any) { show(e?.response?.data?.label?.[0] || 'Failed to update', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSaving(true)
+    try {
+      await settingsApi.deleteClientStatus(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: ['client-status-configs'] })
+      setDeleteTarget(null); show('Status deleted')
+    } catch (e: any) { show(e?.response?.data?.detail || 'Failed to delete', 'error') }
+    finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 600 }}>
+      <div className="card-hdr">
+        Client Statuses
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Status
+        </button>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {(statuses as any[]).map((s: any) => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>
+              {s.label}
+              {s.is_builtin && <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 6, fontWeight: 400 }}>built-in</span>}
+            </div>
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 12,
+              background: s.color + '20', color: s.color, border: `1px solid ${s.color}40`,
+            }}>{s.label}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color }) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(s)} style={{ color: '#c0392b', padding: '2px 6px' }} disabled={s.is_builtin}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Client Status" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Label *</label>
+            <input className="finput" value={newForm.label} onChange={e => setNewForm(f => ({ ...f, label: e.target.value }))}
+              placeholder="e.g. On Hold" onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={newForm.color} onChange={c => setNewForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title="Edit Status" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Label *</label>
+            <input className="finput" value={editForm.label} onChange={e => setEditForm(f => ({ ...f, label: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={editForm.color} onChange={c => setEditForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete Status" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Delete <strong>"{deleteTarget.label}"</strong>? Clients with this status will keep the label text.
+          </div>
+        </Modal>
+      )}
+      {toastEl}
+    </div>
+  )
+}
+
+// ── Tags Tab ───────────────────────────────────────────────────────────────────
+function TagsTab() {
+  const { show, el: toastEl } = useToast()
+  const qc = useQueryClient()
+  const { data: tags = [], isLoading } = useQuery({
+    queryKey: ['client-tag-configs'],
+    queryFn: () => settingsApi.getClientTags().then(r => r.data),
+    staleTime: 0,
+  })
+  const [showAdd, setShowAdd]           = useState(false)
+  const [editTarget, setEditTarget]     = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [newForm, setNewForm]           = useState({ name: '', color: '#2d6a9f' })
+  const [editForm, setEditForm]         = useState({ name: '', color: '#2d6a9f' })
+  const [saving, setSaving]             = useState(false)
+
+  const handleAdd = async () => {
+    if (!newForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.createClientTag(newForm)
+      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
+      setShowAdd(false); setNewForm({ name: '', color: '#2d6a9f' })
+      show('Tag added')
+    } catch (e: any) { show(e?.response?.data?.name?.[0] || 'Failed to add', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.updateClientTag(editTarget.id, editForm)
+      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
+      setEditTarget(null); show('Tag updated')
+    } catch (e: any) { show(e?.response?.data?.name?.[0] || 'Failed to update', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSaving(true)
+    try {
+      await settingsApi.deleteClientTag(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
+      setDeleteTarget(null); show('Tag deleted')
+    } catch (e: any) { show(e?.response?.data?.detail || 'Failed to delete', 'error') }
+    finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 600 }}>
+      <div className="card-hdr">
+        Client Tags
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Tag
+        </button>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {(tags as any[]).length === 0 && (
+          <div style={{ padding: '16px 18px', fontSize: 13, color: 'var(--muted)' }}>
+            No tags yet. Add tags to categorise clients with colors.
+          </div>
+        )}
+        {(tags as any[]).map((t: any) => (
+          <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: t.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{t.name}</div>
+            <span style={{
+              fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 10,
+              background: t.color + '20', color: t.color, border: `1px solid ${t.color}40`,
+            }}>{t.name}</span>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(t); setEditForm({ name: t.name, color: t.color }) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(t)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Tag" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Tag Name *</label>
+            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))}
+              placeholder="e.g. VIP, Executive, On Hold" onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={newForm.color} onChange={c => setNewForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title="Edit Tag" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Tag Name *</label>
+            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={editForm.color} onChange={c => setEditForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete Tag" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Delete tag <strong>"{deleteTarget.name}"</strong>? Clients will keep the tag text; only the color config is removed.
+          </div>
+        </Modal>
+      )}
+      {toastEl}
+    </div>
+  )
+}
+
 // ── Services Tab ───────────────────────────────────────────────────────────────
 function ServicesTab() {
   const { show } = useToast()
@@ -1327,6 +1608,8 @@ export default function Settings() {
     { key: 'Team',             icon: <Mail size={13} />,         ownerOnly: true  },
     { key: 'Pipeline',         icon: <Kanban size={13} />,       ownerOnly: true  },
     { key: 'Activity Types',   icon: <CalendarDays size={13} />, ownerOnly: true  },
+    { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
+    { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Email Templates',  icon: <Mail size={13} />,         ownerOnly: true  },
   ]
@@ -1357,7 +1640,9 @@ export default function Settings() {
         {tab === 'Profile'        && <ProfileTab />}
         {tab === 'Team'           && isOwner && <TeamTab />}
         {tab === 'Pipeline'       && isOwner && <PipelineTab />}
-        {tab === 'Activity Types' && isOwner && <ActivityTypesTab />}
+        {tab === 'Activity Types'  && isOwner && <ActivityTypesTab />}
+        {tab === 'Client Statuses' && isOwner && <ClientStatusesTab />}
+        {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
         {tab === 'Email Templates' && isOwner && <EmailTemplatesTab />}
       </div>

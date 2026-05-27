@@ -2,7 +2,39 @@
 import uuid
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
-from apps.accounts.models import WorkspaceModel, User
+from apps.accounts.models import WorkspaceModel, User, Workspace
+
+
+class ClientStatusConfig(models.Model):
+    """Per-workspace client status labels (Lead, Active, Inactive, Archive, custom…)."""
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='client_status_configs')
+    label      = models.CharField(max_length=50)
+    color      = models.CharField(max_length=7, default='#8c8279')
+    is_builtin = models.BooleanField(default=False)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        db_table       = 'clients_statusconfig'
+        ordering       = ['sort_order', 'label']
+        unique_together = [['workspace', 'label']]
+
+    def __str__(self):
+        return self.label
+
+
+class ClientTagConfig(models.Model):
+    """Per-workspace tag definitions with colors."""
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='client_tag_configs')
+    name       = models.CharField(max_length=50)
+    color      = models.CharField(max_length=7, default='#2d6a9f')
+
+    class Meta:
+        db_table       = 'clients_tagconfig'
+        ordering       = ['name']
+        unique_together = [['workspace', 'name']]
+
+    def __str__(self):
+        return self.name
 
 
 class Client(WorkspaceModel):
@@ -30,6 +62,7 @@ class Client(WorkspaceModel):
     billing_address  = models.JSONField(default=dict, blank=True)
     # CRM metadata (FR-CRM-02/03/06)
     tags         = ArrayField(models.CharField(max_length=50), default=list, blank=True)
+    status       = models.CharField(max_length=50, default='Lead', blank=True)
     active_flag  = models.BooleanField(default=False, help_text="Manually set by coach (FR-CRM-03)")
     portal_access = models.BooleanField(default=False, help_text="Enables client portal login (FR-CP-11)")
     lead_source  = models.CharField(max_length=20, choices=LeadSource.choices, blank=True)

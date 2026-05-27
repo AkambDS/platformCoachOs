@@ -2,6 +2,7 @@ from rest_framework import serializers
 from apps.accounts.models import Workspace
 from apps.pipeline.models import PipelineStageConfig
 from apps.activities.models import ActivityTypeConfig
+from apps.clients.models import ClientStatusConfig, ClientTagConfig
 
 
 class BrandingSerializer(serializers.ModelSerializer):
@@ -42,3 +43,17 @@ class ActivityTypeConfigSerializer(serializers.ModelSerializer):
         model  = ActivityTypeConfig
         fields = ["id", "name", "color", "is_active", "is_builtin", "sort_order"]
         read_only_fields = ["id", "is_builtin"]
+
+
+class ClientStatusConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ClientStatusConfig
+        fields = ["id", "label", "color", "is_builtin", "sort_order"]
+        read_only_fields = ["id", "is_builtin"]
+
+
+class ClientTagConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = ClientTagConfig
+        fields = ["id", "name", "color"]
+        read_only_fields = ["id"]
