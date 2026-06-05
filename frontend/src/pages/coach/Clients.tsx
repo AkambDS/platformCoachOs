@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { EmptyState, useToast } from '../../components/ui'
+import { useAuthStore } from '../../store/auth'
 
 const AVATAR_COLS = ['c1', 'c2', 'c3', 'c4', 'c5']
 
@@ -39,6 +40,8 @@ function lastActivityLabel(c: any): { label: string; when: string } | null {
 
 export default function Clients() {
   const navigate = useNavigate()
+  const { user } = useAuthStore()
+  const isOwner = user?.role === 'business_owner'
   const queryClient = useQueryClient()
   const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
@@ -128,11 +131,15 @@ export default function Clients() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-ghost" onClick={handleExport}>↓ Export CSV</button>
-            <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
-              {importing ? 'Importing…' : '↑ Import CSV'}
-            </button>
-            <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
-            <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
+            {isOwner && (
+              <>
+                <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
+                  {importing ? 'Importing…' : '↑ Import CSV'}
+                </button>
+                <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
+                <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
+              </>
+            )}
           </div>
         </div>
       </div>
@@ -240,7 +247,7 @@ export default function Clients() {
           <EmptyState icon="◉" title="No clients found" message={
             selectedTag || search ? 'Try adjusting your search or filters' : 'Add your first client to get started'
           } action={
-            !selectedTag && !search
+            isOwner && !selectedTag && !search
               ? <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
               : undefined
           } />

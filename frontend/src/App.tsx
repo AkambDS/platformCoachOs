@@ -82,10 +82,10 @@ export default function App() {
           {/* Coach App */}
           <Route path="/dashboard"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
           <Route path="/clients"        element={<PrivateRoute><Clients /></PrivateRoute>} />
-          <Route path="/clients/new"   element={<PrivateRoute><NewClient /></PrivateRoute>} />
+          <Route path="/clients/new"   element={<PrivateRoute><RoleRoute allow={["business_owner"]}><NewClient /></RoleRoute></PrivateRoute>} />
           <Route path="/clients/:id"   element={<PrivateRoute><ClientDetail /></PrivateRoute>} />
-          <Route path="/pipeline"      element={<PrivateRoute><Pipeline /></PrivateRoute>} />
-          <Route path="/pipeline/new"  element={<PrivateRoute><NewDeal /></PrivateRoute>} />
+          <Route path="/pipeline"      element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Pipeline /></RoleRoute></PrivateRoute>} />
+          <Route path="/pipeline/new"  element={<PrivateRoute><RoleRoute allow={["business_owner"]}><NewDeal /></RoleRoute></PrivateRoute>} />
           <Route path="/calendar"      element={<PrivateRoute><Calendar /></PrivateRoute>} />
           <Route path="/activities"    element={<PrivateRoute><Activities /></PrivateRoute>} />
           <Route path="/invoices"          element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />

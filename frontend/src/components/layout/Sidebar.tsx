@@ -27,7 +27,7 @@ const COACH_NAV: NavItem[] = [
   { section: 'Workspace' },
   { to: '/dashboard',  Icon: LayoutDashboard,  label: 'Dashboard',  tour: 'dashboard'  },
   { to: '/clients',    Icon: Users,             label: 'Clients',    tour: 'clients'    },
-  { to: '/pipeline',   Icon: Kanban,            label: 'Pipeline',   tour: 'pipeline'   },
+  { to: '/pipeline',   Icon: Kanban,            label: 'Pipeline',   roles: ['business_owner'], tour: 'pipeline'   },
   { section: 'Schedule' },
   { to: '/calendar',   Icon: CalendarDays,      label: 'Calendar'                       },
   { to: '/activities', Icon: CheckSquare,       label: 'Activities', tour: 'activities' },
