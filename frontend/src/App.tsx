@@ -92,7 +92,7 @@ export default function App() {
           <Route path="/invoices/new"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><NewInvoice /></RoleRoute></PrivateRoute>} />
           <Route path="/invoices/:id"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><InvoiceDetail /></RoleRoute></PrivateRoute>} />
           <Route path="/invoices/:id/edit" element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><NewInvoice /></RoleRoute></PrivateRoute>} />
-          <Route path="/reports"       element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Reports /></RoleRoute></PrivateRoute>} />
+          <Route path="/reports"       element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Reports /></RoleRoute></PrivateRoute>} />
           <Route path="/library"         element={<PrivateRoute><Library /></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"          element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />
