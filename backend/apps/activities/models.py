@@ -38,8 +38,10 @@ class Activity(WorkspaceModel):
     # Linked deal (optional)
     deal           = models.ForeignKey("pipeline.Deal", on_delete=models.SET_NULL,
                                        null=True, blank=True, related_name="activities")
+    meeting_link   = models.URLField(max_length=500, blank=True, help_text="Zoom / Meet / Teams join URL")
     # Recurrence (FR-ACT-07)
     rrule          = models.TextField(blank=True, help_text="RRULE string e.g. FREQ=WEEKLY;COUNT=12")
+    repeat_until   = models.DateField(null=True, blank=True, help_text="End date for recurring series")
     recurrence_id  = models.UUIDField(null=True, blank=True,
                                       help_text="Parent activity for recurring series")
     # Calendar sync (FR-ACT-05/06)

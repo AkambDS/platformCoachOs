@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, authApi, settingsApi, invoicesApi } from '../../api/client'
+import { api, authApi, settingsApi, invoicesApi, auditApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
-import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays } from 'lucide-react'
+import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays, ClipboardList } from 'lucide-react'
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
@@ -132,9 +132,14 @@ function WorkspaceTab() {
         <div className="card-body">
           <div className="fgroup">
             <label className="flabel">Workspace Name</label>
-            <input className="finput" value={form.name} onChange={e => set('name', e.target.value)} />
+            <div style={{
+              padding: '9px 12px', background: 'var(--paper)', border: '1px solid var(--border)',
+              borderRadius: 4, fontSize: 14, color: 'var(--ink)',
+            }}>
+              {form.name}
+            </div>
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              Appears on invoices and client emails.
+              Appears on invoices and client emails. Contact your administrator to change the workspace name.
             </div>
           </div>
           <div className="fgroup">
@@ -1597,6 +1602,87 @@ function EmailTemplatesTab() {
   )
 }
 
+// ── Audit Log Tab ───────────────────────────────────────────────────────────────
+const ACTION_LABELS: Record<string, string> = {
+  viewed_notes:       'Viewed notes',
+  created_note:       'Created note',
+  updated_note:       'Updated note',
+  deleted_note:       'Deleted note',
+  viewed_assessments: 'Viewed files',
+  downloaded_file:    'Downloaded file',
+  uploaded_file:      'Uploaded file',
+  deleted_file:       'Deleted file',
+  viewed_goals:       'Viewed goals',
+  viewed_feedback:    'Viewed feedback',
+}
+
+function fmtDate(iso: string) {
+  const d = new Date(iso)
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
+    ' · ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
+}
+
+function AuditLogTab() {
+  const { data, isLoading } = useQuery({
+    queryKey: ['audit-log'],
+    queryFn: () => auditApi.list().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const logs: any[] = data || []
+
+  return (
+    <div style={{ maxWidth: 820 }}>
+      <div className="card">
+        <div style={{ padding: '20px 28px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 300 }}>Audit Log</div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>Last 100 actions across your workspace</div>
+          </div>
+        </div>
+
+        {isLoading ? (
+          <div style={{ padding: '40px 28px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+        ) : logs.length === 0 ? (
+          <div style={{ padding: '40px 28px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No activity recorded yet.</div>
+        ) : (
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Action</th>
+                <th>Client</th>
+                <th>Detail</th>
+                <th>When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {logs.map((l: any) => (
+                <tr key={l.id}>
+                  <td style={{ fontSize: 13, fontWeight: 500 }}>{l.user_name || '—'}</td>
+                  <td>
+                    <span style={{
+                      fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                      background: 'var(--gold)18', color: 'var(--gold)', border: '1px solid var(--gold)40',
+                    }}>
+                      {ACTION_LABELS[l.action] || l.action}
+                    </span>
+                  </td>
+                  <td style={{ fontSize: 13, color: 'var(--muted)' }}>{l.client_name || '—'}</td>
+                  <td style={{ fontSize: 12, color: 'var(--muted)' }}>
+                    {l.metadata?.file_name || ''}
+                  </td>
+                  <td style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtDate(l.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useAuthStore()
@@ -1611,7 +1697,8 @@ export default function Settings() {
     { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
-    { key: 'Email Templates',  icon: <Mail size={13} />,         ownerOnly: true  },
+    { key: 'Email Templates',  icon: <Mail size={13} />,          ownerOnly: true  },
+    { key: 'Audit Log',        icon: <ClipboardList size={13} />, ownerOnly: true  },
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
 
@@ -1645,6 +1732,7 @@ export default function Settings() {
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
         {tab === 'Email Templates' && isOwner && <EmailTemplatesTab />}
+        {tab === 'Audit Log'       && isOwner && <AuditLogTab />}
       </div>
     </AppShell>
   )

@@ -65,7 +65,7 @@ class Client(WorkspaceModel):
     status       = models.CharField(max_length=50, default='Lead', blank=True)
     active_flag  = models.BooleanField(default=False, help_text="Manually set by coach (FR-CRM-03)")
     portal_access = models.BooleanField(default=False, help_text="Enables client portal login (FR-CP-11)")
-    lead_source  = models.CharField(max_length=20, choices=LeadSource.choices, blank=True)
+    lead_source  = models.CharField(max_length=200, blank=True)
     birth_date   = models.DateField(null=True, blank=True)
     anniversary_date = models.DateField(null=True, blank=True)
     notes        = models.TextField(blank=True)

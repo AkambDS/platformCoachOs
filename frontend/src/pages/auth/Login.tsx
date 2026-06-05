@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { authApi } from '../../api/client'
+import { authApi, systemApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 
 export default function Login() {
@@ -8,15 +8,20 @@ export default function Login() {
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+  const [banner, setBanner]     = useState<{ message: string; is_active: boolean } | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
+
+  useEffect(() => {
+    systemApi.banner().then(r => { if (r.data?.is_active) setBanner(r.data) }).catch(() => {})
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true); setError('')
     try {
       const { data } = await authApi.login({ email, password })
-      login({ access: data.access, refresh: data.refresh }, data.user, data.workspace)
+      login(data.user, data.workspace)
       navigate(data.user?.role === 'platform_admin' ? '/admin' : '/dashboard')
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed. Check your credentials.')
@@ -24,6 +29,18 @@ export default function Login() {
   }
 
   return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      {banner?.is_active && (
+        <div style={{
+          background: '#7a4e1e', color: '#fff',
+          padding: '14px 24px', fontSize: 13, lineHeight: 1.6,
+          textAlign: 'center', letterSpacing: '.01em',
+          borderBottom: '1px solid #5c3813',
+        }}>
+          <strong style={{ marginRight: 8 }}>Scheduled Maintenance Notice:</strong>
+          {banner.message}
+        </div>
+      )}
     <div className="auth-split">
       {/* Brand Panel */}
       <div className="auth-brand">
@@ -95,6 +112,7 @@ export default function Login() {
           </p>
         </div>
       </div>
+    </div>
     </div>
   )
 }

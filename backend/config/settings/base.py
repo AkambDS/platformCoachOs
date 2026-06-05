@@ -59,6 +59,8 @@ LOCAL_APPS = [
     "apps.library",
     "apps.settings_app",
     "apps.feedback",
+    "apps.audit",
+    "apps.superadmin",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -124,7 +126,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # ── DRF ───────────────────────────────────────────────────────────────────
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        "apps.accounts.authentication.CookieJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": (
         "rest_framework.permissions.IsAuthenticated",
@@ -138,18 +140,30 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
+    # Rate limiting — applied per-view; these define the buckets.
+    "DEFAULT_THROTTLE_CLASSES": [
+        "rest_framework.throttling.AnonRateThrottle",
+        "rest_framework.throttling.UserRateThrottle",
+    ],
+    "DEFAULT_THROTTLE_RATES": {
+        "anon":           "200/hour",   # general unauthenticated API calls
+        "user":           "2000/hour",  # general authenticated API calls
+        "login":          "10/minute",  # login attempts per IP
+        "password_reset": "5/minute",   # password-reset requests per IP
+        "register":       "5/hour",     # workspace registrations per IP
+    },
 }
 
 # ── JWT ───────────────────────────────────────────────────────────────────
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME":   timedelta(hours=8),
-    "REFRESH_TOKEN_LIFETIME":  timedelta(days=30),
-    "ROTATE_REFRESH_TOKENS":   True,
-    "BLACKLIST_AFTER_ROTATION": True,
-    "UPDATE_LAST_LOGIN":       True,
-    "SIGNING_KEY":             env("JWT_SIGNING_KEY", default=SECRET_KEY),
-    "AUTH_HEADER_TYPES":       ("Bearer",),
-    "TOKEN_OBTAIN_SERIALIZER": "apps.accounts.serializers.CoachOSTokenObtainPairSerializer",
+    "ACCESS_TOKEN_LIFETIME":    timedelta(minutes=30),  # was 8h — short window limits damage if stolen
+    "REFRESH_TOKEN_LIFETIME":   timedelta(days=7),      # was 30d — 7 days is standard for SaaS
+    "ROTATE_REFRESH_TOKENS":    True,   # every refresh issues a new refresh token
+    "BLACKLIST_AFTER_ROTATION": True,   # old refresh token immediately invalidated
+    "UPDATE_LAST_LOGIN":        True,
+    "SIGNING_KEY":              env("JWT_SIGNING_KEY", default=SECRET_KEY),
+    "AUTH_HEADER_TYPES":        ("Bearer",),
+    "TOKEN_OBTAIN_SERIALIZER":  "apps.accounts.serializers.CoachOSTokenObtainPairSerializer",
 }
 
 # ── OpenAPI ───────────────────────────────────────────────────────────────
@@ -254,6 +268,7 @@ MINIO_PUBLIC_URL      = env("MINIO_PUBLIC_URL", default="")
 AWS_DEFAULT_ACL       = "private"
 AWS_S3_FILE_OVERWRITE = False
 AWS_QUERYSTRING_AUTH  = True          # presigned URLs for private objects
+AWS_QUERYSTRING_EXPIRE = 1800         # presigned URLs expire in 30 minutes
 
 # Django 4.2+ requires STORAGES dict — DEFAULT_FILE_STORAGE alone is ignored.
 STORAGES = {

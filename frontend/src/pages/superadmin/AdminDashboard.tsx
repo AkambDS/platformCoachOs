@@ -4,12 +4,13 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 
-type Tab = 'overview' | 'workspaces' | 'tokens' | 'feedback'
+type Tab = 'overview' | 'workspaces' | 'tokens' | 'feedback' | 'banner'
 
 function hashToTab(hash: string): Tab {
   if (hash === '#workspaces') return 'workspaces'
   if (hash === '#tokens') return 'tokens'
   if (hash === '#feedback') return 'feedback'
+  if (hash === '#banner') return 'banner'
   return 'overview'
 }
 
@@ -72,7 +73,8 @@ export default function AdminDashboard() {
     setTab(hashToTab(location.hash))
   }, [location.hash])
 
-  const [tokenNote, setTokenNote] = useState('')
+  const [tokenName, setTokenName] = useState('')
+  const [tokenEmail, setTokenEmail] = useState('')
   const [tokenDays, setTokenDays] = useState(7)
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
@@ -134,12 +136,18 @@ export default function AdminDashboard() {
     },
   })
 
+  const [tokenError, setTokenError] = useState('')
   const createToken = useMutation({
-    mutationFn: () => adminApi.createToken({ note: tokenNote, days: tokenDays }),
+    mutationFn: () => adminApi.createToken({ recipient_name: tokenName, recipient_email: tokenEmail, days: tokenDays }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['admin', 'tokens'] })
-      setTokenNote('')
+      setTokenName('')
+      setTokenEmail('')
       setTokenDays(7)
+      setTokenError('')
+    },
+    onError: (err: any) => {
+      setTokenError(err?.response?.data?.detail || 'Failed to generate invite link.')
     },
   })
 
@@ -148,11 +156,43 @@ export default function AdminDashboard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'tokens'] }),
   })
 
+  const activateWorkspace = useMutation({
+    mutationFn: (wsId: string) => adminApi.activateWorkspace(wsId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'tokens'] }),
+  })
+
   const copyUrl = (url: string, id: string) => {
     navigator.clipboard.writeText(url)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 2000)
   }
+
+  // Banner state
+  const [newBannerMsg, setNewBannerMsg] = useState('')
+
+  const { data: banners = [], refetch: refetchBanners } = useQuery({
+    queryKey: ['admin', 'banners'],
+    queryFn: () => adminApi.listBanners().then(r => r.data),
+    enabled: tab === 'banner',
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  })
+
+  const createBanner = useMutation({
+    mutationFn: (d: any) => adminApi.createBanner(d),
+    onSuccess: () => { refetchBanners(); setNewBannerMsg('') },
+  })
+
+  const toggleBanner = useMutation({
+    mutationFn: ({ id, is_active }: { id: number; is_active: boolean }) =>
+      adminApi.patchBanner(id, { is_active }),
+    onSuccess: () => refetchBanners(),
+  })
+
+  const deleteBanner = useMutation({
+    mutationFn: (id: number) => adminApi.deleteBanner(id),
+    onSuccess: () => refetchBanners(),
+  })
 
   return (
     <AppShell>
@@ -165,7 +205,7 @@ export default function AdminDashboard() {
           <div style={{ fontSize: 13, color: 'var(--muted)' }}>Platform management — staff only</div>
         </div>
         <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['overview', 'workspaces', 'tokens', 'feedback'] as Tab[]).map(t => (
+          {(['overview', 'workspaces', 'tokens', 'feedback', 'banner'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => { navigate('/admin' + (t === 'overview' ? '' : `#${t}`)); setSelectedTicket(null) }}
@@ -179,7 +219,8 @@ export default function AdminDashboard() {
               {t === 'overview' ? 'Overview'
                 : t === 'workspaces' ? `Workspaces${stats ? ` (${stats.workspaces})` : ''}`
                 : t === 'tokens' ? 'Workspace Invites'
-                : 'Feedback'}
+                : t === 'feedback' ? 'Feedback'
+                : 'Maintenance Banner'}
             </button>
           ))}
         </div>
@@ -239,7 +280,11 @@ export default function AdminDashboard() {
                           <div style={{ fontSize: 12, color: 'var(--muted)' }}>{ws.slug}</div>
                         </td>
                         <td><span className={`pill ${PLAN_COLORS[ws.plan] || 'pill-grey'}`}>{ws.plan}</span></td>
-                        <td style={{ fontSize: 13, color: 'var(--muted)' }}>{ws.owner_email || '—'}</td>
+                        <td>
+                          <div style={{ fontSize: 13 }}>{ws.owner_email || '—'}</div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)' }}>{(ws.owner_role || '').replace(/_/g, ' ')}</div>
+                          {ws.owner_last_login && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Last login: {timeAgo(ws.owner_last_login)}</div>}
+                        </td>
                         <td style={{ fontSize: 14 }}>{ws.clients}</td>
                         <td style={{ fontSize: 13, color: '#4a7c59', fontWeight: 600 }}>
                           {ws.revenue > 0 ? `$${Number(ws.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
@@ -251,8 +296,8 @@ export default function AdminDashboard() {
                         </td>
                         <td style={{ fontSize: 13, color: 'var(--muted)' }}>{timeAgo(ws.last_activity)}</td>
                         <td>
-                          <span className={`pill ${ws.is_active ? 'pill-green' : 'pill-grey'}`}>
-                            {ws.is_active ? 'Active' : 'Suspended'}
+                          <span className={`pill ${ws.is_active ? 'pill-green' : ws.pending_activation ? 'pill-gold' : 'pill-grey'}`}>
+                            {ws.is_active ? 'Active' : ws.pending_activation ? 'Pending' : 'Suspended'}
                           </span>
                         </td>
                       </tr>
@@ -295,7 +340,11 @@ export default function AdminDashboard() {
                         <div style={{ fontSize: 12, color: 'var(--muted)' }}>{ws.slug}</div>
                       </td>
                       <td><span className={`pill ${PLAN_COLORS[ws.plan] || 'pill-grey'}`}>{ws.plan}</span></td>
-                      <td style={{ fontSize: 13, color: 'var(--muted)' }}>{ws.owner_email || '—'}</td>
+                      <td>
+                        <div style={{ fontSize: 13 }}>{ws.owner_email || '—'}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{(ws.owner_role || '').replace(/_/g, ' ')}</div>
+                        {ws.owner_last_login && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Last login: {timeAgo(ws.owner_last_login)}</div>}
+                      </td>
                       <td style={{ fontSize: 14 }}>{ws.users}</td>
                       <td style={{ fontSize: 14 }}>{ws.clients}</td>
                       <td style={{ fontSize: 14 }}>{ws.deals}</td>
@@ -338,17 +387,27 @@ export default function AdminDashboard() {
                 Generate a one-time sign-up link for a new coach. When they open the link, they can register their own workspace on CoachOS. The link expires automatically and can only be used once.
               </div>
               <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                <div style={{ flex: '1 1 260px' }}>
-                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 5 }}>Who is this for? (optional note)</label>
+                <div style={{ flex: '1 1 200px' }}>
+                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 5 }}>Owner Name *</label>
                   <input
                     className="form-input"
-                    placeholder="e.g. Sarah Johnson — Executive coaching"
-                    value={tokenNote}
-                    onChange={e => setTokenNote(e.target.value)}
+                    placeholder="e.g. Sarah Johnson"
+                    value={tokenName}
+                    onChange={e => setTokenName(e.target.value)}
                   />
                 </div>
-                <div style={{ flex: '0 0 140px' }}>
-                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 5 }}>Link valid for (days)</label>
+                <div style={{ flex: '1 1 220px' }}>
+                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 5 }}>Owner Email *</label>
+                  <input
+                    className="form-input"
+                    type="email"
+                    placeholder="sarah@example.com"
+                    value={tokenEmail}
+                    onChange={e => setTokenEmail(e.target.value)}
+                  />
+                </div>
+                <div style={{ flex: '0 0 120px' }}>
+                  <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 5 }}>Valid for (days)</label>
                   <input
                     className="form-input"
                     type="number"
@@ -361,11 +420,16 @@ export default function AdminDashboard() {
                 <button
                   className="btn btn-dark"
                   onClick={() => createToken.mutate()}
-                  disabled={createToken.isPending}
+                  disabled={createToken.isPending || !tokenName || !tokenEmail}
                 >
                   {createToken.isPending ? 'Generating…' : 'Generate invite link'}
                 </button>
               </div>
+              {tokenError && (
+                <div style={{ marginTop: 12, fontSize: 13, color: '#c0392b', background: '#fdf4f4', border: '1px solid #e5b4b4', padding: '8px 14px', borderRadius: 4 }}>
+                  {tokenError}
+                </div>
+              )}
             </div>
 
             {tokensLoading ? (
@@ -376,7 +440,8 @@ export default function AdminDashboard() {
               <table className="tbl">
                 <thead>
                   <tr>
-                    <th>For</th>
+                    <th>Name</th>
+                    <th>Email</th>
                     <th>Sign-up link</th>
                     <th>Expires</th>
                     <th>Workspace registered</th>
@@ -387,9 +452,8 @@ export default function AdminDashboard() {
                 <tbody>
                   {(tokens as any[]).map((t: any) => (
                     <tr key={t.id}>
-                      <td style={{ fontSize: 14, color: t.note ? 'var(--ink)' : 'var(--muted)' }}>
-                        {t.note || <em style={{ fontSize: 13 }}>No note</em>}
-                      </td>
+                      <td style={{ fontSize: 13, fontWeight: 500 }}>{t.recipient_name || <em style={{ color: 'var(--muted)', fontWeight: 400 }}>—</em>}</td>
+                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{t.recipient_email || '—'}</td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'monospace', maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -409,14 +473,36 @@ export default function AdminDashboard() {
                       </td>
                       <td style={{ fontSize: 13, color: t.used_by ? 'var(--ink)' : 'var(--muted)' }}>
                         {t.used_by || '—'}
+                        {t.used_by_pending && (
+                          <div style={{ fontSize: 11, color: '#b8922e', fontWeight: 600, marginTop: 2 }}>
+                            ⚠ Awaiting activation
+                          </div>
+                        )}
                       </td>
                       <td>
-                        <span className={`pill ${t.used ? 'pill-grey' : new Date(t.expires_at) < new Date() ? 'pill-red' : 'pill-green'}`}>
-                          {t.used ? 'Used' : new Date(t.expires_at) < new Date() ? 'Expired' : 'Active'}
-                        </span>
+                        {t.used_by_pending ? (
+                          <span className="pill pill-gold">Pending</span>
+                        ) : (
+                          <span className={`pill ${t.used ? 'pill-grey' : new Date(t.expires_at) < new Date() ? 'pill-red' : 'pill-green'}`}>
+                            {t.used ? 'Used' : new Date(t.expires_at) < new Date() ? 'Expired' : 'Active'}
+                          </span>
+                        )}
                       </td>
                       <td>
-                        {!t.used && (
+                        {t.used_by_pending && t.used_by_id ? (
+                          <button
+                            className="btn btn-dark btn-sm"
+                            style={{ fontSize: 12 }}
+                            disabled={activateWorkspace.isPending}
+                            onClick={() => {
+                              if (window.confirm(`Activate workspace "${t.used_by}"? The owner will be able to log in.`)) {
+                                activateWorkspace.mutate(t.used_by_id)
+                              }
+                            }}
+                          >
+                            Activate
+                          </button>
+                        ) : !t.used ? (
                           <button
                             className="btn btn-ghost btn-sm"
                             style={{ color: 'var(--danger, #c0392b)', fontSize: 12 }}
@@ -426,7 +512,7 @@ export default function AdminDashboard() {
                           >
                             Revoke
                           </button>
-                        )}
+                        ) : null}
                       </td>
                     </tr>
                   ))}
@@ -670,6 +756,91 @@ export default function AdminDashboard() {
                 )}
               </div>
             )}
+          </div>
+        )}
+
+        {/* ── Banner tab ────────────────────────────────────── */}
+        {tab === 'banner' && (
+          <div style={{ maxWidth: 660 }}>
+
+            {/* Existing banners */}
+            {(banners as any[]).map((b: any) => (
+              <div key={b.id} className="card" style={{ marginBottom: 14 }}>
+                <div style={{ padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+                  <div style={{ flex: 1 }}>
+                    {b.is_active && (
+                      <div style={{
+                        background: '#7a4e1e', color: '#fff', padding: '10px 14px',
+                        fontSize: 13, lineHeight: 1.6, marginBottom: 10,
+                        borderLeft: '4px solid #f0a854',
+                      }}>
+                        <strong style={{ marginRight: 6 }}>Scheduled Maintenance Notice:</strong>
+                        {b.message}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 13, color: b.is_active ? 'var(--ink)' : 'var(--muted)', lineHeight: 1.5 }}>
+                      {b.is_active ? null : b.message}
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                      Created {new Date(b.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    {/* Toggle */}
+                    <div
+                      onClick={() => toggleBanner.mutate({ id: b.id, is_active: !b.is_active })}
+                      style={{
+                        width: 40, height: 22, borderRadius: 11, cursor: 'pointer', transition: 'background .2s',
+                        background: b.is_active ? '#2d6a4f' : '#ccc', position: 'relative',
+                      }}
+                      title={b.is_active ? 'Disable' : 'Enable'}
+                    >
+                      <div style={{
+                        position: 'absolute', top: 3, left: b.is_active ? 20 : 3,
+                        width: 16, height: 16, borderRadius: '50%', background: '#fff',
+                        transition: 'left .2s', boxShadow: '0 1px 3px rgba(0,0,0,.25)',
+                      }} />
+                    </div>
+                    <span style={{ fontSize: 11, color: b.is_active ? '#2d6a4f' : 'var(--muted)', fontWeight: 600, minWidth: 46 }}>
+                      {b.is_active ? 'Active' : 'Inactive'}
+                    </span>
+                    {/* Delete */}
+                    <button
+                      onClick={() => deleteBanner.mutate(b.id)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 18, lineHeight: 1, padding: '2px 4px' }}
+                      title="Delete"
+                    >×</button>
+                  </div>
+                </div>
+              </div>
+            ))}
+
+            {/* New banner form */}
+            <div className="card">
+              <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, fontWeight: 300 }}>New Maintenance Notice</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>Shown at the top of the login screen when active</div>
+              </div>
+              <div style={{ padding: '20px' }}>
+                <div className="fgroup" style={{ marginBottom: 16 }}>
+                  <label className="flabel">Message</label>
+                  <textarea
+                    className="ftextarea"
+                    rows={4}
+                    value={newBannerMsg}
+                    onChange={e => setNewBannerMsg(e.target.value)}
+                    placeholder="Production rollout is planned from June 10 to June 11. Please avoid using the system to prevent data loss. The system will be back up by 9:00 AM on June 11."
+                  />
+                </div>
+                <button
+                  className="btn btn-dark btn-sm"
+                  disabled={!newBannerMsg.trim() || createBanner.isPending}
+                  onClick={() => createBanner.mutate({ message: newBannerMsg.trim(), is_active: true })}
+                >
+                  {createBanner.isPending ? 'Creating…' : '+ Add & Activate'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
       </div>

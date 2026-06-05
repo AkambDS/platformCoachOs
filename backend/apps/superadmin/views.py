@@ -2,6 +2,7 @@
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework import status as http_status
+from rest_framework.permissions import AllowAny
 from apps.accounts.permissions import IsPlatformAdmin
 from django.utils import timezone
 from datetime import timedelta
@@ -58,7 +59,7 @@ def dashboard(request):
 def workspace_list(request):
     """GET /api/superadmin/workspaces/"""
     from django.db.models import Sum, Count, Q
-    workspaces = Workspace.objects.all().order_by("-created_at")
+    workspaces = Workspace.objects.all().order_by("-pending_activation", "-created_at")
     result = []
     for ws in workspaces:
         user_count    = User.objects.filter(workspace=ws).count()
@@ -76,7 +77,8 @@ def workspace_list(request):
             "name":          ws.name,
             "slug":          ws.slug,
             "plan":          ws.plan,
-            "is_active":     ws.is_active,
+            "is_active":          ws.is_active,
+            "pending_activation": ws.pending_activation,
             "created_at":    ws.created_at.isoformat(),
             "users":         user_count,
             "clients":       client_count,
@@ -85,8 +87,10 @@ def workspace_list(request):
             "revenue":       float(invoice_stats["revenue"] or 0),
             "overdue":       invoice_stats["overdue"] or 0,
             "error_count":   error_count,
-            "last_activity": last_activity.created_at.isoformat() if last_activity else None,
-            "owner_email":   owner.email if owner else None,
+            "last_activity":      last_activity.created_at.isoformat() if last_activity else None,
+            "owner_email":        owner.email if owner else None,
+            "owner_last_login":   owner.last_login.isoformat() if owner and owner.last_login else None,
+            "owner_role":         owner.role if owner else None,
         })
     return Response(result)
 
@@ -107,6 +111,8 @@ def workspace_detail(request, pk):
             ws.plan = request.data["plan"]
         if "is_active" in request.data:
             ws.is_active = bool(request.data["is_active"])
+            if ws.is_active and ws.pending_activation:
+                ws.pending_activation = False
         if "name" in request.data:
             ws.name = request.data["name"]
         ws.save()
@@ -124,7 +130,8 @@ def workspace_detail(request, pk):
         "name":          ws.name,
         "slug":          ws.slug,
         "plan":          ws.plan,
-        "is_active":     ws.is_active,
+        "is_active":          ws.is_active,
+        "pending_activation": ws.pending_activation,
         "created_at":    ws.created_at.isoformat(),
         "updated_at":    ws.updated_at.isoformat(),
         "last_activity": last_activity.created_at.isoformat() if last_activity else None,
@@ -133,6 +140,7 @@ def workspace_detail(request, pk):
         "owner_id":      str(owner.id) if owner else None,
         "owner_joined":  owner.date_joined.isoformat() if owner else None,
         "owner_last_login": owner.last_login.isoformat() if owner and owner.last_login else None,
+        "owner_role":       owner.role if owner else None,
         "stats": {
             "clients":    Client.objects.filter(workspace=ws).count(),
             "deals":      Deal.objects.filter(workspace=ws).count(),
@@ -258,37 +266,115 @@ def registration_tokens(request):
     GET  /api/superadmin/registration-tokens/  — list all tokens
     POST /api/superadmin/registration-tokens/  — create a new one
     """
+    from django.conf import settings as dj_settings
+    frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
+
+    def _fmt(t):
+        return {
+            "id":               str(t.id),
+            "note":             t.note,
+            "recipient_name":   t.recipient_name,
+            "recipient_email":  t.recipient_email,
+            "url":              f"{frontend_url}/register?token={t.id}",
+            "expires_at":       t.expires_at.isoformat(),
+            "used":             t.used,
+            "used_by":          t.used_by.name if t.used_by else None,
+            "used_by_id":       str(t.used_by.id) if t.used_by else None,
+            "used_by_pending":  t.used_by.pending_activation if t.used_by else False,
+            "created_at":       t.created_at.isoformat(),
+        }
+
     if request.method == "POST":
-        note = request.data.get("note", "")
         days = int(request.data.get("days", 7))
+        recipient_name  = request.data.get("recipient_name", "").strip()
+        recipient_email = request.data.get("recipient_email", "").strip()
+
+        if not recipient_name or not recipient_email:
+            return Response({"detail": "Owner name and email are required."}, status=400)
+
+        # Block if this email is already a registered workspace owner.
+        if User.objects.filter(email__iexact=recipient_email, role="business_owner").exists():
+            return Response(
+                {"detail": f"{recipient_email} is already a registered workspace owner. No invite needed."},
+                status=400,
+            )
+
+        # Revoke any existing unused tokens for the same email so old links stop working.
+        WorkspaceRegistrationToken.objects.filter(
+            recipient_email__iexact=recipient_email, used=False
+        ).delete()
+
+        note = recipient_name
         token = WorkspaceRegistrationToken.objects.create(
             created_by=request.user,
             note=note,
+            recipient_name=recipient_name,
+            recipient_email=recipient_email,
             expires_at=timezone.now() + timedelta(days=days),
         )
-        from django.conf import settings as dj_settings
-        frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
-        return Response({
-            "id":         str(token.id),
-            "note":       token.note,
-            "url":        f"{frontend_url}/register?token={token.id}",
-            "expires_at": token.expires_at.isoformat(),
-            "used":       token.used,
-            "created_at": token.created_at.isoformat(),
-        }, status=201)
+
+        # Send the invite email with the registration link.
+        register_url = f"{frontend_url}/register?token={token.id}"
+        expires_str  = token.expires_at.strftime("%B %d, %Y")
+        try:
+            from django.core.mail import EmailMultiAlternatives
+            import logging
+            logger = logging.getLogger(__name__)
+            plain = (
+                f"Hi {recipient_name},\n\n"
+                f"You've been invited to create your coaching workspace on CoachOS.\n\n"
+                f"Click the link below to set up your workspace:\n{register_url}\n\n"
+                f"This link expires on {expires_str} and can only be used once.\n\n"
+                f"If you have any questions, reply to this email."
+            )
+            html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#eeebe5;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
+  <tr><td align="center">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+    <tr><td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+      <span style="font-family:Georgia,serif;font-size:22px;color:#f5f0e8;">CoachOS</span>
+    </td></tr>
+    <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d9b96a,#b8922e);"></td></tr>
+    <tr><td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">
+      <h2 style="margin:0 0 16px;font-size:22px;color:#16130f;">You're invited to CoachOS</h2>
+      <p style="color:#4a443e;line-height:1.6;margin:0 0 24px;">
+        Hi {recipient_name},<br><br>
+        You've been invited to create your coaching workspace on CoachOS — a dedicated platform to manage clients, sessions, invoices, and your pipeline.
+      </p>
+      <div style="text-align:center;margin:0 0 32px;">
+        <a href="{register_url}" style="background:#1B3A6B;color:#fff;padding:14px 32px;
+           text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;display:inline-block;">
+          Set Up My Workspace
+        </a>
+      </div>
+      <p style="color:#8c8279;font-size:13px;margin:0;">
+        This link expires on <strong>{expires_str}</strong> and can only be used once.<br>
+        If you did not expect this invitation, you can safely ignore this email.
+      </p>
+    </td></tr>
+  </table></td></tr>
+</table>
+</body></html>"""
+            msg = EmailMultiAlternatives(
+                subject="You're invited to set up your CoachOS workspace",
+                body=plain,
+                from_email=dj_settings.DEFAULT_FROM_EMAIL,
+                to=[recipient_email],
+            )
+            msg.attach_alternative(html, "text/html")
+            msg.send()
+            logger.info(f"Registration invite sent to {recipient_email}")
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(f"Registration invite email failed for {recipient_email}: {exc}")
+            # Token still created — admin can copy the link manually.
+
+        return Response(_fmt(token), status=201)
 
     tokens = WorkspaceRegistrationToken.objects.all()[:50]
-    from django.conf import settings as dj_settings
-    frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
-    return Response([{
-        "id":         str(t.id),
-        "note":       t.note,
-        "url":        f"{frontend_url}/register?token={t.id}",
-        "expires_at": t.expires_at.isoformat(),
-        "used":       t.used,
-        "used_by":    t.used_by.name if t.used_by else None,
-        "created_at": t.created_at.isoformat(),
-    } for t in tokens])
+    return Response([_fmt(t) for t in tokens])
 
 
 @api_view(["DELETE"])
@@ -593,7 +679,7 @@ def workspace_errors(request, pk):
     except Workspace.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
 
-    logs = ErrorLog.objects.filter(workspace=ws).select_related("user")[:100]
+    logs = ErrorLog.objects.filter(workspace=ws).select_related("user").order_by("-created_at")[:20]
     return Response([{
         "id":         entry.id,
         "severity":   entry.severity,
@@ -788,3 +874,89 @@ def workspace_client_tag_detail(request, pk, tag_pk):
         ser.save()
         return Response(ser.data)
     return Response(ser.errors, status=400)
+
+
+# ── Workspace Audit Log ───────────────────────────────────────────────────────
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def workspace_audit_log(request, pk):
+    """GET /api/superadmin/workspaces/{pk}/audit-log/"""
+    from apps.audit.models import AccessLog
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    logs = (AccessLog.objects
+            .filter(workspace=ws)
+            .order_by("-created_at")[:200])
+    return Response([{
+        "id":          l.id,
+        "user_name":   l.user_name,
+        "client_name": l.client_name,
+        "action":      l.action,
+        "metadata":    l.metadata,
+        "created_at":  l.created_at.isoformat(),
+    } for l in logs])
+
+
+# ── Maintenance Banner ────────────────────────────────────────────────────────
+
+def _banner_data(banner):
+    return {
+        "id":         banner.id,
+        "message":    banner.message,
+        "is_active":  banner.is_active,
+        "created_at": banner.created_at.isoformat(),
+        "updated_at": banner.updated_at.isoformat(),
+    }
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def public_banner(request):
+    """GET /api/system/banner/ — public, no auth. Returns first active banner with content."""
+    from apps.superadmin.models import MaintenanceBanner
+    banner = MaintenanceBanner.objects.filter(is_active=True).exclude(message='').first()
+    if not banner:
+        return Response({"is_active": False, "message": ""})
+    return Response({"is_active": True, "message": banner.message})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformAdmin])
+def admin_banners(request):
+    """GET /api/superadmin/banners/ — list all | POST — create new."""
+    from apps.superadmin.models import MaintenanceBanner
+    if request.method == "POST":
+        msg = (request.data.get("message") or "").strip()
+        if not msg:
+            return Response({"detail": "Message is required."}, status=400)
+        banner = MaintenanceBanner.objects.create(
+            message=msg,
+            is_active=request.data.get("is_active", False),
+        )
+        return Response(_banner_data(banner), status=201)
+    banners = MaintenanceBanner.objects.all()
+    return Response([_banner_data(b) for b in banners])
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsPlatformAdmin])
+def admin_banner_detail(request, pk):
+    """PATCH /api/superadmin/banners/{pk}/ — toggle or edit | DELETE — remove."""
+    from apps.superadmin.models import MaintenanceBanner
+    try:
+        banner = MaintenanceBanner.objects.get(pk=pk)
+    except MaintenanceBanner.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    if request.method == "DELETE":
+        banner.delete()
+        return Response(status=204)
+    if "message" in request.data:
+        banner.message = request.data["message"]
+    if "is_active" in request.data:
+        banner.is_active = bool(request.data["is_active"])
+    banner.save()
+    return Response(_banner_data(banner))

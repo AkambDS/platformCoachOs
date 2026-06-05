@@ -104,9 +104,12 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const clients: any[] = clientsData?.results || clientsData || []
   const [form, setForm] = useState({
     client: '', activity_type: 'session', title: '',
-    start_at: defaultStart || '', end_at: '',
     location: '', notes: '',
   })
+  const [date, setDate]           = useState(defaultStart ? defaultStart.slice(0, 10) : '')
+  const [startTime, setStartTime] = useState(defaultStart ? defaultStart.slice(11, 16) : '')
+  const [endDate, setEndDate]     = useState(defaultStart ? defaultStart.slice(0, 10) : '')
+  const [endTime, setEndTime]     = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
   const [repeat, setRepeat]         = useState<'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly'>('none')
   const [repeatEnd, setRepeatEnd]   = useState<'never'|'date'>('never')
@@ -115,10 +118,20 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const toUTC = (local: string) => local ? new Date(local).toISOString() : local
 
+  const addOneHour = (time: string) => {
+    const [h, m] = time.split(':').map(Number)
+    const next = new Date(2000, 0, 1, h + 1, m)
+    return `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`
+  }
+
   const handleSave = async () => {
-    if (!form.client || !form.title || !form.start_at) return
+    const start_at    = date && startTime ? `${date}T${startTime}` : ''
+    const resolvedEnd = endTime || (startTime ? addOneHour(startTime) : '')
+    const resolvedEndDate = endDate || date
+    const end_at      = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
+    if (!form.client || !form.title || !start_at || !end_at) return
     setSaving(true)
-    const payload: any = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
+    const payload: any = { ...form, start_at: toUTC(start_at), end_at: toUTC(end_at) }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -127,7 +140,13 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation })
       qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved(sendConfirmation)
-    } catch { } finally { setSaving(false) }
+    } catch (err: any) {
+      const detail = err?.response?.data
+      const msg = typeof detail === 'string' ? detail
+        : detail ? Object.values(detail).flat().join(' ')
+        : 'Failed to save. Please try again.'
+      alert(msg)
+    } finally { setSaving(false) }
   }
 
   return (
@@ -160,14 +179,24 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
       </div>
-      <div className="fgrid">
-        <div className="fgroup">
-          <label className="flabel">Start *</label>
-          <input className="finput" type="datetime-local" value={form.start_at} onChange={e => set('start_at', e.target.value)} />
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start date *</label>
+          <input className="finput" type="date" value={date} onChange={e => { setDate(e.target.value); if (!endDate || endDate < e.target.value) setEndDate(e.target.value) }} />
         </div>
-        <div className="fgroup">
-          <label className="flabel">End</label>
-          <input className="finput" type="datetime-local" value={form.end_at} onChange={e => set('end_at', e.target.value)} />
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start time *</label>
+          <input className="finput" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, marginTop: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End date</label>
+          <input className="finput" type="date" value={endDate} min={date} onChange={e => setEndDate(e.target.value)} />
+        </div>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End time</label>
+          <input className="finput" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
         </div>
       </div>
       <div className="fgroup">
@@ -220,7 +249,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
                   type="date"
                   value={repeatUntil}
                   onChange={e => setRepeatUntil(e.target.value)}
-                  min={form.start_at ? form.start_at.slice(0, 10) : undefined}
+                  min={date || undefined}
                   style={{ marginBottom: 0, flex: 1 }}
                 />
               )}
@@ -270,31 +299,45 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     select: (d: any[]) => d.filter(t => t.is_active),
   })
   const clients: any[] = clientsData?.results || clientsData || []
+  const localStart = activity.start_at ? toLocalInput(activity.start_at) : ''
+  const localEnd   = activity.end_at   ? toLocalInput(activity.end_at)   : ''
   const [form, setForm] = useState({
     client: activity.client || '',
     activity_type: activity.activity_type || 'session',
     title: activity.title || '',
-    start_at: activity.start_at ? toLocalInput(activity.start_at) : '',
-    end_at: activity.end_at ? toLocalInput(activity.end_at) : '',
     location: activity.location || '',
     notes: activity.notes || '',
   })
+  const [date, setDate]           = useState(localStart.slice(0, 10))
+  const [startTime, setStartTime] = useState(localStart.slice(11, 16))
+  const [endDate, setEndDate]     = useState(localEnd.slice(0, 10) || localStart.slice(0, 10))
+  const [endTime, setEndTime]     = useState(localEnd.slice(11, 16))
   const isInSeries = !!activity.recurrence_id
   const [repeat, setRepeat]           = useState<'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly'>(parseRrule(activity.rrule || ''))
-  const [repeatEnd, setRepeatEnd]     = useState<'never'|'date'>('never')
-  const [repeatUntil, setRepeatUntil] = useState('')
+  const [repeatEnd, setRepeatEnd]     = useState<'never'|'date'>(activity.repeat_until ? 'date' : 'never')
+  const [repeatUntil, setRepeatUntil] = useState(activity.repeat_until ? activity.repeat_until.slice(0, 10) : '')
   const [editScope, setEditScope]     = useState<'this'|'all'>(isInSeries ? 'this' : 'this')
   const [saving, setSaving]   = useState(false)
   const [saveError, setSaveError] = useState('')
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const toUTC = (local: string) => local ? new Date(local).toISOString() : local
 
+  const addOneHour = (time: string) => {
+    const [h, m] = time.split(':').map(Number)
+    const next = new Date(2000, 0, 1, h + 1, m)
+    return `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`
+  }
+
   const handleSave = async () => {
+    const start_at        = date && startTime ? `${date}T${startTime}` : ''
+    const resolvedEnd     = endTime || (startTime ? addOneHour(startTime) : '')
+    const resolvedEndDate = endDate || date
+    const end_at          = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     setSaving(true); setSaveError('')
     const payload: any = {
       ...form,
-      start_at: toUTC(form.start_at),
-      end_at: form.end_at ? toUTC(form.end_at) : form.end_at,
+      start_at: toUTC(start_at),
+      end_at: toUTC(end_at),
       repeat,
       repeat_until: (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null,
       edit_scope: isInSeries ? editScope : 'this',
@@ -336,9 +379,25 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
         </div>
       </div>
       <div className="fgroup"><label className="flabel">Title</label><input className="finput" value={form.title} onChange={e => set('title', e.target.value)} /></div>
-      <div className="fgrid">
-        <div className="fgroup"><label className="flabel">Start</label><input className="finput" type="datetime-local" value={form.start_at} onChange={e => set('start_at', e.target.value)} /></div>
-        <div className="fgroup"><label className="flabel">End</label><input className="finput" type="datetime-local" value={form.end_at} onChange={e => set('end_at', e.target.value)} /></div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start date</label>
+          <input className="finput" type="date" value={date} onChange={e => { setDate(e.target.value); if (!endDate || endDate < e.target.value) setEndDate(e.target.value) }} />
+        </div>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start time</label>
+          <input className="finput" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+        </div>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, marginTop: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End date</label>
+          <input className="finput" type="date" value={endDate} min={date} onChange={e => setEndDate(e.target.value)} />
+        </div>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End time</label>
+          <input className="finput" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+        </div>
       </div>
       <div className="fgroup"><label className="flabel">Location / Link</label><input className="finput" value={form.location} onChange={e => set('location', e.target.value)} /></div>
       <div className="fgroup"><label className="flabel">Notes (internal)</label><textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} /></div>
@@ -376,7 +435,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
               {repeatEnd === 'date' && (
                 <input className="finput" type="date" value={repeatUntil}
                   onChange={e => setRepeatUntil(e.target.value)}
-                  min={form.start_at ? form.start_at.slice(0, 10) : undefined}
+                  min={date || undefined}
                   style={{ marginBottom: 0, flex: 1 }} />
               )}
             </div>

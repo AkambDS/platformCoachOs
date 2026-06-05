@@ -10,6 +10,21 @@ from .models import User, Workspace, WorkspaceInvitation
 
 class CoachOSTokenObtainPairSerializer(TokenObtainPairSerializer):
     """Adds workspace_id, role, full_name to JWT payload."""
+
+    def validate(self, attrs):
+        data = super().validate(attrs)
+        user = self.user
+        if (
+            user.workspace
+            and not user.workspace.is_active
+            and user.role != "platform_admin"
+        ):
+            raise serializers.ValidationError(
+                "Your workspace is not yet active. "
+                "Please contact your administrator for access."
+            )
+        return data
+
     @classmethod
     def get_token(cls, user):
         token = super().get_token(user)
@@ -48,15 +63,27 @@ class RegisterWorkspaceSerializer(serializers.Serializer):
             raise serializers.ValidationError("An account with this email already exists.")
         return value
 
+    def validate(self, attrs):
+        name = attrs.get("workspace_name", "")
+        if Workspace.objects.filter(name__iexact=name).exists():
+            raise serializers.ValidationError(
+                {"workspace_name": "A workspace with this name already exists. Please choose a different name."}
+            )
+        return attrs
+
     def create(self, validated_data):
         from django.utils.text import slugify
+        is_active = validated_data.pop("is_active", True)
         slug = slugify(validated_data["workspace_name"])
         if Workspace.objects.filter(slug=slug).exists():
             slug = f"{slug}-{str(uuid.uuid4())[:8]}"
 
         workspace = Workspace.objects.create(
             name=validated_data["workspace_name"],
+            owner_email=validated_data["email"],
             slug=slug,
+            is_active=is_active,
+            pending_activation=not is_active,
         )
         user = User.objects.create_user(
             email=validated_data["email"],

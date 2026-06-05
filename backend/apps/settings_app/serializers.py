@@ -26,7 +26,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         fields = ["id", "name", "timezone", "workspace_timezone",
                   "buffer_minutes", "cancellation_hours",
                   "primary_colour", "logo_s3_key", "logo_data", "email_templates"]
-        read_only_fields = ["id"]
+        read_only_fields = ["id", "name"]
         extra_kwargs = {"workspace_timezone": {"required": False}}
 
 

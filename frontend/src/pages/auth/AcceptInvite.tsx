@@ -25,12 +25,9 @@ export default function AcceptInvite() {
 
     setLoading(true)
     try {
-      const { data } = await authApi.acceptInvite({ token, full_name: form.full_name, password: form.password })
-      // Store tokens then fetch workspace via /me/
-      localStorage.setItem("access_token", data.access)
-      localStorage.setItem("refresh_token", data.refresh)
+      await authApi.acceptInvite({ token, full_name: form.full_name, password: form.password })
       const me = await authApi.me()
-      login({ access: data.access, refresh: data.refresh }, me.data.user, me.data.workspace)
+      login(me.data.user, me.data.workspace)
       navigate("/dashboard")
     } catch (err: any) {
       const d = err.response?.data

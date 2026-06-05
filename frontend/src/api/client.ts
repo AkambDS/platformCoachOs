@@ -1,12 +1,10 @@
 import axios from 'axios'
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || ''
-export const api = axios.create({ baseURL: BASE_URL, headers: { 'Content-Type': 'application/json' } })
-
-api.interceptors.request.use((config) => {
-  const token = sessionStorage.getItem('access_token')
-  if (token) config.headers.Authorization = `Bearer ${token}`
-  return config
+export const api = axios.create({
+  baseURL: BASE_URL,
+  headers: { 'Content-Type': 'application/json' },
+  withCredentials: true,   // send httpOnly auth cookies on every request
 })
 
 api.interceptors.response.use((res) => res, async (error) => {
@@ -14,21 +12,14 @@ api.interceptors.response.use((res) => res, async (error) => {
   if (error.response?.status === 401 && !original._retry) {
     original._retry = true
     try {
-      const refresh = sessionStorage.getItem('refresh_token')
-      if (!refresh) throw new Error('No refresh token')
-      const { data } = await axios.post(`${BASE_URL}/api/auth/refresh/`, { refresh })
-      sessionStorage.setItem('access_token', data.access)
-      sessionStorage.setItem('refresh_token', data.refresh)
-      original.headers.Authorization = `Bearer ${data.access}`
+      // refresh_token cookie is sent automatically — no body needed
+      await axios.post(`${BASE_URL}/api/auth/refresh/`, {}, { withCredentials: true })
       return api(original)
     } catch (refreshError: any) {
       // Only force logout if the refresh endpoint explicitly rejected the token (401/403).
-      // Network errors or 5xx (server restart, throttle) should NOT log the user out —
-      // their token is still valid and will work once the server recovers.
+      // Network errors or 5xx (server restart, throttle) should NOT log the user out.
       const status = refreshError?.response?.status
       if (!status || status === 401 || status === 403) {
-        sessionStorage.removeItem('access_token')
-        sessionStorage.removeItem('refresh_token')
         import('../lib/queryClient').then(({ queryClient }) => queryClient.clear())
         window.location.href = '/login'
       }
@@ -49,6 +40,7 @@ export const authApi = {
   acceptInvite:          (d: any) => api.post('/api/auth/accept-invite/', d),
   passwordResetRequest:  (d: any) => api.post('/api/auth/password-reset/', d),
   passwordResetConfirm:  (d: any) => api.post('/api/auth/password-reset/confirm/', d),
+  tokenInfo:             (token: string) => api.get('/api/auth/token-info/', { params: { token } }),
   team:               ()                   => api.get('/api/auth/team/'),
   updateMember:       (id: string, d: any) => api.patch(`/api/auth/team/${id}/`, d),
   deleteMember:       (id: string)         => api.delete(`/api/auth/team/${id}/`),
@@ -142,6 +134,9 @@ export const reportsApi = {
   outstanding: ()             => api.get('/api/reports/outstanding/'),
   exportCsv:   ()             => api.get('/api/reports/export.csv', { responseType: 'blob' }),
 }
+export const systemApi = {
+  banner: () => api.get('/api/system/banner/'),
+}
 export const adminApi = {
   dashboard:       ()                       => api.get('/api/superadmin/dashboard/'),
   workspaces:      ()                       => api.get('/api/superadmin/workspaces/'),
@@ -150,15 +145,21 @@ export const adminApi = {
   workspaceUsers:  (id: string)             => api.get(`/api/superadmin/workspaces/${id}/users/`),
   workspaceActivity: (id: string)           => api.get(`/api/superadmin/workspaces/${id}/activity/`),
   workspaceErrors:   (id: string)           => api.get(`/api/superadmin/workspaces/${id}/errors/`),
+  workspaceAuditLog: (id: string)           => api.get(`/api/superadmin/workspaces/${id}/audit-log/`),
   pipelineStages:  (id: string)             => api.get(`/api/superadmin/workspaces/${id}/pipeline-stages/`),
   savePipelineStages: (id: string, d: any)  => api.put(`/api/superadmin/workspaces/${id}/pipeline-stages/`, d),
   tokens:          ()                       => api.get('/api/superadmin/registration-tokens/'),
   createToken:     (d: any)                 => api.post('/api/superadmin/registration-tokens/', d),
   deleteToken:     (id: string)             => api.delete(`/api/superadmin/registration-tokens/${id}/`),
+  activateWorkspace: (id: string)           => api.patch(`/api/superadmin/workspaces/${id}/`, { is_active: true }),
   feedbackList:    (p?: any)               => api.get('/api/superadmin/feedback/', { params: p }),
   feedbackDetail:  (id: string)            => api.get(`/api/superadmin/feedback/${id}/`),
   feedbackPatch:   (id: string, d: any)    => api.patch(`/api/superadmin/feedback/${id}/`, d),
   feedbackComment:     (id: string, text: string) => api.post(`/api/superadmin/feedback/${id}/comment/`, { text }),
+  listBanners:         ()                       => api.get('/api/superadmin/banners/'),
+  createBanner:        (d: any)                 => api.post('/api/superadmin/banners/', d),
+  patchBanner:         (id: number, d: any)     => api.patch(`/api/superadmin/banners/${id}/`, d),
+  deleteBanner:        (id: number)             => api.delete(`/api/superadmin/banners/${id}/`),
   resetUserPassword:   (wsId: string, userId: string) => api.post(`/api/superadmin/workspaces/${wsId}/reset-password/`, { user_id: userId }),
   setUserPassword:     (wsId: string, userId: string, password: string) => api.post(`/api/superadmin/workspaces/${wsId}/users/${userId}/set-password/`, { password }),
   workspaceInvoices:    (id: string)             => api.get(`/api/superadmin/workspaces/${id}/invoices/`),
@@ -184,6 +185,9 @@ export const libraryApi = {
   folders:      ()                   => api.get('/api/library/folders/'),
   createFolder: (d: any)             => api.post('/api/library/folders/', d),
   deleteFolder: (id: string)         => api.delete(`/api/library/folders/${id}/`),
+}
+export const auditApi = {
+  list: (p?: any) => api.get('/api/audit/', { params: p }),
 }
 export const feedbackApi = {
   list:         (p?: any)            => api.get('/api/feedback/', { params: p }),

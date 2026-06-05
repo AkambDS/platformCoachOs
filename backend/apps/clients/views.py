@@ -20,6 +20,35 @@ from .serializers import (ClientListSerializer, ClientDetailSerializer,
 from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser
 
 
+def _log(request, client, action, **metadata):
+    """Fire-and-forget audit log write."""
+    try:
+        from apps.audit.models import AccessLog
+        AccessLog.objects.create(
+            workspace=request.user.workspace,
+            user=request.user,
+            user_name=request.user.full_name,
+            client_id=client.pk if client else None,
+            client_name=client.full_name if client else "",
+            action=action,
+            metadata=metadata or {},
+        )
+    except Exception:
+        pass
+
+
+def _client_qs(request):
+    """Return the base Client queryset scoped to the requesting user.
+
+    business_owner → all workspace clients
+    coach / assistant → only clients where client.coach == request.user
+    """
+    qs = Client.objects.filter(workspace=request.user.workspace)
+    if request.user.role != "business_owner":
+        qs = qs.filter(coach=request.user)
+    return qs
+
+
 class ClientViewSet(viewsets.ModelViewSet):
     """
     GET    /api/clients/         — list (filterable by tags, active_flag, coach)
@@ -32,8 +61,9 @@ class ClientViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAssistantOrAbove]
 
     def get_permissions(self):
-        # Assistants can only read — all writes require Coach+
-        if self.action in ("create", "update", "partial_update", "destroy", "csv_import", "csv_export"):
+        if self.action == "destroy":
+            return [IsBusinessOwnerOrSuperuser()]
+        if self.action in ("create", "update", "partial_update", "csv_import", "csv_export"):
             return [IsCoachOrAbove()]
         return [IsAssistantOrAbove()]
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
@@ -44,7 +74,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from apps.activities.models import Activity
-        qs = Client.objects.filter(workspace=self.request.user.workspace).select_related("coach")
+        qs = _client_qs(self.request).select_related("coach")
         tags = self.request.query_params.getlist("tag")
         if tags:
             qs = qs.filter(tags__contains=tags)
@@ -56,6 +86,14 @@ class ClientViewSet(viewsets.ModelViewSet):
             )
         return qs
 
+    def perform_destroy(self, instance):
+        from apps.invoicing.models import Invoice, Payment
+        # Payment.invoice is PROTECT; Invoice.client is PROTECT — delete in order
+        invoice_ids = Invoice.objects.filter(client=instance).values_list("id", flat=True)
+        Payment.objects.filter(invoice_id__in=invoice_ids).delete()
+        Invoice.objects.filter(client=instance).delete()
+        instance.delete()
+
     def get_serializer_class(self):
         if self.action == "list":
             return ClientListSerializer
@@ -65,9 +103,10 @@ class ClientViewSet(viewsets.ModelViewSet):
         if not self.request.user.workspace_id:
             from rest_framework.exceptions import ValidationError
             raise ValidationError({"detail": "Your account is not linked to a workspace. Contact your administrator."})
+        coach = serializer.validated_data.get('coach') or self.request.user
         serializer.save(
             workspace=self.request.user.workspace,
-            coach=self.request.user,
+            coach=coach,
         )
 
     @action(detail=False, methods=["get"], url_path="export")
@@ -81,7 +120,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
         def rows():
             yield ",".join(fields) + "\r\n"
-            for c in Client.objects.filter(workspace=request.user.workspace).order_by("last_name"):
+            for c in _client_qs(request).order_by("last_name"):
                 row = [
                     c.first_name, c.last_name, c.email, c.phone or "",
                     c.company or "", c.job_title or "",
@@ -153,17 +192,34 @@ class ClientNoteViewSet(viewsets.ModelViewSet):
     serializer_class   = ClientNoteSerializer
     permission_classes = [IsCoachOrAbove]
 
+    def _get_client(self):
+        return get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
+
     def get_queryset(self):
         return ClientNote.objects.filter(
             workspace=self.request.user.workspace,
             client_id=self.kwargs["client_pk"],
+            client__in=_client_qs(self.request),
         )
 
+    def list(self, request, *args, **kwargs):
+        client = self._get_client()
+        _log(request, client, "viewed_notes")
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
-        client = get_object_or_404(Client, pk=self.kwargs["client_pk"],
-                                   workspace=self.request.user.workspace)
+        client = self._get_client()
         serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)
+        _log(self.request, client, "created_note")
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        _log(self.request, instance.client, "updated_note")
+
+    def perform_destroy(self, instance):
+        _log(self.request, instance.client, "deleted_note")
+        instance.delete()
 
 
 class AssessmentViewSet(viewsets.ModelViewSet):
@@ -176,17 +232,34 @@ class AssessmentViewSet(viewsets.ModelViewSet):
             return [IsBusinessOwnerOrSuperuser()]
         return [IsAssistantOrAbove()]
 
+    def _get_client(self):
+        return get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
+
     def get_queryset(self):
         return Assessment.objects.filter(
             workspace=self.request.user.workspace,
             client_id=self.kwargs["client_pk"],
+            client__in=_client_qs(self.request),
         )
 
+    def list(self, request, *args, **kwargs):
+        client = self._get_client()
+        _log(request, client, "viewed_assessments")
+        return super().list(request, *args, **kwargs)
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        _log(request, instance.client, "downloaded_file", file_name=instance.file_name)
+        return super().retrieve(request, *args, **kwargs)
+
     def perform_create(self, serializer):
-        client = get_object_or_404(Client, pk=self.kwargs["client_pk"],
-                                   workspace=self.request.user.workspace)
+        client = self._get_client()
         serializer.save(workspace=self.request.user.workspace,
                         client=client, uploaded_by=self.request.user)
+
+    def perform_destroy(self, instance):
+        _log(self.request, instance.client, "deleted_file", file_name=instance.file_name)
+        instance.delete()
 
     @action(detail=False, methods=["post"], url_path="upload",
             parser_classes=[MultiPartParser])
@@ -208,7 +281,7 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({"detail": str(e)}, status=500)
 
-        client = get_object_or_404(Client, pk=client_pk, workspace=request.user.workspace)
+        client = get_object_or_404(_client_qs(request), pk=client_pk)
         obj    = Assessment.objects.create(
             workspace=request.user.workspace,
             client=client,
@@ -219,6 +292,7 @@ class AssessmentViewSet(viewsets.ModelViewSet):
             file_name=file.name,
             visible_to_client=visible,
         )
+        _log(request, client, "uploaded_file", file_name=file.name)
         return Response(AssessmentSerializer(obj, context={"request": request}).data,
                         status=201)
 
@@ -231,10 +305,15 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
         return ClientGoal.objects.filter(
             workspace=self.request.user.workspace,
             client_id=self.kwargs["client_pk"],
+            client__in=_client_qs(self.request),
         )
 
+    def list(self, request, *args, **kwargs):
+        client = get_object_or_404(_client_qs(request), pk=self.kwargs["client_pk"])
+        _log(request, client, "viewed_goals")
+        return super().list(request, *args, **kwargs)
+
     def perform_create(self, serializer):
-        client = Client.objects.get(pk=self.kwargs["client_pk"],
-                                    workspace=self.request.user.workspace)
+        client = get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
         serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)

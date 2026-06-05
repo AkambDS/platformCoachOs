@@ -16,7 +16,8 @@ class Workspace(models.Model):
         ENTERPRISE = "enterprise", "Enterprise"
 
     id                 = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    name               = models.CharField(max_length=200)
+    name               = models.CharField(max_length=200, unique=True)
+    owner_email        = models.EmailField(blank=True)
     slug               = models.SlugField(unique=True, max_length=80)
     plan               = models.CharField(max_length=20, choices=Plan.choices, default=Plan.TRIAL)
     stripe_customer_id = models.CharField(max_length=100, blank=True)
@@ -29,6 +30,7 @@ class Workspace(models.Model):
     buffer_minutes     = models.PositiveSmallIntegerField(default=15)
     cancellation_hours = models.PositiveSmallIntegerField(default=48)
     is_active          = models.BooleanField(default=True)
+    pending_activation = models.BooleanField(default=False)
     # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice
     # Each entry: {subject, intro, closing}
     email_templates    = models.JSONField(default=dict, blank=True)
@@ -134,10 +136,12 @@ class WorkspaceInvitation(models.Model):
 
 class WorkspaceRegistrationToken(models.Model):
     """One-time link a superuser can generate to let someone register a new workspace."""
-    id         = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
-    note       = models.CharField(max_length=200, blank=True)
-    used       = models.BooleanField(default=False)
+    id               = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    created_by       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    note             = models.CharField(max_length=200, blank=True)
+    recipient_name   = models.CharField(max_length=200, blank=True)
+    recipient_email  = models.EmailField(blank=True)
+    used             = models.BooleanField(default=False)
     used_by    = models.ForeignKey(
         Workspace, on_delete=models.SET_NULL, null=True, blank=True, related_name="+"
     )

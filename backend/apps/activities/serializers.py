@@ -42,8 +42,10 @@ def _generate_series(parent: Activity, repeat: str, repeat_until):
     rrule_str  = _RRULE_MAP[repeat]
     duration   = (parent.end_at - parent.start_at) if parent.end_at else None
 
-    # Store rrule on parent and mark it as its own series root
-    Activity.objects.filter(pk=parent.pk).update(rrule=rrule_str, recurrence_id=parent.pk)
+    # Store rrule and repeat_until on parent, mark it as its own series root
+    Activity.objects.filter(pk=parent.pk).update(
+        rrule=rrule_str, recurrence_id=parent.pk, repeat_until=repeat_until or None
+    )
 
     if repeat_until:
         end_date = (repeat_until if isinstance(repeat_until, datetime.date)
@@ -91,7 +93,7 @@ class ActivitySerializer(serializers.ModelSerializer):
         choices=['none', 'daily', 'weekly', 'biweekly', 'monthly', 'yearly'],
         write_only=True, required=False, allow_null=True,
     )
-    repeat_until = serializers.DateField(write_only=True, required=False, allow_null=True)
+    repeat_until = serializers.DateField(required=False, allow_null=True)
     # Series edit scope
     edit_scope   = serializers.ChoiceField(
         choices=['this', 'all'],
@@ -101,7 +103,7 @@ class ActivitySerializer(serializers.ModelSerializer):
     class Meta:
         model  = Activity
         fields = ["id", "activity_type", "title", "status", "start_at", "end_at",
-                  "location", "notes", "rrule", "recurrence_id",
+                  "location", "meeting_link", "notes", "rrule", "recurrence_id",
                   "google_cal_uid", "client", "client_name", "coach", "coach_name",
                   "deal", "edit_history", "created_at", "send_confirmation", "send_update",
                   "repeat", "repeat_until", "edit_scope",

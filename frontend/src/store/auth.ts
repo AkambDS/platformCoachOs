@@ -6,7 +6,7 @@ interface AuthState {
   user: User | null
   workspace: any | null
   isAuthenticated: boolean
-  login: (tokens: { access: string; refresh: string }, user: User, workspace: any) => void
+  login: (user: User, workspace: any) => void
   rehydrate: (user: User, workspace: any) => void
   logout: () => void
 }
@@ -18,16 +18,16 @@ function loadWorkspace(): any | null {
   try { return JSON.parse(sessionStorage.getItem('workspace') || 'null') } catch { return null }
 }
 
-export const useAuthStore = create<AuthState>((set) => ({
-  user:            loadUser(),
-  workspace:       loadWorkspace(),
-  isAuthenticated: !!sessionStorage.getItem('access_token'),
+const _user = loadUser()
 
-  login: (tokens, user, workspace) => {
-    sessionStorage.setItem('access_token',  tokens.access)
-    sessionStorage.setItem('refresh_token', tokens.refresh)
-    sessionStorage.setItem('user',          JSON.stringify(user))
-    sessionStorage.setItem('workspace',     JSON.stringify(workspace))
+export const useAuthStore = create<AuthState>((set) => ({
+  user:            _user,
+  workspace:       loadWorkspace(),
+  isAuthenticated: !!_user,   // presence of cached user = was logged in; cookie validates actual session
+
+  login: (user, workspace) => {
+    sessionStorage.setItem('user',      JSON.stringify(user))
+    sessionStorage.setItem('workspace', JSON.stringify(workspace))
     set({ user, workspace, isAuthenticated: true })
   },
 
@@ -38,8 +38,8 @@ export const useAuthStore = create<AuthState>((set) => ({
   },
 
   logout: () => {
-    sessionStorage.removeItem('access_token')
-    sessionStorage.removeItem('refresh_token')
+    sessionStorage.removeItem('user')
+    sessionStorage.removeItem('workspace')
     set({ user: null, workspace: null, isAuthenticated: false })
   },
 }))

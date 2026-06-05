@@ -208,6 +208,23 @@ React SPA runs client-side — server logs don't capture JS errors.
 
 ---
 
+## TODO — Pending Deployment (next 2-3 days)
+
+Run `make deploy` on EC2 — migrations apply automatically on container start.
+
+| Migration | App | What it adds |
+|---|---|---|
+| `0006_clientstatusconfig_client_status.py` | `clients` | ClientStatusConfig model + status field on Client |
+| `0007_clienttagconfig.py` | `clients` | ClientTagConfig model |
+| `0009_activity_repeat_until.py` | `activities` | `repeat_until` DateField on Activity (fixes repeat end-date editing) |
+
+**After deploy — verify:**
+- [ ] Settings → Client Statuses and Client Tags tabs work
+- [ ] Calendar → Schedule Activity → Repeat with "On Date" saves and restores correctly on edit
+- [ ] Admin portal → workspace statuses/tags tabs work
+
+---
+
 ## Important Gotchas
 
 | Issue | Cause | Fix |

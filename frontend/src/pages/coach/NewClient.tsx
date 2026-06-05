@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, settingsApi } from '../../api/client'
+import { clientsApi, settingsApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { useToast } from '../../components/ui'
 
@@ -24,10 +24,19 @@ export default function NewClient() {
     staleTime: 0,
   })
 
+  const { data: teamMembers = [] } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+    staleTime: 60_000,
+  })
+
   const [form, setForm] = useState({
     first_name: '', last_name: '', email: '', phone: '',
     company: '', job_title: '', lead_source: '', birth_date: '',
     notes: '', tags: [] as string[], status: 'Lead', create_deal: true,
+    lead_source_other: '',
+    address: '', state: '', zip: '',
+    coach: '',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -40,9 +49,18 @@ export default function NewClient() {
     if (!form.first_name || !form.email) { setError('First name and email are required'); return }
     setSaving(true); setError('')
     try {
+      const { lead_source_other, address, state, zip, coach, ...rest } = form
+      const merged: any = {
+        ...rest,
+        lead_source: form.lead_source === 'other' ? (lead_source_other.trim() || 'other') : form.lead_source,
+        ...(coach ? { coach } : {}),
+      }
+      if (address || state || zip) {
+        merged.primary_address = { street: address, state, zip }
+      }
       // Strip empty strings from optional fields so Django doesn't reject them
       const payload = Object.fromEntries(
-        Object.entries(form).filter(([, v]) => v !== '')
+        Object.entries(merged).filter(([, v]) => v !== '')
       )
       const res = await clientsApi.create(payload)
       qc.invalidateQueries({ queryKey: ['clients'] })
@@ -150,6 +168,15 @@ export default function NewClient() {
                     <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
                   ))}
                 </select>
+                {form.lead_source === 'other' && (
+                  <input
+                    className="finput"
+                    style={{ marginTop: 8 }}
+                    placeholder="Please specify…"
+                    value={form.lead_source_other}
+                    onChange={e => set('lead_source_other', e.target.value)}
+                  />
+                )}
               </div>
               <div className="fgroup">
                 <label className="flabel">Birth Date</label>
@@ -158,10 +185,42 @@ export default function NewClient() {
             </div>
           </div>
 
+          {/* ADDRESS */}
+          <div style={{ padding: '28px 28px 24px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.15em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 22 }}>
+              Address
+            </div>
+            <div className="fgrid">
+              <div className="fgroup" style={{ gridColumn: '1 / -1' }}>
+                <label className="flabel">Street Address</label>
+                <input className="finput" value={form.address} onChange={e => set('address', e.target.value)} placeholder="123 Main St" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">State</label>
+                <input className="finput" value={form.state} onChange={e => set('state', e.target.value)} placeholder="New York" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Zip Code</label>
+                <input className="finput" value={form.zip} onChange={e => set('zip', e.target.value)} placeholder="10001" />
+              </div>
+            </div>
+          </div>
+
           {/* COACH & TAGS */}
           <div style={{ padding: '28px 28px 24px', borderTop: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.15em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 22 }}>
               Coach & Tags
+            </div>
+            <div className="fgroup" style={{ marginBottom: 20 }}>
+              <label className="flabel">Assign Coach</label>
+              <select className="fselect" value={form.coach} onChange={e => set('coach', e.target.value)}>
+                <option value="">— Assign to me (default) —</option>
+                {(teamMembers as any[])
+                  .filter((m: any) => m.role === 'coach' || m.role === 'business_owner')
+                  .map((m: any) => (
+                    <option key={m.id} value={m.id}>{m.full_name} ({m.role.replace(/_/g, ' ')})</option>
+                  ))}
+              </select>
             </div>
             <div className="fgroup" style={{ marginBottom: 20 }}>
               <label className="flabel">Tags</label>

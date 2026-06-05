@@ -18,9 +18,12 @@ urlpatterns = [
     path("workspaces/<str:pk>/client-statuses/<int:status_pk>/",      views.workspace_client_status_detail),
     path("workspaces/<str:pk>/client-tags/",                          views.workspace_client_tags),
     path("workspaces/<str:pk>/client-tags/<int:tag_pk>/",             views.workspace_client_tag_detail),
+    path("workspaces/<str:pk>/audit-log/",                            views.workspace_audit_log),
     path("registration-tokens/",                  views.registration_tokens),
     path("registration-tokens/<str:pk>/",         views.registration_token_detail),
     path("feedback/",                             views.feedback_list),
     path("feedback/<str:pk>/",                    views.feedback_detail),
     path("feedback/<str:pk>/comment/",            views.feedback_comment),
+    path("banners/",                              views.admin_banners),
+    path("banners/<int:pk>/",                     views.admin_banner_detail),
 ]

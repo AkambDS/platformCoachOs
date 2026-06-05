@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { useAuthStore } from '../../store/auth'
 
 const GOAL_STATUSES  = ['active','completed','paused']
 
@@ -707,12 +708,16 @@ export default function ClientDetail() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { show: showToast, el: toastEl } = useToast()
+  const { user } = useAuthStore()
+  const isOwner = user?.role === 'business_owner'
   const [tab, setTab] = useState('Overview')
   const [showActivity, setShowActivity] = useState(false)
   const [showGoal, setShowGoal]       = useState(false)
   const [editingGoal, setEditingGoal] = useState<any>(null)
   const [editMode, setEditMode] = useState(false)
   const [editForm, setEditForm] = useState<Client | null>(null)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const { data: client, isLoading } = useQuery<Client, Error>({
     queryKey: ['client', id],
@@ -806,6 +811,19 @@ export default function ClientDetail() {
     } catch { showToast('Failed to save', 'error') }
   }
 
+  const handleDelete = async () => {
+    setDeleting(true)
+    try {
+      await clientsApi.delete(id!)
+      qc.invalidateQueries({ queryKey: ['clients'] })
+      navigate('/clients')
+    } catch {
+      showToast('Failed to delete client', 'error')
+      setDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }
+
   const handleMarkMissed = async (actId: string) => {
     try {
       await activitiesApi.markMissed(actId)
@@ -827,9 +845,6 @@ export default function ClientDetail() {
     if (status === 'missed' || status === 'cancelled') return '#c0392b'
     return 'var(--gold)'
   }
-
-  const goalStatusLabel = (s: string) =>
-    s === 'active' ? 'In Progress' : s === 'completed' ? 'Completed' : 'Paused'
 
   // useMemo must be called before any conditional returns (Rules of Hooks)
   const timeline = useMemo(() => {
@@ -913,6 +928,13 @@ export default function ClientDetail() {
                     {client.portal_access ? 'Revoke Portal' : 'Invite to Portal'}
                   </button>
                   <button className="btn btn-outline btn-sm" onClick={() => { setEditForm(client); setEditMode(true) }}>Edit</button>
+                  {isOwner && (
+                    <button
+                      className="btn btn-sm"
+                      onClick={() => setShowDeleteConfirm(true)}
+                      style={{ border: '1px solid #e5b4b4', color: '#c0392b', background: '#fdf4f4' }}
+                    >Delete</button>
+                  )}
                 </>
               )}
               <button className="btn btn-dark btn-sm" onClick={() => setShowActivity(true)}>+ Schedule Session</button>
@@ -940,81 +962,215 @@ export default function ClientDetail() {
 
         {/* ── Overview ── */}
         {tab === 'Overview' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 272px', gap: 20, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
 
-            {/* ── Left column ── */}
+            {/* ── Left column — Client Details + Invoices ── */}
             <div>
-              {/* GOALS & COMMITMENTS */}
+
+              {/* CLIENT DETAILS */}
               <div className="card" style={{ marginBottom: 16 }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '14px 20px',
-                  borderBottom: goalList.length > 0 ? '1px solid var(--border)' : 'none',
-                }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                    Goals & Commitments
-                  </span>
-                  <button
-                    onClick={() => setShowGoal(true)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}
-                  >+ Add Goal</button>
-                </div>
-                <div>
-                  {goalList.length === 0 ? (
-                    <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>
-                      No goals set yet.{' '}
-                      <button onClick={() => setShowGoal(true)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0 }}>
-                        Add the first goal →
-                      </button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Client Details</span>
+                  {!editMode ? (
+                    <button onClick={() => { setEditForm(client); setEditMode(true) }}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
+                      Edit
+                    </button>
+                  ) : (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
+                      <button className="btn btn-dark btn-sm" onClick={handleSave}>Save</button>
                     </div>
-                  ) : goalList.map((g: any, i: number) => {
-                    const statusPill = g.status === 'completed' ? 'pill-green'
-                      : g.status === 'paused' ? 'pill-grey' : 'pill-gold'
-                    return (
-                      <div key={g.id} style={{
-                        padding: '18px 20px 0',
-                        borderBottom: i < goalList.length - 1 ? '1px solid var(--border)' : 'none',
-                        paddingBottom: 0,
-                      }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 6 }}>
-                          <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', flex: 1, marginRight: 14 }}>{g.title}</span>
-                          <span className={`pill ${statusPill}`} style={{ flexShrink: 0, fontSize: 10 }}>{goalStatusLabel(g.status)}</span>
-                        </div>
-                        {g.description && (
-                          <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 10 }}>{g.description}</div>
-                        )}
-                        {g.target_date && (
-                          <div style={{ fontSize: 11, color: 'var(--muted-faint)', marginBottom: 10 }}>Target: {fmtDate(g.target_date)}</div>
-                        )}
-                        {/* Thin progress bar — gold for active, grey for others */}
-                        <div style={{ height: 3, background: 'var(--border)', margin: '0 -20px', marginTop: g.description || g.target_date ? 0 : 10 }}>
-                          {g.status === 'active' && (
-                            <div style={{ width: '45%', height: '100%', background: 'var(--gold)' }} />
-                          )}
-                          {g.status === 'completed' && (
-                            <div style={{ width: '100%', height: '100%', background: '#4a9e6b' }} />
-                          )}
-                        </div>
-                        <div style={{ height: 14 }} />
-                      </div>
-                    )
-                  })}
+                  )}
                 </div>
+
+                {editMode ? (
+                  <div style={{ padding: '20px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Status</label>
+                        <select className="fselect" value={(ef as any).status || 'Lead'} onChange={e => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
+                          {(statusConfigs as any[]).map((s: any) => <option key={s.label} value={s.label}>{s.label}</option>)}
+                          {(statusConfigs as any[]).length === 0 && <option value="Lead">Lead</option>}
+                        </select>
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Email</label>
+                        <input className="finput" value={ef.email || ''} onChange={e => setEditForm((f: any) => ({ ...f, email: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone</label>
+                        <input className="finput" value={ef.phone || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Company</label>
+                        <input className="finput" value={ef.company || ''} onChange={e => setEditForm((f: any) => ({ ...f, company: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Job Title</label>
+                        <input className="finput" value={ef.job_title || ''} onChange={e => setEditForm((f: any) => ({ ...f, job_title: e.target.value }))} />
+                      </div>
+                      {(() => {
+                        const KNOWN = ['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other', '']
+                        const cur = (ef as any).lead_source || ''
+                        const isCustom = cur !== '' && !KNOWN.includes(cur)
+                        const dropVal = isCustom ? 'other' : cur
+                        return (
+                          <div className="fgroup" style={{ marginBottom: 14 }}>
+                            <label className="flabel">Lead Source</label>
+                            <select className="fselect" value={dropVal}
+                              onChange={e => {
+                                if (e.target.value === 'other') setEditForm((f: any) => ({ ...f, lead_source: '' }))
+                                else setEditForm((f: any) => ({ ...f, lead_source: e.target.value }))
+                              }}>
+                              <option value="">Select source…</option>
+                              {['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other'].map(s => (
+                                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                              ))}
+                            </select>
+                            {dropVal === 'other' && (
+                              <input className="finput" style={{ marginTop: 8 }} placeholder="Specify…"
+                                value={isCustom ? cur : (ef as any).lead_source || ''}
+                                onChange={e => setEditForm((f: any) => ({ ...f, lead_source: e.target.value }))} />
+                            )}
+                          </div>
+                        )
+                      })()}
+                    </div>
+                    {(() => {
+                      const addr = (ef as any).primary_address || {}
+                      const setAddr = (k: string, v: string) =>
+                        setEditForm((f: any) => ({ ...f, primary_address: { ...(f.primary_address || {}), [k]: v } }))
+                      return (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
+                          <div className="fgroup" style={{ marginBottom: 14, gridColumn: '1 / -1' }}>
+                            <label className="flabel">Street Address</label>
+                            <input className="finput" value={addr.street || ''} onChange={e => setAddr('street', e.target.value)} placeholder="123 Main St" />
+                          </div>
+                          <div className="fgroup" style={{ gridColumn: '1 / 2' }}>
+                            <label className="flabel">State</label>
+                            <input className="finput" value={addr.state || ''} onChange={e => setAddr('state', e.target.value)} placeholder="New York" />
+                          </div>
+                          <div className="fgroup">
+                            <label className="flabel">Zip Code</label>
+                            <input className="finput" value={addr.zip || ''} onChange={e => setAddr('zip', e.target.value)} placeholder="10001" />
+                          </div>
+                        </div>
+                      )
+                    })()}
+                    <div className="fgroup">
+                      <label className="flabel">Tags</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                        {(tagConfigs as any[]).map((tc: any) => {
+                          const selected = (ef.tags || []).includes(tc.name)
+                          return (
+                            <button key={tc.name} type="button"
+                              onClick={() => setEditForm((f: any) => ({
+                                ...f,
+                                tags: selected ? f.tags.filter((t: string) => t !== tc.name) : [...(f.tags || []), tc.name]
+                              }))}
+                              style={{
+                                padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                                fontFamily: "'DM Sans', sans-serif",
+                                border: `1px solid ${tc.color}60`,
+                                background: selected ? tc.color : tc.color + '18',
+                                color: selected ? '#fff' : tc.color,
+                                fontWeight: selected ? 600 : 400,
+                              }}>{tc.name}</button>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ padding: '16px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 40px' }}>
+                      {[
+                        { label: 'Email',   value: client.email },
+                        { label: 'Phone',   value: client.phone || '—' },
+                        { label: 'Company', value: client.company || '—' },
+                        { label: 'Title',   value: client.job_title || '—' },
+                        { label: 'Status',  value: (client as any).status || 'Lead' },
+                        { label: 'Source',  value: client.lead_source ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1) : '—' },
+                        { label: 'Coach',   value: (client as any).coach_name || '—' },
+                        { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
+                      ].map(({ label, value }) => (
+                        <div key={label} style={{ display: 'flex', flexDirection: 'column', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
+                          <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>{label}</span>
+                          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {(() => {
+                      const addr = (client as any).primary_address || {}
+                      const full = [[addr.street], [addr.state, addr.zip].filter(Boolean).join(', ')].filter(Boolean).join(', ')
+                      return full ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
+                          <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>Address</span>
+                          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{full}</span>
+                        </div>
+                      ) : null
+                    })()}
+                    {(client.tags || []).length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0' }}>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Tags</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {(client.tags || []).map((t: string) => {
+                            const color = tagMap[t]
+                            return color ? (
+                              <span key={t} style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 10, background: color + '20', color, border: `1px solid ${color}40` }}>{t}</span>
+                            ) : <span key={t} className="tag">{t}</span>
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {/* ENGAGEMENT HISTORY */}
+              {/* INVOICES */}
               <div className="card">
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '14px 20px', borderBottom: '1px solid var(--border)',
-                }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                    Engagement History
-                  </span>
-                  <button
-                    onClick={() => setTab('Activities')}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}
-                  >View all →</button>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Invoices</span>
+                  <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices')}>+ New</button>
+                </div>
+                {invList.length === 0 ? (
+                  <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>No invoices yet.</div>
+                ) : (
+                  <table className="tbl">
+                    <thead><tr><th>Invoice</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
+                    <tbody>
+                      {invList.map((inv: any) => (
+                        <tr key={inv.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
+                          <td style={{ fontWeight: 500 }}>{inv.number}</td>
+                          <td>{fmtDate(inv.issue_date || inv.created_at)}</td>
+                          <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16 }}>
+                            {inv.total ? `$${parseFloat(inv.total).toLocaleString()}` : '—'}
+                          </td>
+                          <td>
+                            <span className={`pill ${inv.status === 'paid' ? 'pill-green' : inv.status === 'overdue' ? 'pill-red' : 'pill-grey'}`} style={{ fontSize: 10 }}>
+                              {inv.status}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+
+            {/* ── Right sidebar — Engagement + Goals + Pipeline ── */}
+            <div>
+
+              {/* ENGAGEMENT HISTORY */}
+              <div className="card" style={{ marginBottom: 14 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Engagement History</span>
+                  <button onClick={() => setTab('Activities')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
+                    View all →
+                  </button>
                 </div>
                 <div style={{ padding: '8px 20px 12px' }}>
                   {timeline.length === 0 ? (
@@ -1026,12 +1182,7 @@ export default function ClientDetail() {
                     </div>
                   ) : timeline.map((item: any) => (
                     <div key={`${item._type}-${item.id}`} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '10px 0' }}>
-                      <div style={{
-                        width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3,
-                        background: item._type === 'invoice'
-                          ? '#3a6ea8'
-                          : actDotColor(item.status),
-                      }} />
+                      <div style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: item._type === 'invoice' ? '#3a6ea8' : actDotColor(item.status) }} />
                       <div style={{ flex: 1 }}>
                         {item._type === 'activity' ? (
                           <>
@@ -1044,8 +1195,7 @@ export default function ClientDetail() {
                         ) : (
                           <>
                             <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
-                              <strong>Invoice {item.number}</strong>
-                              {' sent — '}{item.total ? `$${parseFloat(item.total).toLocaleString()}` : ''} · {item.status}
+                              <strong>Invoice {item.number}</strong>{' sent — '}{item.total ? `$${parseFloat(item.total).toLocaleString()}` : ''} · {item.status}
                             </div>
                             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{fmtDate(item.issue_date || item.created_at)}</div>
                           </>
@@ -1055,77 +1205,6 @@ export default function ClientDetail() {
                   ))}
                 </div>
               </div>
-            </div>
-
-            {/* ── Right column ── */}
-            <div>
-              {/* CONTACT INFO */}
-              <div className="card" style={{ marginBottom: 14 }}>
-                <div style={{
-                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                  padding: '14px 20px', borderBottom: '1px solid var(--border)',
-                }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                    Contact Info
-                  </span>
-                  {!editMode && (
-                    <button
-                      onClick={() => { setEditForm(client); setEditMode(true) }}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}
-                    >Edit</button>
-                  )}
-                </div>
-                {editMode ? (
-                  <div style={{ padding: '16px 20px' }}>
-                    <div className="fgroup" style={{ marginBottom: 12 }}>
-                      <label className="flabel">Status</label>
-                      <select className="fselect" value={(ef as any).status || 'Lead'} onChange={e => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
-                        {(statusConfigs as any[]).map((s: any) => (
-                          <option key={s.label} value={s.label}>{s.label}</option>
-                        ))}
-                        {(statusConfigs as any[]).length === 0 && <option value="Lead">Lead</option>}
-                      </select>
-                    </div>
-                    {[
-                      { k: 'email',     label: 'Email' },
-                      { k: 'phone',     label: 'Phone' },
-                      { k: 'company',   label: 'Company' },
-                      { k: 'job_title', label: 'Title' },
-                    ].map(({ k, label }) => (
-                      <div key={k} className="fgroup" style={{ marginBottom: 12 }}>
-                        <label className="flabel">{label}</label>
-                        <input className="finput" value={ef[k] || ''} onChange={e => setEditForm((f: any) => ({ ...f, [k]: e.target.value }))} />
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className="btn btn-outline btn-sm" style={{ flex: 1 }} onClick={() => setEditMode(false)}>Cancel</button>
-                      <button className="btn btn-dark btn-sm" style={{ flex: 1 }} onClick={handleSave}>Save</button>
-                    </div>
-                  </div>
-                ) : (
-                  <div style={{ padding: '0 20px' }}>
-                    {[
-                      { label: 'Email',   value: client.email,     small: true },
-                      { label: 'Company', value: client.company || '—' },
-                      { label: 'Title',   value: client.job_title || '—' },
-                      { label: 'Source',  value: client.lead_source
-                          ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1)
-                          : '—' },
-                    ].map(({ label, value, small }) => (
-                      <div key={label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0', borderBottom: '1px solid #f3f0eb' }}>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{label}</span>
-                        <span style={{ fontSize: small ? 11 : 13, fontWeight: 500, color: 'var(--ink)', textAlign: 'right', maxWidth: 150, wordBreak: 'break-all' }}>{value}</span>
-                      </div>
-                    ))}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '9px 0' }}>
-                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>Portal</span>
-                      <span className={`pill ${client.portal_access ? 'pill-blue' : 'pill-grey'}`} style={{ fontSize: 10 }}>
-                        {client.portal_access ? 'Enabled' : 'Not invited'}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
 
               {/* PIPELINE DEAL */}
               {deal && (() => {
@@ -1133,90 +1212,27 @@ export default function ClientDetail() {
                 const stageLabel  = stageConfig?.label || (deal.stage || '').replace(/_/g, ' ')
                 const stageColor  = stageConfig?.color || '#1B3A6B'
                 const dealValue   = deal.deal_value ? parseFloat(deal.deal_value) : null
-                const tags: string[] = deal.tags || []
                 return (
-                  <div className="card" style={{ marginBottom: 14 }}>
+                  <div className="card">
                     <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                        Pipeline Deal
-                      </span>
+                      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Pipeline Deal</span>
                     </div>
                     <div style={{ padding: '0 20px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
                         <span style={{ fontSize: 12, color: 'var(--muted)' }}>Stage</span>
-                        <span style={{
-                          fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12,
-                          background: stageColor + '18', color: stageColor, border: `1px solid ${stageColor}30`,
-                        }}>
-                          {stageLabel}
-                        </span>
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 10px', borderRadius: 12, background: stageColor + '18', color: stageColor, border: `1px solid ${stageColor}30` }}>{stageLabel}</span>
                       </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Deal Value</span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0' }}>
+                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Value</span>
                         <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>
                           {dealValue && dealValue > 0 ? `$${dealValue.toLocaleString()}` : '—'}
                         </span>
-                      </div>
-                      {tags.length > 0 && (
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0', borderBottom: '1px solid #f3f0eb' }}>
-                          <span style={{ fontSize: 12, color: 'var(--muted)' }}>Tags</span>
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'flex-end' }}>
-                            {tags.map((t: string) => (
-                              <span key={t} style={{
-                                fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 12,
-                                background: '#e8f0fe', color: '#1B3A6B', border: '1px solid #c7d5ec',
-                              }}>{t}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 0' }}>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>Opened</span>
-                        <span style={{ fontSize: 13, fontWeight: 500 }}>{fmtDate(deal.created_at)}</span>
                       </div>
                     </div>
                   </div>
                 )
               })()}
 
-              {/* INVOICES */}
-              <div className="card">
-                <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                    Invoices
-                  </span>
-                </div>
-                <div style={{ padding: '0 20px' }}>
-                  {invList.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--muted)', padding: '16px 0' }}>No invoices yet.</div>
-                  ) : invList.slice(0, 4).map((inv: any, i: number) => (
-                    <div
-                      key={inv.id}
-                      onClick={() => navigate(`/invoices/${inv.id}`)}
-                      style={{
-                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                        padding: '10px 0',
-                        borderBottom: i < Math.min(invList.length, 4) - 1 ? '1px solid #f3f0eb' : 'none',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      <span style={{ fontSize: 13, color: 'var(--ink)' }}>
-                        {inv.number} · {new Date(inv.issue_date || inv.due_date || inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                      </span>
-                      <span className={`pill ${inv.status === 'paid' ? 'pill-green' : inv.status === 'overdue' ? 'pill-red' : 'pill-grey'}`} style={{ fontSize: 10 }}>
-                        {inv.status === 'paid' ? `Paid $${parseFloat(inv.total || 0).toLocaleString()}` : inv.status}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-                <div style={{ padding: '12px 20px', borderTop: invList.length > 0 ? '1px solid var(--border)' : 'none' }}>
-                  <button
-                    className="btn btn-dark"
-                    style={{ width: '100%', justifyContent: 'center', fontSize: 12 }}
-                    onClick={() => navigate('/invoices')}
-                  >+ New Invoice</button>
-                </div>
-              </div>
             </div>
           </div>
         )}
@@ -1339,6 +1355,22 @@ export default function ClientDetail() {
       {showActivity && <NewActivityModal clientId={id} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
       {showGoal && <GoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
       {editingGoal && <GoalModal clientId={id} goal={editingGoal} onClose={() => setEditingGoal(null)} onSaved={() => { setEditingGoal(null); showToast('Goal updated') }} />}
+      {showDeleteConfirm && (
+        <Modal title="Delete Client" onClose={() => !deleting && setShowDeleteConfirm(false)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Permanently delete <strong>{client.first_name} {client.last_name}</strong>? This cannot be undone — all their sessions, notes, invoices, and files will be removed.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>Cancel</button>
+            <button
+              className="btn btn-sm"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+            >{deleting ? 'Deleting…' : 'Delete Client'}</button>
+          </div>
+        </Modal>
+      )}
       {toastEl}
     </AppShell>
   )
