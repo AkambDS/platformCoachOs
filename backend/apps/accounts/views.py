@@ -396,7 +396,7 @@ class TeamView(generics.ListAPIView):
     permission_classes = [IsWorkspaceMember]
 
     def get_queryset(self):
-        return User.objects.filter(workspace=self.request.user.workspace)
+        return User.objects.filter(workspace=self.request.user.workspace).order_by("full_name")
 
 
 @api_view(["PATCH", "DELETE"])
