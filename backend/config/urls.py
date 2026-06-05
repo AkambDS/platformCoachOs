@@ -152,7 +152,7 @@ def api_root(request):
 urlpatterns = [
     path("",                 health_check),  # Root / endpoint for health checks
     path("api/",             api_root),      # API root endpoint
-    path("admin/",           admin.site.urls),
+    path("django-admin/",    admin.site.urls),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
     path("api/activities/",  include("apps.activities.urls")),
