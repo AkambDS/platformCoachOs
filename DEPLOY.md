@@ -137,12 +137,41 @@ git push -u origin main
 
 ## Ongoing Operations
 
-### Update the app
+### Routine Deployment (after every code change)
+
+**Step 1 — Local machine: commit and push**
 ```bash
-ssh deploy@YOUR_SERVER_IP
-cd /srv/coachos
+git add -A
+git commit -m "your message"
+git push origin main
+```
+
+**Step 2 — EC2: pull, rebuild, restart**
+```bash
+ssh ubuntu@YOUR_EC2_IP
+cd ~/platformCoachOs
 git pull
-docker compose -f docker-compose.prod.yml up -d --build backend celery celery-beat frontend
+docker compose -f docker-compose.prod.yml up -d --build
+```
+
+> ⚠️ Always use `-f docker-compose.prod.yml`. Running bare `docker compose up --build`
+> uses the dev compose file (Mailpit, local Postgres, Dockerfile.dev) — wrong on EC2.
+
+**Step 3 — EC2: run migrations (if any model changes)**
+```bash
+docker compose -f docker-compose.prod.yml exec backend python manage.py migrate
+```
+"No migrations to apply" is fine — the entrypoint already ran them on startup.
+
+**Check service names before running exec commands:**
+```bash
+docker compose -f docker-compose.prod.yml ps
+# Backend service is called "backend", not "api"
+```
+
+### Update only backend (faster, skips frontend rebuild)
+```bash
+docker compose -f docker-compose.prod.yml up -d --build backend celery celery-beat
 ```
 
 ### Backup database
