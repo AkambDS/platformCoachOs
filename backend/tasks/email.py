@@ -43,6 +43,15 @@ def _apply_tmpl(text: str, **vars) -> str:
         return text
 
 
+def _workspace_from_email(workspace) -> str:
+    """Build a 'Display Name <addr>' from email using the workspace name as the display name."""
+    default = settings.DEFAULT_FROM_EMAIL
+    m = re.search(r'<(.+?)>', default)
+    addr = m.group(1) if m else default
+    name = workspace.name.replace('"', "'") if workspace.name else ""
+    return f"{name} <{addr}>" if name else default
+
+
 # ── ICS builder ────────────────────────────────────────────────────────────────
 
 def _ics_escape(text: str) -> str:
@@ -398,6 +407,7 @@ def send_invoice_email(invoice_id: str):
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
+        custom_from = tmpl.get("from_email", "").strip()
 
         plain = (
             f"Hi {invoice.client.first_name},\n\n"
@@ -415,11 +425,15 @@ def send_invoice_email(invoice_id: str):
             owner_name=owner_name,
             custom_intro=custom_intro,
             custom_closing=custom_closing,
+            style=tmpl.get("style", {}),
+        )
+        from_addr = (
+            f"{workspace.name} <{custom_from}>" if custom_from else _workspace_from_email(workspace)
         )
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=from_addr,
             to=[invoice.client.email],
         )
         msg.attach_alternative(html, "text/html")
@@ -459,7 +473,7 @@ def send_payment_receipt_email(invoice_id: str):
         msg = EmailMultiAlternatives(
             subject=f"Receipt: Invoice #{invoice.number} — Payment Received",
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=[invoice.client.email],
         )
         msg.attach_alternative(html, "text/html")

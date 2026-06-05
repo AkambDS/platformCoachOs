@@ -43,11 +43,19 @@ function toLocalInput(utc: string) {
   return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
-function fmt(d: string) {
+function fmtDate(d: string, tz?: string) {
   if (!d) return '—'
-  return new Date(d).toLocaleString('en-US', {
+  return new Date(d).toLocaleDateString('en-US', {
     weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
+    ...(tz ? { timeZone: tz } : {}),
+  })
+}
+
+function fmtTime(d: string, tz?: string) {
+  if (!d) return '—'
+  return new Date(d).toLocaleTimeString('en-US', {
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    ...(tz ? { timeZone: tz } : {}),
   })
 }
 
@@ -398,6 +406,12 @@ export default function Activities() {
   if (statusFilter) params.status = statusFilter
   if (typeFilter)   params.activity_type = typeFilter
 
+  const { data: workspace } = useQuery({
+    queryKey: ['workspace'],
+    queryFn: () => settingsApi.getWorkspace().then(r => r.data),
+  })
+  const tz: string | undefined = (workspace as any)?.workspace_timezone || undefined
+
   const { data: activityTypesList = [] } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
@@ -527,7 +541,8 @@ export default function Activities() {
           <table className="tbl">
             <thead>
               <tr>
-                <th>Date &amp; Time</th>
+                <th>Date</th>
+                <th>Time</th>
                 <th>Client</th>
                 <th>Type</th>
                 <th>Title</th>
@@ -541,8 +556,14 @@ export default function Activities() {
                 <tr key={a.id} onClick={() => setDetailTarget(a)}>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <CalendarDays size={12} color="var(--muted)" />
+                      <span style={{ fontSize: 12 }}>{fmtDate(a.start_at, tz)}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Clock size={12} color="var(--muted)" />
-                      <span style={{ fontSize: 12 }}>{fmt(a.start_at)}</span>
+                      <span style={{ fontSize: 12 }}>{fmtTime(a.start_at, tz)}</span>
                     </div>
                   </td>
                   <td>

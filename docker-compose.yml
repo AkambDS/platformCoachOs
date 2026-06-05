@@ -3,7 +3,6 @@ version: "3.9"
 services:
   db:
     image: postgres:16-alpine
-    platform: linux/arm64
     restart: unless-stopped
     environment:
       POSTGRES_DB: coachos
@@ -20,7 +19,6 @@ services:
 
   redis:
     image: redis:7-alpine
-    platform: linux/arm64
     restart: unless-stopped
     ports: ["6379:6379"]
     healthcheck:
@@ -31,7 +29,6 @@ services:
 
   minio:
     image: minio/minio:latest
-    platform: linux/arm64
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -45,7 +42,6 @@ services:
 
   mailpit:
     image: axllent/mailpit:latest
-    platform: linux/arm64
     restart: unless-stopped
     ports:
       - "1025:1025"

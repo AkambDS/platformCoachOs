@@ -272,6 +272,7 @@ export default function NewInvoice() {
     billing_cycle: 'monthly',
     billing_day: '1',
     subscription_start: today(),
+    subscription_end: '',
     subscription_auto_send: true,
   })
   const [items, setItems] = useState([{ description: '', quantity: '1', unit_price: '' }])
@@ -300,6 +301,7 @@ export default function NewInvoice() {
       billing_cycle: existingInv.billing_cycle || 'monthly',
       billing_day: String(existingInv.billing_day ?? '1'),
       subscription_start: existingInv.subscription_start || today(),
+      subscription_end: existingInv.subscription_end || '',
       subscription_auto_send: existingInv.subscription_auto_send ?? true,
     })
     if (existingInv.items?.length) {
@@ -365,6 +367,7 @@ export default function NewInvoice() {
       billing_cycle: form.billing_cycle,
       billing_day: Number(form.billing_day),
       subscription_start: form.subscription_start || null,
+      subscription_end: form.subscription_end || null,
       subscription_auto_send: form.subscription_auto_send,
     } : {}),
   }), [form, items, tab])
@@ -581,6 +584,43 @@ export default function NewInvoice() {
                 <div className="fgroup" style={{ marginBottom: 0 }}>
                   <label className="flabel">START DATE</label>
                   <input className="finput" type="date" value={form.subscription_start} onChange={e => set('subscription_start', e.target.value)} />
+                </div>
+              </div>
+
+              {/* End date */}
+              <div style={{ marginTop: 14 }}>
+                <div style={{ fontSize: 10, letterSpacing: '.1em', fontWeight: 600, color: 'var(--muted)', marginBottom: 8 }}>END DATE</div>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="sub_end"
+                      checked={!form.subscription_end}
+                      onChange={() => set('subscription_end', '')}
+                      style={{ accentColor: 'var(--ink)' }}
+                    />
+                    Until manually stopped
+                  </label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input
+                      type="radio"
+                      name="sub_end"
+                      checked={!!form.subscription_end}
+                      onChange={() => set('subscription_end', form.subscription_start || today())}
+                      style={{ accentColor: 'var(--ink)' }}
+                    />
+                    End on date
+                  </label>
+                  {form.subscription_end && (
+                    <input
+                      className="finput"
+                      type="date"
+                      value={form.subscription_end}
+                      onChange={e => set('subscription_end', e.target.value)}
+                      min={form.subscription_start || today()}
+                      style={{ marginBottom: 0, width: 160 }}
+                    />
+                  )}
                 </div>
               </div>
 

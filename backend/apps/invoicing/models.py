@@ -72,6 +72,7 @@ class Invoice(WorkspaceModel):
     billing_cycle         = models.CharField(max_length=20, choices=BillingCycle.choices, blank=True)
     billing_day           = models.PositiveSmallIntegerField(null=True, blank=True)  # 1-28
     subscription_start    = models.DateField(null=True, blank=True)
+    subscription_end      = models.DateField(null=True, blank=True)  # null = run until manually stopped
     subscription_auto_send = models.BooleanField(default=True)
     # Refunds
     refund_amount     = models.DecimalField(max_digits=12, decimal_places=2, default=0)

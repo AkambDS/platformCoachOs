@@ -284,6 +284,18 @@ def email_preview(request):
     custom_intro   = apply(raw_intro)
     custom_closing = apply(raw_closing)
 
+    # Style overrides: request params take priority over saved DB values
+    saved_style = tmpl.get("style", {})
+    style = {
+        "header_bg":      request.query_params.get("header_bg",      saved_style.get("header_bg",      "")),
+        "accent_color":   request.query_params.get("accent_color",   saved_style.get("accent_color",   "")),
+        "header_tagline": request.query_params.get("header_tagline", saved_style.get("header_tagline", "")),
+        "body_font":      request.query_params.get("body_font",      saved_style.get("body_font",      "")),
+        "heading_font":   request.query_params.get("heading_font",   saved_style.get("heading_font",   "")),
+    }
+    # Remove empty values so build functions use their own defaults
+    style = {k: v for k, v in style.items() if v}
+
     if email_type == "confirmation":
         client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
         activity = SimpleNamespace(
@@ -325,6 +337,7 @@ def email_preview(request):
             due_str="June 30, 2026",
             owner_email=owner_email, owner_name=owner_name,
             custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
         )
 
     else:

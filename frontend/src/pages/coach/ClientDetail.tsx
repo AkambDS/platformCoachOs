@@ -44,77 +44,163 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
-    select: (d: any[]) => d.filter(t => t.is_active),
+    select: (d: any[]) => d.filter((t: any) => t.is_active),
   })
-  const [form, setForm] = useState({
-    activity_type: 'session', title: '', start_at: '', end_at: '', location: '', notes: '',
-  })
+
+  const [form, setForm] = useState({ activity_type: 'session', title: '', location: '', notes: '' })
+  const [date, setDate]           = useState('')
+  const [startTime, setStartTime] = useState('')
+  const [endDate, setEndDate]     = useState('')
+  const [endTime, setEndTime]     = useState('')
+  const [repeat, setRepeat]       = useState<'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly'>('none')
+  const [repeatEnd, setRepeatEnd] = useState<'never'|'date'>('never')
+  const [repeatUntil, setRepeatUntil] = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
-
   const toUTC = (local: string) => local ? new Date(local).toISOString() : local
 
+  const addOneHour = (time: string) => {
+    const [h, m] = time.split(':').map(Number)
+    const next = new Date(2000, 0, 1, h + 1, m)
+    return `${String(next.getHours()).padStart(2, '0')}:${String(next.getMinutes()).padStart(2, '0')}`
+  }
+
   const handleSave = async () => {
-    if (!form.title || !form.start_at) return
+    const start_at = date && startTime ? `${date}T${startTime}` : ''
+    const resolvedEnd = endTime || (startTime ? addOneHour(startTime) : '')
+    const resolvedEndDate = endDate || date
+    const end_at = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
+    if (!form.title || !start_at) return
     setSaving(true)
-    const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
+    const payload: any = { ...form, client: clientId, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation }
+    if (repeat !== 'none') {
+      payload.repeat = repeat
+      payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
+    }
     try {
-      await activitiesApi.create({ ...payload, client: clientId, send_confirmation: sendConfirmation })
+      await activitiesApi.create(payload)
       qc.invalidateQueries({ queryKey: ['client-activities', clientId] })
+      qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved(sendConfirmation)
-    } catch { } finally { setSaving(false) }
+    } catch (err: any) {
+      const detail = err?.response?.data
+      alert(typeof detail === 'string' ? detail : detail ? Object.values(detail).flat().join(' ') : 'Failed to save')
+    } finally { setSaving(false) }
   }
 
   return (
-    <Modal title="Schedule Session" onClose={onClose} footer={
+    <Modal title="Schedule Activity" onClose={onClose} footer={
       <>
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Schedule Session'}</button>
+        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Schedule'}</button>
       </>
     }>
+      {/* Type */}
       <div className="fgroup">
-        <label className="flabel">Activity Type</label>
+        <label className="flabel">Type</label>
         <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-          {(activityTypes as any[]).map((t: any) => <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>)}
+          {(activityTypes as any[]).map((t: any) => (
+            <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+          ))}
         </select>
       </div>
+
+      {/* Title */}
       <div className="fgroup">
         <label className="flabel">Title *</label>
-        <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Q1 Coaching Session" />
+        <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
       </div>
-      <div className="fgrid">
-        <div className="fgroup">
-          <label className="flabel">Start *</label>
-          <input className="finput" type="datetime-local" value={form.start_at} onChange={e => set('start_at', e.target.value)} />
+
+      {/* Start date + time */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start Date *</label>
+          <input className="finput" type="date" value={date}
+            onChange={e => { setDate(e.target.value); if (!endDate || endDate < e.target.value) setEndDate(e.target.value) }} />
         </div>
-        <div className="fgroup">
-          <label className="flabel">End</label>
-          <input className="finput" type="datetime-local" value={form.end_at} onChange={e => set('end_at', e.target.value)} />
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">Start Time *</label>
+          <input className="finput" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
         </div>
       </div>
-      <div className="fgroup">
+
+      {/* End date + time */}
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, marginTop: 10 }}>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End Date</label>
+          <input className="finput" type="date" value={endDate} min={date} onChange={e => setEndDate(e.target.value)} />
+        </div>
+        <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
+          <label className="flabel">End Time</label>
+          <input className="finput" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+        </div>
+      </div>
+
+      {/* Location */}
+      <div className="fgroup" style={{ marginTop: 10 }}>
         <label className="flabel">Location / Link</label>
-        <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link or office address" />
+        <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link, office address…" />
       </div>
+
+      {/* Notes */}
       <div className="fgroup">
         <label className="flabel">Notes (internal)</label>
         <textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} />
       </div>
-      <div style={{
-        marginTop: 16, padding: '12px 14px',
-        background: 'var(--paper)', border: '1px solid var(--border)',
-        borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 12,
-      }}>
-        <input id="cd_send_conf" type="checkbox" checked={sendConfirmation}
-          onChange={e => setSendConfirmation(e.target.checked)}
-          style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--gold)' }} />
-        <label htmlFor="cd_send_conf" style={{ fontSize: 13, cursor: 'pointer', lineHeight: 1.4 }}>
-          <span style={{ fontWeight: 500, color: 'var(--ink)' }}>Send confirmation email + calendar invite</span>
-          <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
-            Client gets a .ics file, plus 24h and 1h reminders.
-          </span>
-        </label>
+
+      {/* Repeat */}
+      <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <label className="flabel" style={{ marginBottom: 0, minWidth: 90 }}>REPEAT</label>
+          <select className="fselect" value={repeat}
+            onChange={e => { setRepeat(e.target.value as any); setRepeatEnd('never'); setRepeatUntil('') }}
+            style={{ marginBottom: 0, flex: 1 }}>
+            <option value="none">Does not repeat</option>
+            <option value="daily">Every Day</option>
+            <option value="weekly">Every Week</option>
+            <option value="biweekly">Every Two Weeks</option>
+            <option value="monthly">Every Month</option>
+            <option value="yearly">Every Year</option>
+          </select>
+        </div>
+        {repeat !== 'none' && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <label className="flabel" style={{ marginBottom: 0, minWidth: 90 }}>END REPEAT</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16, flex: 1 }}>
+              {(['never', 'date'] as const).map(opt => (
+                <label key={opt} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer', color: 'var(--ink)' }}>
+                  <input type="radio" name="cd_repeat_end" checked={repeatEnd === opt} onChange={() => setRepeatEnd(opt)}
+                    style={{ accentColor: 'var(--gold)', width: 14, height: 14 }} />
+                  {opt === 'never' ? 'Never' : 'On Date'}
+                </label>
+              ))}
+              {repeatEnd === 'date' && (
+                <input className="finput" type="date" value={repeatUntil}
+                  onChange={e => setRepeatUntil(e.target.value)}
+                  min={date || undefined}
+                  style={{ marginBottom: 0, flex: 1 }} />
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Confirmation */}
+      <div style={{ marginTop: 4, padding: '12px 14px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <input id="cd_send_conf" type="checkbox" checked={sendConfirmation}
+            onChange={e => setSendConfirmation(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--gold)', flexShrink: 0 }} />
+          <label htmlFor="cd_send_conf" style={{ fontSize: 13, cursor: 'pointer', lineHeight: 1.4 }}>
+            <span style={{ fontWeight: 500, color: 'var(--ink)' }}>Send booking confirmation email now</span>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>Includes a calendar invite (.ics) for the client.</span>
+          </label>
+        </div>
+        <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
+          <span style={{ color: 'var(--gold)', fontWeight: 700, fontSize: 14, lineHeight: 1 }}>✓</span>
+          <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
+        </div>
       </div>
     </Modal>
   )

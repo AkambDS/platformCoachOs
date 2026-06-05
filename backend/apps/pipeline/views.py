@@ -20,9 +20,12 @@ class DealViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAssistantOrAbove]
 
     def get_queryset(self):
-        qs = Deal.objects.filter(workspace=self.request.user.workspace) \
+        user = self.request.user
+        qs = Deal.objects.filter(workspace=user.workspace) \
                          .select_related("client", "coach") \
                          .prefetch_related("stage_history", "progress_log")
+        if user.role != "business_owner":
+            qs = qs.filter(client__coach=user)
         stage = self.request.query_params.get("stage")
         if stage: qs = qs.filter(stage=stage)
         client = self.request.query_params.get("client")

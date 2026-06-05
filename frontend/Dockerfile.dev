@@ -1,12 +1,12 @@
-FROM --platform=linux/arm64 node:20-alpine
+FROM node:20-alpine
 
 WORKDIR /app
 
 # Copy package files first for layer caching
 COPY package.json package-lock.json* ./
 
-# Clean install — ensures ARM64 native binaries (esbuild, rollup etc)
-RUN npm install
+# Clean install — lockfile-driven for speed; falls back to npm install if lockfile is missing
+RUN npm ci --prefer-offline || npm install
 
 COPY . .
 

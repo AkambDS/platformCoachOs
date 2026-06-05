@@ -48,6 +48,8 @@ class OutstandingReportView(APIView):
             status__in=[Invoice.Status.SENT, Invoice.Status.OVERDUE,
                         Invoice.Status.PARTIALLY_PAID],
         ).select_related("client")
+        if request.user.role != "business_owner":
+            qs = qs.filter(client__coach=request.user)
 
         return Response([{
             "id":        str(i.id),

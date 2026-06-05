@@ -32,6 +32,10 @@ function WorkspaceTab() {
     workspace_timezone: workspace?.workspace_timezone  || 'America/New_York',
     cancellation_hours: workspace?.cancellation_hours  ?? 48,
     buffer_minutes:     workspace?.buffer_minutes      ?? 15,
+    address:            (workspace as any)?.address    || '',
+    city:               (workspace as any)?.city       || '',
+    state:              (workspace as any)?.state      || '',
+    zip_code:           (workspace as any)?.zip_code   || '',
   })
   const [saving, setSaving] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
@@ -74,109 +78,123 @@ function WorkspaceTab() {
     finally { setLogoUploading(false) }
   }
 
-  return (
-    <div style={{ maxWidth: 600, display: 'flex', flexDirection: 'column', gap: 20 }}>
+  const secHdr = (label: string) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '24px 0 18px' }}>
+      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+    </div>
+  )
 
-      {/* Logo */}
+  return (
+    <div style={{ maxWidth: 620 }}>
       <div className="card">
-        <div className="card-hdr"><Building2 size={14} /> Workspace Logo</div>
-        <div className="card-body">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 20 }}>
-            {/* Preview */}
+        <div className="card-body" style={{ paddingTop: 8 }}>
+
+          {/* ── Business Identity ── */}
+          {secHdr('Business Identity')}
+          <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start', marginBottom: 16 }}>
+            {/* Logo preview */}
             <div style={{
-              width: 96, height: 64, border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+              width: 80, height: 56, border: '1px solid var(--border)', borderRadius: 6,
               background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center',
               overflow: 'hidden', flexShrink: 0,
             }}>
               {logoData
                 ? <img src={logoData} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16, color: '#f7f4ef', letterSpacing: '.04em' }}>
-                    {form.name || 'Logo'}
+                : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: '#f7f4ef', letterSpacing: '.04em' }}>
+                    {form.name?.charAt(0) || '?'}
                   </span>
               }
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 4 }}>
-                {logoData ? 'Logo uploaded' : 'No logo uploaded'}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>
-                PNG or SVG recommended. Max 2 MB. Appears in emails sent to clients.
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', marginBottom: 2 }}>{form.name}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>
+                {logoData ? 'Logo uploaded · ' : 'No logo · '}PNG or SVG, max 2 MB. Appears in client emails.
               </div>
               {isOwner && (
                 <div style={{ display: 'flex', gap: 8 }}>
                   <label style={{
-                    display: 'inline-flex', alignItems: 'center', gap: 6,
-                    padding: '6px 14px', background: 'var(--ink)', color: 'var(--paper)',
+                    display: 'inline-flex', alignItems: 'center', gap: 5,
+                    padding: '5px 12px', background: 'var(--ink)', color: 'var(--paper)',
                     fontSize: 11, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
                     borderRadius: 'var(--radius-sm)', cursor: logoUploading ? 'not-allowed' : 'pointer',
                     opacity: logoUploading ? 0.6 : 1,
                   }}>
                     <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleLogoChange} disabled={logoUploading} />
-                    {logoUploading ? 'Uploading…' : logoData ? 'Replace' : 'Upload Logo'}
+                    {logoUploading ? 'Uploading…' : logoData ? 'Replace Logo' : 'Upload Logo'}
                   </label>
                   {logoData && (
-                    <button className="btn btn-outline btn-sm" onClick={handleRemoveLogo} disabled={logoUploading}>
-                      Remove
-                    </button>
+                    <button className="btn btn-outline btn-sm" onClick={handleRemoveLogo} disabled={logoUploading}>Remove</button>
                   )}
                 </div>
               )}
             </div>
           </div>
-        </div>
-      </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 4 }}>
+            Workspace name appears on invoices and client emails. Contact your administrator to rename it.
+          </div>
 
-      {/* Settings */}
-      <div className="card">
-        <div className="card-hdr"><Building2 size={14} /> Workspace Settings</div>
-        <div className="card-body">
+          {/* ── Business Address ── */}
+          {secHdr('Business Address')}
           <div className="fgroup">
-            <label className="flabel">Workspace Name</label>
-            <div style={{
-              padding: '9px 12px', background: 'var(--paper)', border: '1px solid var(--border)',
-              borderRadius: 4, fontSize: 14, color: 'var(--ink)',
-            }}>
-              {form.name}
+            <label className="flabel">Street Address</label>
+            <input className="finput" value={form.address} onChange={e => set('address', e.target.value)} placeholder="123 Main St" />
+          </div>
+          <div className="fgrid">
+            <div className="fgroup">
+              <label className="flabel">City</label>
+              <input className="finput" value={form.city} onChange={e => set('city', e.target.value)} placeholder="New York" />
             </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              Appears on invoices and client emails. Contact your administrator to change the workspace name.
+            <div className="fgroup">
+              <label className="flabel">State / Province</label>
+              <input className="finput" value={form.state} onChange={e => set('state', e.target.value)} placeholder="NY" />
             </div>
           </div>
+          <div className="fgroup" style={{ maxWidth: 200 }}>
+            <label className="flabel">ZIP / Postal Code</label>
+            <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
+          </div>
+
+          {/* ── Scheduling Defaults ── */}
+          {secHdr('Scheduling Defaults')}
           <div className="fgroup">
             <label className="flabel">Default Timezone</label>
             <select className="fselect" value={form.workspace_timezone} onChange={e => set('workspace_timezone', e.target.value)}>
               {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
             </select>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              Used for scheduling and reminder times.
-            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Used for scheduling and reminder times.</div>
           </div>
           <div className="fgrid">
             <div className="fgroup">
-              <label className="flabel">Cancellation Window (hours)</label>
-              <input className="finput" type="number" min={0} value={form.cancellation_hours}
-                onChange={e => set('cancellation_hours', Number(e.target.value))} />
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                e.g. 48 = clients must cancel 48h before.
+              <label className="flabel">Cancellation Window</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input className="finput" type="number" min={0} value={form.cancellation_hours}
+                  onChange={e => set('cancellation_hours', Number(e.target.value))} style={{ marginBottom: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>hours</span>
               </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Clients must cancel at least this far in advance.</div>
             </div>
             <div className="fgroup">
-              <label className="flabel">Session Buffer (minutes)</label>
-              <input className="finput" type="number" min={0} value={form.buffer_minutes}
-                onChange={e => set('buffer_minutes', Number(e.target.value))} />
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                Gap auto-blocked after each session.
+              <label className="flabel">Session Buffer</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input className="finput" type="number" min={0} value={form.buffer_minutes}
+                  onChange={e => set('buffer_minutes', Number(e.target.value))} style={{ marginBottom: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>min</span>
               </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Gap auto-blocked after each session ends.</div>
             </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 24, paddingTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-dark" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save Changes'}
             </button>
           </div>
+
         </div>
       </div>
-
     </div>
   )
 }
@@ -185,6 +203,14 @@ function WorkspaceTab() {
 function ProfileTab() {
   const { user, rehydrate, workspace } = useAuthStore()
   const { show } = useToast()
+
+  const { data: teamData } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+    enabled: user?.role !== 'business_owner',
+  })
+  const teamMembers: any[] = teamData?.results || teamData || []
+  const workspaceOwner = teamMembers.find((m: any) => m.role === 'business_owner')
 
   const [form, setForm] = useState({
     full_name:     user?.full_name     || '',
@@ -221,62 +247,91 @@ function ProfileTab() {
     } finally { setSavingPw(false) }
   }
 
+  const secHdr = (icon: React.ReactNode, label: string) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '24px 0 18px' }}>
+      <span style={{ color: 'var(--muted)', display: 'flex', alignItems: 'center' }}>{icon}</span>
+      <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
+        {label}
+      </span>
+      <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+    </div>
+  )
+
   return (
-    <div style={{ maxWidth: 600, display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Profile info */}
+    <div style={{ maxWidth: 620 }}>
       <div className="card">
-        <div className="card-hdr"><User size={14} /> Your Profile</div>
-        <div className="card-body">
-          <div className="fgroup">
-            <label className="flabel">Full Name</label>
-            <input className="finput" value={form.full_name} onChange={e => set('full_name', e.target.value)} />
+        <div className="card-body" style={{ paddingTop: 8 }}>
+
+          {/* ── Personal Information ── */}
+          {secHdr(<User size={13} />, 'Personal Information')}
+
+          {/* Avatar + name row */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
+            <div style={{
+              width: 48, height: 48, borderRadius: '50%', flexShrink: 0,
+              background: (ROLE_COLORS[user?.role || ''] || '#8c8279') + '22',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 18, fontWeight: 700, color: ROLE_COLORS[user?.role || ''] || 'var(--muted)',
+            }}>
+              {form.full_name?.charAt(0)?.toUpperCase() || '?'}
+            </div>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>{form.full_name || '—'}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>{user?.email}</div>
+            </div>
+            <span style={{
+              marginLeft: 'auto', padding: '3px 12px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+              background: (ROLE_COLORS[user?.role || ''] || '#8c8279') + '18',
+              color: ROLE_COLORS[user?.role || ''] || 'var(--muted)',
+            }}>
+              {ROLE_LABELS[user?.role || ''] || user?.role}
+            </span>
           </div>
-          <div className="fgroup">
-            <label className="flabel">Email</label>
-            <input className="finput" value={user?.email || ''} disabled
-              style={{ background: 'var(--paper)', color: 'var(--muted)', cursor: 'not-allowed' }} />
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Email cannot be changed.</div>
+
+          <div className="fgrid">
+            <div className="fgroup">
+              <label className="flabel">Full Name</label>
+              <input className="finput" value={form.full_name} onChange={e => set('full_name', e.target.value)} />
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Email Address</label>
+              <input className="finput" value={user?.email || ''} disabled
+                style={{ background: 'var(--paper)', color: 'var(--muted)', cursor: 'not-allowed' }} />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Cannot be changed.</div>
+            </div>
           </div>
           <div className="fgroup">
             <label className="flabel">Your Timezone</label>
             <select className="fselect" value={form.user_timezone} onChange={e => set('user_timezone', e.target.value)}>
               {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
             </select>
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Role</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4 }}>
-              <span style={{
-                padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                background: ROLE_COLORS[user?.role || ''] + '18',
-                color: ROLE_COLORS[user?.role || ''] || 'var(--muted)',
-              }}>
-                {ROLE_LABELS[user?.role || ''] || user?.role}
-              </span>
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>Role is set by your workspace owner.</span>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+              Used for your personal calendar and session reminders.
+              {user?.role !== 'business_owner' && workspaceOwner && (
+                <> Role is managed by <strong>{workspaceOwner.full_name}</strong>.</>
+              )}
             </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-dark" onClick={handleSaveProfile} disabled={savingProfile}>
               {savingProfile ? 'Saving…' : 'Save Profile'}
             </button>
           </div>
-        </div>
-      </div>
 
-      {/* Change password */}
-      <div className="card">
-        <div className="card-hdr"><Shield size={14} /> Change Password</div>
-        <div className="card-body">
+          {/* ── Security ── */}
+          {secHdr(<Shield size={13} />, 'Security')}
+
           {pwError && (
-            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 'var(--radius-sm)', fontSize: 12, color: '#b91c1c' }}>
+            <div style={{ marginBottom: 14, padding: '9px 14px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, fontSize: 12, color: '#b91c1c' }}>
               {pwError}
             </div>
           )}
           <div className="fgroup">
             <label className="flabel">Current Password</label>
             <input className="finput" type="password" value={pwForm.current_password}
-              onChange={e => setPw('current_password', e.target.value)} />
+              onChange={e => setPw('current_password', e.target.value)}
+              style={{ maxWidth: 320 }} />
           </div>
           <div className="fgrid">
             <div className="fgroup">
@@ -290,11 +345,14 @@ function ProfileTab() {
                 onChange={e => setPw('confirm', e.target.value)} />
             </div>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: -8, marginBottom: 16 }}>Minimum 8 characters.</div>
+
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-dark" onClick={handleChangePassword} disabled={savingPw}>
               {savingPw ? 'Updating…' : 'Change Password'}
             </button>
           </div>
+
         </div>
       </div>
     </div>

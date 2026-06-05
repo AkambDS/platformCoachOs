@@ -21,8 +21,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
     filterset_fields   = ["activity_type", "status", "client", "coach"]
 
     def get_queryset(self):
-        qs = Activity.objects.filter(workspace=self.request.user.workspace) \
+        user = self.request.user
+        qs = Activity.objects.filter(workspace=user.workspace) \
                              .select_related("client", "coach")
+        if user.role != "business_owner":
+            qs = qs.filter(client__coach=user)
         # Calendar range filter
         start = self.request.query_params.get("start")
         end   = self.request.query_params.get("end")

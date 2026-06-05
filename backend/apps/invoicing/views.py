@@ -17,11 +17,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         workspace = self.request.user.workspace
-        count     = Invoice.objects.filter(workspace=workspace).count() + 1
+        # Derive next number from the highest existing number, not count,
+        # so deleted invoices don't cause duplicate-key collisions.
+        existing = Invoice.objects.filter(
+            workspace=workspace, number__startswith="INV-"
+        ).values_list("number", flat=True)
+        max_n = 0
+        for num in existing:
+            try:
+                max_n = max(max_n, int(num[4:]))
+            except (ValueError, IndexError):
+                pass
         serializer.save(
             workspace=workspace,
             coach=self.request.user,
-            number=f"INV-{count:04d}",
+            number=f"INV-{max_n + 1:04d}",
         )
 
     def create(self, request, *args, **kwargs):
@@ -32,9 +42,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
     def get_queryset(self):
-        qs = Invoice.objects.filter(workspace=self.request.user.workspace) \
+        user = self.request.user
+        qs = Invoice.objects.filter(workspace=user.workspace) \
                             .select_related("client", "coach") \
                             .prefetch_related("items", "payments")
+        if user.role != "business_owner":
+            qs = qs.filter(client__coach=user)
         status_filter = self.request.query_params.get("status")
         if status_filter:
             qs = qs.filter(status=status_filter)

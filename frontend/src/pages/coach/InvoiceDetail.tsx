@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoicesApi, settingsApi } from '../../api/client'
+import { api, invoicesApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast } from '../../components/ui'
+import { useAuthStore } from '../../store/auth'
 
 function fmtDate(d: string | null | undefined) {
   if (!d) return '—'
@@ -62,8 +63,6 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
   const balance     = Math.max(0, total - paid)
   const stamp       = STATUS_STAMP_COLOR[inv.status] || STATUS_STAMP_COLOR.draft
 
-  const logoUrl = workspace?.logo_data || null
-
   const firstPayment = (inv.payments || [])[0]
   const paidLabel    = firstPayment
     ? `Paid (${new Date(firstPayment.paid_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
@@ -84,15 +83,9 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
         <div>
-          {logoUrl
-            ? <img src={logoUrl} alt={workspace?.name} style={{ maxHeight: 36, maxWidth: 120, objectFit: 'contain', marginBottom: 6 }} />
-            : <div style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 26, fontWeight: 600, letterSpacing: '-.02em', marginBottom: 4 }}>
-                {workspace?.name || '—'}
-              </div>
-          }
-          {workspace?.name && logoUrl && (
-            <div style={{ fontSize: 12, color: '#6e6560' }}>{workspace.name}</div>
-          )}
+          <div style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 26, fontWeight: 600, letterSpacing: '-.02em', marginBottom: 4 }}>
+            {workspace?.name || '—'}
+          </div>
           {workspace?.email && (
             <div style={{ fontSize: 12, color: '#6e6560' }}>{workspace.email}</div>
           )}
@@ -139,15 +132,6 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
           {inv.client_company && <div style={{ color: '#6e6560', fontSize: 12, marginTop: 1 }}>{inv.client_company}</div>}
           {inv.client_email   && <div style={{ color: '#6e6560', fontSize: 12 }}>{inv.client_email}</div>}
           {inv.client_phone   && <div style={{ color: '#6e6560', fontSize: 12 }}>{inv.client_phone}</div>}
-        </div>
-        <div>
-          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.12em', color: '#9e9890', fontWeight: 600, marginBottom: 8 }}>
-            Payment
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, color: '#1a1714' }}>
-            <div>✓ Bank transfer</div>
-            <div>✓ Cash / Cheque</div>
-          </div>
         </div>
       </div>
 
@@ -203,7 +187,7 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
           </div>
 
           {paid > 0 && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#4caf50', marginBottom: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#1a1714', marginBottom: 6 }}>
               <span>{paidLabel}</span>
               <span style={{ fontWeight: 600 }}>-${fmt$(paid)}</span>
             </div>
@@ -214,8 +198,8 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
               display: 'flex', justifyContent: 'space-between',
               borderTop: '1px solid #e4dfd6', paddingTop: 8, marginTop: 4,
             }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: '#e67e22' }}>Balance Due</span>
-              <span style={{ fontWeight: 700, fontSize: 16, color: '#e67e22', fontFamily: 'Cormorant Garamond, serif' }}>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Balance Due</span>
+              <span style={{ fontWeight: 700, fontSize: 16, fontFamily: 'Cormorant Garamond, serif' }}>
                 ${fmt$(balance)}
               </span>
             </div>
@@ -223,8 +207,8 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
 
           {balance === 0 && paid > 0 && (
             <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #e4dfd6', paddingTop: 8, marginTop: 4 }}>
-              <span style={{ fontWeight: 700, fontSize: 14, color: '#22c55e' }}>Paid in Full</span>
-              <span style={{ fontWeight: 700, fontSize: 16, color: '#22c55e', fontFamily: 'Cormorant Garamond, serif' }}>
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Paid in Full</span>
+              <span style={{ fontWeight: 700, fontSize: 16, fontFamily: 'Cormorant Garamond, serif' }}>
                 ${fmt$(total)}
               </span>
             </div>
@@ -552,6 +536,257 @@ function IssueRefundModal({ inv, onClose, onSaved }: {
   )
 }
 
+// ── Email Edit Modal ─────────────────────────────────────────────────────────
+const BODY_FONTS = [
+  { label: 'Helvetica / Arial (default)', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
+  { label: 'Georgia', value: "Georgia,'Times New Roman',serif" },
+  { label: 'Verdana', value: "Verdana,Geneva,sans-serif" },
+  { label: 'Trebuchet MS', value: "'Trebuchet MS',Helvetica,sans-serif" },
+]
+const HEADING_FONTS = [
+  { label: 'Georgia (default)', value: "Georgia,'Times New Roman',serif" },
+  { label: 'Helvetica / Arial', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
+  { label: 'Verdana', value: "Verdana,Geneva,sans-serif" },
+]
+
+function EmailEditModal({ onClose }: { onClose: () => void }) {
+  const { workspace, user, rehydrate } = useAuthStore()
+  const { show, el: toastEl } = useToast()
+
+  const saved      = (workspace as any)?.email_templates?.invoice || {}
+  const savedStyle = saved.style || {}
+
+  const [tab,     setTab]     = useState<'content' | 'style'>('content')
+  const [intro,   setIntro]   = useState<string>(saved.intro   || '')
+  const [closing, setClosing] = useState<string>(saved.closing || '')
+  const [subject, setSubject] = useState<string>(saved.subject || '')
+  const [fromEmail, setFromEmail] = useState<string>(saved.from_email || '')
+
+  const [headerBg,      setHeaderBg]      = useState(savedStyle.header_bg      || '#1a2f4e')
+  const [accentColor,   setAccentColor]   = useState(savedStyle.accent_color   || '#b8922e')
+  const [headerTagline, setHeaderTagline] = useState(savedStyle.header_tagline ?? 'Coaching Platform')
+  const [bodyFont,      setBodyFont]      = useState(savedStyle.body_font      || BODY_FONTS[0].value)
+  const [headingFont,   setHeadingFont]   = useState(savedStyle.heading_font   || HEADING_FONTS[0].value)
+
+  const [previewHtml,    setPreviewHtml]    = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [saving,         setSaving]         = useState(false)
+  const [logoUploading,  setLogoUploading]  = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  const renderPreview = async (overrides?: Record<string, string>) => {
+    setPreviewLoading(true)
+    try {
+      const { data } = await api.get('/api/settings/email-preview/', {
+        params: {
+          type: 'invoice', _t: Date.now(),
+          intro, closing,
+          header_bg: headerBg, accent_color: accentColor,
+          header_tagline: headerTagline,
+          body_font: bodyFont, heading_font: headingFont,
+          ...overrides,
+        },
+      })
+      setPreviewHtml(data.html || '')
+    } catch { setPreviewHtml('') }
+    finally { setPreviewLoading(false) }
+  }
+
+  useEffect(() => { renderPreview() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounce on any field change
+  useEffect(() => {
+    const t = setTimeout(() => renderPreview(), 700)
+    return () => clearTimeout(t)
+  }, [intro, closing, headerBg, accentColor, headerTagline, bodyFont, headingFont]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      const existing = (workspace as any)?.email_templates || {}
+      const updated  = {
+        ...existing,
+        invoice: {
+          ...saved,
+          subject, intro, closing, from_email: fromEmail,
+          style: { header_bg: headerBg, accent_color: accentColor, header_tagline: headerTagline, body_font: bodyFont, heading_font: headingFont },
+        },
+      }
+      const { data } = await settingsApi.updateWorkspace({ email_templates: updated })
+      if (user) rehydrate(user, { ...(workspace as any), ...data, email_templates: updated })
+      show('Email template saved')
+    } catch { show('Failed to save', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleLogoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    e.target.value = ''
+    if (file.size > 2 * 1024 * 1024) { show('Logo must be under 2 MB', 'error'); return }
+    setLogoUploading(true)
+    try {
+      const { data } = await settingsApi.uploadLogo(file)
+      if (user) rehydrate(user, { ...(workspace as any), logo_data: data.logo_data })
+      show('Logo updated')
+      setTimeout(() => renderPreview(), 400)
+    } catch { show('Failed to upload logo', 'error') }
+    finally { setLogoUploading(false) }
+  }
+
+  const logoData = (workspace as any)?.logo_data || ''
+
+  const labelStyle: React.CSSProperties = {
+    fontSize: 10, fontWeight: 600, letterSpacing: '.12em',
+    color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 6,
+  }
+  const colorRow = (label: string, value: string, onChange: (v: string) => void) => (
+    <div style={{ marginBottom: 14 }}>
+      <label style={labelStyle}>{label}</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <input type="color" value={value} onChange={e => onChange(e.target.value)}
+          style={{ width: 40, height: 32, padding: 2, borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer', background: 'none' }} />
+        <input className="finput" value={value} onChange={e => onChange(e.target.value)}
+          style={{ margin: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }} />
+        <div style={{ width: 28, height: 28, borderRadius: 4, background: value, border: '1px solid var(--border)', flexShrink: 0 }} />
+      </div>
+    </div>
+  )
+
+  return (
+    <Modal title="Invoice Email Template" size="lg" onClose={onClose} footer={
+      <>
+        <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
+        <button onClick={handleSave} disabled={saving}
+          style={{ padding: '10px 24px', borderRadius: 6, border: 'none', cursor: 'pointer', background: '#1a2f4e', color: '#fff', fontSize: 12, fontWeight: 700, letterSpacing: '.06em' }}>
+          {saving ? 'Saving…' : 'SAVE TEMPLATE'}
+        </button>
+      </>
+    }>
+      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 0, height: 560 }}>
+
+        {/* Left panel */}
+        <div style={{ borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+
+          {/* Tabs */}
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            {(['content', 'style'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t)} style={{
+                flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
+                background: tab === t ? 'var(--white)' : 'var(--paper)',
+                borderBottom: tab === t ? '2px solid #1a2f4e' : '2px solid transparent',
+                fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
+                color: tab === t ? '#1a2f4e' : 'var(--muted)',
+              }}>{t === 'content' ? 'Content' : 'Style'}</button>
+            ))}
+          </div>
+
+          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
+
+            {tab === 'content' && (
+              <>
+                <div className="fgroup">
+                  <label className="flabel">Subject line</label>
+                  <input className="finput" placeholder="Leave blank for default"
+                    value={subject} onChange={e => setSubject(e.target.value)} />
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">From email address</label>
+                  <input className="finput" type="email" placeholder="laura@yourbusiness.com"
+                    value={fromEmail} onChange={e => setFromEmail(e.target.value)} />
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                    Overrides the default sender. Must be a verified address in your email provider (AWS SES).
+                  </div>
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Opening paragraph</label>
+                  <textarea className="finput" rows={4} style={{ resize: 'vertical' }}
+                    placeholder="Leave blank for default"
+                    value={intro} onChange={e => setIntro(e.target.value)} />
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                    Variables: <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{client_name}'}</code>{' '}
+                    <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{invoice_number}'}</code>{' '}
+                    <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{amount}'}</code>
+                  </div>
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Closing paragraph</label>
+                  <textarea className="finput" rows={3} style={{ resize: 'vertical' }}
+                    placeholder="Leave blank for default"
+                    value={closing} onChange={e => setClosing(e.target.value)} />
+                </div>
+              </>
+            )}
+
+            {tab === 'style' && (
+              <>
+                {/* Logo */}
+                <div style={{ marginBottom: 16 }}>
+                  <label style={labelStyle}>Logo</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+                    <div style={{ width: 48, height: 48, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f4f1', flexShrink: 0 }}>
+                      {logoData
+                        ? <img src={logoData} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                        : <span style={{ fontSize: 9, color: 'var(--muted)' }}>No logo</span>}
+                    </div>
+                    <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={handleLogoChange} disabled={logoUploading} />
+                    <button className="btn btn-outline btn-sm" onClick={() => fileRef.current?.click()} disabled={logoUploading} style={{ flex: 1 }}>
+                      {logoUploading ? 'Uploading…' : logoData ? 'Replace Logo' : 'Upload Logo'}
+                    </button>
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>PNG or SVG, max 2 MB. Appears in the header.</div>
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', margin: '12px 0' }} />
+
+                {colorRow('Header background', headerBg, setHeaderBg)}
+                {colorRow('Accent / highlight color', accentColor, setAccentColor)}
+
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Header tagline</label>
+                  <input className="finput" style={{ margin: 0 }}
+                    placeholder="e.g. Coaching Platform"
+                    value={headerTagline} onChange={e => setHeaderTagline(e.target.value)} />
+                </div>
+
+                <div style={{ borderTop: '1px solid var(--border)', margin: '12px 0' }} />
+
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Body font</label>
+                  <select className="fselect" style={{ margin: 0 }} value={bodyFont} onChange={e => setBodyFont(e.target.value)}>
+                    {BODY_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                </div>
+                <div style={{ marginBottom: 14 }}>
+                  <label style={labelStyle}>Heading font</label>
+                  <select className="fselect" style={{ margin: 0 }} value={headingFont} onChange={e => setHeadingFont(e.target.value)}>
+                    {HEADING_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
+                  </select>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Right — live preview */}
+        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
+          <div style={{ padding: '8px 14px', background: '#f5f3ef', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', flexShrink: 0 }}>
+            Live Preview
+          </div>
+          {previewLoading && (
+            <div style={{ position: 'absolute', top: 36, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,.75)', zIndex: 1, fontSize: 12, color: 'var(--muted)' }}>
+              Updating preview…
+            </div>
+          )}
+          <iframe srcDoc={previewHtml} title="Email preview" sandbox="allow-same-origin"
+            style={{ flex: 1, border: 'none', display: 'block', width: '100%', height: '100%' }} />
+        </div>
+      </div>
+      {toastEl}
+    </Modal>
+  )
+}
+
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -561,9 +796,7 @@ export default function InvoiceDetail() {
 
   const [showPayment,    setShowPayment]    = useState(false)
   const [showRefund,     setShowRefund]     = useState(false)
-  const [showEmailPreview, setShowEmailPreview] = useState(true)
-  const [emailPreviewHtml, setEmailPreviewHtml] = useState('')
-  const [emailPreviewLoading, setEmailPreviewLoading] = useState(false)
+  const [showEmailEdit,  setShowEmailEdit]  = useState(false)
   const [sending,        setSending]        = useState(false)
 
   const { data: inv, isLoading } = useQuery({
@@ -576,15 +809,6 @@ export default function InvoiceDetail() {
     queryKey: ['workspace'],
     queryFn: () => settingsApi.getWorkspace().then(r => r.data),
   })
-
-  useEffect(() => {
-    if (!inv) return
-    setEmailPreviewLoading(true)
-    settingsApi.emailPreview('invoice')
-      .then(r => setEmailPreviewHtml(r.data.html))
-      .catch(() => setEmailPreviewHtml(''))
-      .finally(() => setEmailPreviewLoading(false))
-  }, [inv?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSend = async () => {
     setSending(true)
@@ -763,8 +987,40 @@ ${el.innerHTML}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', height: 'calc(100vh - 145px)', overflow: 'hidden' }}>
 
         {/* ── Left: invoice document ── */}
-        <div id="invoice-print-area" style={{ overflowY: 'auto', padding: '32px 40px', borderRight: '1px solid var(--border)', background: '#f7f5f2' }}>
-          <InvoiceDoc inv={inv} workspace={workspace} />
+        <div style={{ display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', background: '#f7f5f2', overflow: 'hidden' }}>
+          {/* Toolbar */}
+          <div style={{ flexShrink: 0, display: 'flex', gap: 8, padding: '10px 20px', borderBottom: '1px solid var(--border)', background: '#f0ede8', alignItems: 'center' }}>
+            <button onClick={handlePrint} style={{
+              padding: '7px 16px', borderRadius: 6, border: '1px solid var(--border)',
+              background: '#fff', color: 'var(--ink)', fontSize: 11, fontWeight: 600,
+              cursor: 'pointer', letterSpacing: '.04em',
+            }}>↓ Download PDF</button>
+            {canSend && (
+              <button onClick={handleSend} disabled={sending} style={{
+                padding: '7px 16px', borderRadius: 6, border: 'none',
+                background: '#1a2f4e', color: '#fff', fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', letterSpacing: '.04em',
+              }}>
+                {sending ? 'Sending…' : `✉ Send to ${(inv.client_name || '').split(' ')[0]}`}
+              </button>
+            )}
+            {canRemind && (
+              <button onClick={handleRemind} style={{
+                padding: '7px 16px', borderRadius: 6, border: `1px solid ${isOverdue ? '#e67e22' : 'var(--border)'}`,
+                background: isOverdue ? '#fff8f0' : '#fff', color: isOverdue ? '#e67e22' : 'var(--muted)',
+                fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.04em',
+              }}>Send Reminder</button>
+            )}
+            <button onClick={() => setShowEmailEdit(true)} style={{
+              marginLeft: 'auto', padding: '7px 14px', borderRadius: 6,
+              border: '1px solid var(--border)', background: '#fff',
+              color: 'var(--muted)', fontSize: 11, fontWeight: 600,
+              cursor: 'pointer', letterSpacing: '.04em',
+            }}>✎ Edit Email Template</button>
+          </div>
+          <div id="invoice-print-area" style={{ flex: 1, overflowY: 'auto', padding: '32px 40px' }}>
+            <InvoiceDoc inv={inv} workspace={workspace} />
+          </div>
         </div>
 
         {/* ── Right: sidebar ── */}
@@ -785,6 +1041,10 @@ ${el.innerHTML}
                   { label: 'Paid',     value: `$${fmt$(paid)}`,      bold: false, color: paid > 0 ? '#22c55e' : 'var(--muted)' },
                   { label: 'Balance',  value: `$${fmt$(remaining)}`, bold: true,  color: remaining > 0 ? (isOverdue ? '#e67e22' : '#e67e22') : 'var(--muted)' },
                   { label: 'Due Date', value: fmtDate(inv.due_date), bold: false, color: isOverdue ? '#e67e22' : 'var(--ink)' },
+                  ...(inv.invoice_type === 'subscription' ? [
+                    { label: 'Billing', value: inv.billing_cycle ? inv.billing_cycle.charAt(0).toUpperCase() + inv.billing_cycle.slice(1) : '—', bold: false, color: 'var(--ink)' },
+                    { label: 'Ends', value: inv.subscription_end ? fmtDate(inv.subscription_end) : 'Until stopped', bold: false, color: inv.subscription_end ? 'var(--ink)' : 'var(--muted)' },
+                  ] : []),
                 ].map(({ label, value, bold, color }) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
                     <span style={{ color: 'var(--muted)' }}>{label}</span>
@@ -830,36 +1090,6 @@ ${el.innerHTML}
               </div>
             )}
 
-            {/* Send Reminder — prominent when due/overdue */}
-            {canRemind && (
-              <div style={{
-                background: isOverdue ? '#fff8f0' : '#fff',
-                border: `1px solid ${isOverdue ? '#e67e22' : 'var(--border)'}`,
-                borderRadius: 8, padding: '12px 14px',
-              }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                  <div>
-                    <div style={{ fontSize: 10, letterSpacing: '.12em', color: isOverdue ? '#e67e22' : 'var(--muted)', fontWeight: 600 }}>
-                      {isOverdue ? 'OVERDUE REMINDER' : 'PAYMENT REMINDER'}
-                    </div>
-                    {inv.due_date && (
-                      <div style={{ fontSize: 11, color: isOverdue ? '#e67e22' : 'var(--muted)', marginTop: 2 }}>
-                        Due {fmtDate(inv.due_date)}
-                      </div>
-                    )}
-                  </div>
-                  <button onClick={handleRemind} style={{
-                    padding: '7px 14px', borderRadius: 6,
-                    background: isOverdue ? '#e67e22' : '#1a2f4e', color: '#fff', border: 'none',
-                    fontSize: 11, fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap',
-                  }}>Send Reminder →</button>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>
-                  Sends a payment reminder email to {inv.client_name?.split(' ')[0]}.
-                </div>
-              </div>
-            )}
-
             {/* Actions — horizontal row */}
             <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 14px' }}>
               <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>ACTIONS</div>
@@ -871,11 +1101,6 @@ ${el.innerHTML}
                     fontSize: 11, fontWeight: 600, letterSpacing: '.04em', cursor: 'pointer',
                   }}>Record Payment</button>
                 )}
-                <button onClick={handlePrint} style={{
-                  flex: 1, minWidth: 100, padding: '8px 10px', borderRadius: 6,
-                  background: '#fff', color: 'var(--ink)', border: '1px solid var(--border)',
-                  fontSize: 11, fontWeight: 600, cursor: 'pointer',
-                }}>Download PDF</button>
                 {canRefund && (
                   <button onClick={() => setShowRefund(true)} style={{
                     flex: 1, minWidth: 100, padding: '8px 10px', borderRadius: 6,
@@ -893,42 +1118,7 @@ ${el.innerHTML}
               </div>
             </div>
 
-            {/* Email Preview header toggle */}
-            <button
-              onClick={() => setShowEmailPreview(v => !v)}
-              style={{
-                width: '100%', padding: '10px 16px', borderRadius: 8,
-                background: '#fff', border: '1px solid var(--border)', cursor: 'pointer',
-                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600,
-              }}
-            >
-              <span>EMAIL PREVIEW</span>
-              <span style={{ fontSize: 13 }}>{showEmailPreview ? '▲' : '▼'}</span>
-            </button>
           </div>
-
-          {/* Email Preview — fills remaining sidebar height */}
-          {showEmailPreview && (
-            <div style={{ flex: 1, margin: '8px 14px 14px', minHeight: 0, borderRadius: 8, overflow: 'hidden', border: '1px solid var(--border)', background: '#fff' }}>
-              {emailPreviewLoading ? (
-                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
-                  Loading preview…
-                </div>
-              ) : emailPreviewHtml ? (
-                <iframe
-                  srcDoc={emailPreviewHtml}
-                  title="Email Preview"
-                  style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-                  sandbox="allow-same-origin"
-                />
-              ) : (
-                <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, color: 'var(--muted)' }}>
-                  No preview available.
-                </div>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
@@ -945,6 +1135,9 @@ ${el.innerHTML}
           onClose={() => setShowRefund(false)}
           onSaved={() => { setShowRefund(false); showToast('Refund issued') }}
         />
+      )}
+      {showEmailEdit && (
+        <EmailEditModal onClose={() => setShowEmailEdit(false)} />
       )}
       {toastEl}
     </AppShell>

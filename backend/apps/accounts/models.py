@@ -25,6 +25,11 @@ class Workspace(models.Model):
     logo_s3_key        = models.CharField(max_length=500, blank=True)
     logo_data          = models.TextField(blank=True)   # base64 data-URL, persists in DB
     primary_colour     = models.CharField(max_length=7, default="#1B3A6B")
+    # Address
+    address                = models.CharField(max_length=300, blank=True)
+    city                   = models.CharField(max_length=100, blank=True)
+    state                  = models.CharField(max_length=100, blank=True)
+    zip_code               = models.CharField(max_length=20,  blank=True)
     # Scheduling defaults
     workspace_timezone      = models.CharField(max_length=64, default="America/New_York")
     buffer_minutes     = models.PositiveSmallIntegerField(default=15)

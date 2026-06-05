@@ -7,7 +7,11 @@ Professional transactional email templates.
 # ── Shell ───────────────────────────────────────────────────────────────────────
 
 def _email_shell(workspace_name: str, logo_url: str, body_html: str,
-                 owner_email: str = "", owner_name: str = "") -> str:
+                 owner_email: str = "", owner_name: str = "",
+                 header_bg: str = "#1a2f4e",
+                 accent_color: str = "#b8922e",
+                 header_tagline: str = "Coaching Platform",
+                 body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif") -> str:
     if logo_url:
         brand = (
             f'<img src="{logo_url}" alt="{workspace_name}" '
@@ -24,7 +28,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         contact_line = (
             f'Questions? Contact us at '
             f'<a href="mailto:{owner_email}" '
-            f'style="color:#c9a84c;text-decoration:none;font-weight:600;">'
+            f'style="color:{accent_color};text-decoration:none;font-weight:600;">'
             f'{owner_name or owner_email}</a>'
             f' &mdash; <a href="mailto:{owner_email}" '
             f'style="color:#b5afa6;text-decoration:none;font-size:11px;">'
@@ -32,8 +36,15 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         )
     else:
         contact_line = (
-            f'Sent by <strong style="color:#9e9890;">{workspace_name}</strong> via CoachOS'
+            f'Sent by <strong style="color:#9e9890;">{workspace_name}</strong>'
         )
+
+    tagline_html = (
+        f'<span style="font-family:Georgia,\'Times New Roman\',serif;'
+        f'font-size:10px;letter-spacing:.18em;text-transform:uppercase;'
+        f'color:#a09888;">{header_tagline}</span>'
+        if header_tagline else ''
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -52,29 +63,25 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
 
     <!-- ── Header ── -->
     <tr>
-      <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+      <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
           <tr>
             <td>{brand}</td>
-            <td align="right">
-              <span style="font-family:Georgia,'Times New Roman',serif;
-                           font-size:10px;letter-spacing:.18em;text-transform:uppercase;
-                           color:#a09888;">Coaching Platform</span>
-            </td>
+            <td align="right">{tagline_html}</td>
           </tr>
         </table>
       </td>
     </tr>
 
-    <!-- ── Gold accent bar ── -->
+    <!-- ── Accent bar ── -->
     <tr>
-      <td style="height:3px;background:linear-gradient(90deg,#b8922e 0%,#d9b96a 50%,#b8922e 100%);"></td>
+      <td style="height:3px;background:{accent_color};"></td>
     </tr>
 
     <!-- ── Body ── -->
     <tr>
       <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;
-                 font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                 font-family:{body_font};">
         {body_html}
       </td>
     </tr>
@@ -83,17 +90,17 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
     <tr>
       <td style="padding:28px 0 0;text-align:center;">
         <p style="margin:0 0 8px;font-size:13px;color:#9e9890;
-                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.7;">
+                  font-family:{body_font};line-height:1.7;">
           {contact_line}
         </p>
         <p style="margin:0 0 6px;font-size:11px;color:#b5afa6;
-                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+                  font-family:{body_font};">
           This is an automated notification &mdash; please do not reply directly to this email.
         </p>
         <p style="margin:0;font-size:10px;color:#c8c2ba;
-                  font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                  font-family:{body_font};
                   letter-spacing:.06em;text-transform:uppercase;">
-          Powered by CoachOS
+          {workspace_name}
         </p>
       </td>
     </tr>
@@ -554,14 +561,22 @@ def build_cancellation_email(activity, workspace_name: str, logo_url: str,
 
 def build_invoice_email(invoice, workspace_name: str, logo_url: str,
                         due_str: str, owner_email: str = "", owner_name: str = "",
-                        custom_intro: str = "", custom_closing: str = "") -> str:
+                        custom_intro: str = "", custom_closing: str = "",
+                        style: dict = None) -> str:
+    s = style or {}
+    header_bg      = s.get("header_bg",      "#1a2f4e")
+    accent_color   = s.get("accent_color",   "#b8922e")
+    header_tagline = s.get("header_tagline", "Coaching Platform")
+    body_font      = s.get("body_font",      "'Helvetica Neue',Helvetica,Arial,sans-serif")
+    heading_font   = s.get("heading_font",   "Georgia,'Times New Roman',serif")
+
     amount = f"{invoice.currency} {invoice.total:,.2f}"
 
     pay_button = ""
     if invoice.stripe_payment_link:
         pay_button = f"""
         <div style="margin-top:28px;text-align:center;">
-          {_cta_button("Pay Invoice Online", invoice.stripe_payment_link, "#b8922e")}
+          {_cta_button("Pay Invoice Online", invoice.stripe_payment_link, accent_color)}
         </div>"""
 
     due_row = ""
@@ -575,23 +590,23 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     closing_html = custom_closing or _default_closing
 
     body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+    <p style="margin:0 0 4px;font-family:{body_font};
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
               font-weight:600;">
       Invoice
     </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       Invoice #{invoice.number}
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+              font-family:{body_font};">
       {intro_html}
     </p>
 
     <!-- Invoice details -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
       {_detail_row("Invoice #", invoice.number)}
       {_divider()}
       {_detail_row("Amount", f'<strong style="color:#1a1714;font-size:18px;">{amount}</strong>')}
@@ -600,14 +615,16 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     {pay_button}
 
-    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">{closing_html}</p>' if closing_html else ''}
+    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:{body_font};">{closing_html}</p>' if closing_html else ''}
 
-    <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:Georgia,'Times New Roman',serif;
+    <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:{heading_font};
               font-size:15px;color:#9e9890;">
       &mdash; {workspace_name}
     </p>"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font)
 
 
 # ── Pipeline follow-up alert email ───────────────────────────────────────────────
