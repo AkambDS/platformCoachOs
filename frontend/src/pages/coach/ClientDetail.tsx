@@ -790,7 +790,7 @@ export default function ClientDetail() {
     return m
   }, [statusConfigs])
 
-  const { data: tagConfigs = [] } = useQuery({
+  const { data: tagConfigs = [], refetch: refetchTags } = useQuery({
     queryKey: ['client-tag-configs'],
     queryFn: () => settingsApi.getClientTags().then(r => r.data),
     staleTime: 0,
@@ -800,6 +800,27 @@ export default function ClientDetail() {
     ;(tagConfigs as any[]).forEach((t: any) => { m[t.name] = t.color })
     return m
   }, [tagConfigs])
+
+  const { data: teamMembers = [] } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+    staleTime: 60_000,
+  })
+  const coaches = (teamMembers as any[]).filter((m: any) => m.role === 'coach')
+
+  const [newTagName, setNewTagName] = useState('')
+  const [addingTag, setAddingTag] = useState(false)
+  const handleAddTag = async () => {
+    const name = newTagName.trim()
+    if (!name) return
+    setAddingTag(true)
+    try {
+      await settingsApi.createClientTag({ name, color: '#1B3A6B' })
+      await refetchTags()
+      setEditForm((f: any) => ({ ...f, tags: [...(f?.tags || []), name] }))
+      setNewTagName('')
+    } finally { setAddingTag(false) }
+  }
 
   const handleSave = async () => {
     try {
@@ -1059,6 +1080,15 @@ export default function ClientDetail() {
                       )
                     })()}
                     <div className="fgroup">
+                      <label className="flabel">Assign Coach</label>
+                      <select className="fselect" value={(ef as any).coach || ''} onChange={e => setEditForm((f: any) => ({ ...f, coach: e.target.value }))}>
+                        <option value="">— No coach assigned —</option>
+                        {coaches.map((m: any) => (
+                          <option key={m.id} value={m.id}>{m.full_name}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="fgroup">
                       <label className="flabel">Tags</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
                         {(tagConfigs as any[]).map((tc: any) => {
@@ -1079,6 +1109,19 @@ export default function ClientDetail() {
                               }}>{tc.name}</button>
                           )
                         })}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <input
+                          className="finput"
+                          style={{ flex: 1, fontSize: 12, padding: '5px 10px' }}
+                          placeholder="New tag name…"
+                          value={newTagName}
+                          onChange={e => setNewTagName(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddTag())}
+                        />
+                        <button type="button" className="btn btn-outline btn-sm" onClick={handleAddTag} disabled={addingTag || !newTagName.trim()}>
+                          {addingTag ? '…' : '+ Add'}
+                        </button>
                       </div>
                     </div>
                   </div>

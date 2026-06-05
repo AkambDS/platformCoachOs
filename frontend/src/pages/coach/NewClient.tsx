@@ -216,9 +216,9 @@ export default function NewClient() {
               <select className="fselect" value={form.coach} onChange={e => set('coach', e.target.value)}>
                 <option value="">— Assign to me (default) —</option>
                 {(teamMembers as any[])
-                  .filter((m: any) => m.role === 'coach' || m.role === 'business_owner')
+                  .filter((m: any) => m.role === 'coach')
                   .map((m: any) => (
-                    <option key={m.id} value={m.id}>{m.full_name} ({m.role.replace(/_/g, ' ')})</option>
+                    <option key={m.id} value={m.id}>{m.full_name}</option>
                   ))}
               </select>
             </div>
