@@ -394,6 +394,7 @@ class TeamView(generics.ListAPIView):
     """GET /api/auth/team/ — list all users in workspace."""
     serializer_class = UserSerializer
     permission_classes = [IsWorkspaceMember]
+    pagination_class = None
 
     def get_queryset(self):
         return User.objects.filter(workspace=self.request.user.workspace).order_by("full_name")
