@@ -6,12 +6,16 @@ ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["localhost", "127.0.0.1"])
 
 # ── HTTPS enforcement ─────────────────────────────────────────────────────
 SECURE_PROXY_SSL_HEADER        = ("HTTP_X_FORWARDED_PROTO", "https")
-SECURE_SSL_REDIRECT            = False
+SECURE_SSL_REDIRECT            = False   # nginx handles the redirect
 SESSION_COOKIE_SECURE          = True
 CSRF_COOKIE_SECURE             = True
 SECURE_HSTS_SECONDS            = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 USE_X_FORWARDED_HOST           = True
+
+# ── Security headers (Django layer) ───────────────────────────────────────
+SECURE_CONTENT_TYPE_NOSNIFF = True   # X-Content-Type-Options: nosniff
+X_FRAME_OPTIONS             = "DENY" # X-Frame-Options: DENY
 
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 

@@ -2,19 +2,19 @@
 import environ
 from pathlib import Path
 from datetime import timedelta
-from secrets import token_urlsafe
+from django.core.exceptions import ImproperlyConfigured
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 env = environ.Env(DEBUG=(bool, False))
 environ.Env.read_env(BASE_DIR / ".env")
 
-# SECRET_KEY with fallback for deployment (should be set via environment in production)
 SECRET_KEY = env("SECRET_KEY", default=None)
 if not SECRET_KEY:
-    # Generate a temporary key if not set (for deployment - Render should set this)
-    print("⚠️  WARNING: SECRET_KEY not set! Generating temporary key for this deployment.")
-    print("    To fix: Set SECRET_KEY environment variable in Render dashboard")
-    SECRET_KEY = token_urlsafe(50)
+    raise ImproperlyConfigured(
+        "SECRET_KEY environment variable is not set. "
+        "Generate one with: python -c \"from django.utils.crypto import get_random_string; "
+        "print(get_random_string(50))\" and add it to your .env file."
+    )
 DEBUG               = env("DEBUG", default="False")
 ALLOWED_HOSTS       = env.list("ALLOWED_HOSTS", default=[])
 REGISTRATION_OPEN   = env.bool("REGISTRATION_OPEN", default=False)
