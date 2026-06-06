@@ -197,19 +197,40 @@ def send_activity_confirmation_email(activity_id: str):
             f"You will also receive a reminder 24 hours and 1 hour before your session.\n\n"
             f"If you need to reschedule, please contact {coach_name} directly.\n\n— {workspace.name}"
         )
-        html = build_confirmation_email(
-            activity=activity,
-            workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
-            coach_name=coach_name,
-            coach_email=coach_email,
-            dt_human=dt,
-            owner_email=owner_email,
-            owner_name=owner_name,
-            google_cal_url=_build_google_cal_url(activity),
-            custom_intro=custom_intro,
-            custom_closing=custom_closing,
+        from apps.activities.tokens import make_session_token
+        backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
+        cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+        reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+
+        plain = (
+            f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
+            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
+            f"Confirm attendance: {confirm_url}\n"
+            f"Request reschedule: {reschedule_url}\n"
+            f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
         )
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html = build_confirmation_email(
+                activity=activity,
+                workspace_name=workspace.name,
+                logo_url=_logo_src(workspace),
+                coach_name=coach_name,
+                coach_email=coach_email,
+                dt_human=dt,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                google_cal_url=_build_google_cal_url(activity),
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                confirm_url=confirm_url,
+                cancel_url=cancel_url,
+                reschedule_url=reschedule_url,
+            )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
         msg = EmailMultiAlternatives(
@@ -265,19 +286,23 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
             f"If you need to reschedule, please contact {coach_name} as soon as possible.\n\n— {workspace.name}"
         )
-        html = build_reminder_email(
-            activity=activity,
-            workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
-            coach_name=coach_name,
-            coach_email=coach_email,
-            dt_human=dt,
-            time_label=time_label,
-            owner_email=owner_email,
-            owner_name=owner_name,
-            custom_intro=custom_intro,
-            custom_closing=custom_closing,
-        )
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html = build_reminder_email(
+                activity=activity,
+                workspace_name=workspace.name,
+                logo_url=_logo_src(workspace),
+                coach_name=coach_name,
+                coach_email=coach_email,
+                dt_human=dt,
+                time_label=time_label,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+            )
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
@@ -416,17 +441,21 @@ def send_invoice_email(invoice_id: str):
             f"{'Pay online: ' + invoice.stripe_payment_link + chr(10) + chr(10) if invoice.stripe_payment_link else ''}"
             f"— {workspace.name}"
         )
-        html = build_invoice_email(
-            invoice=invoice,
-            workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
-            due_str=due_str,
-            owner_email=owner_email,
-            owner_name=owner_name,
-            custom_intro=custom_intro,
-            custom_closing=custom_closing,
-            style=tmpl.get("style", {}),
-        )
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html = build_invoice_email(
+                invoice=invoice,
+                workspace_name=workspace.name,
+                logo_url=_logo_src(workspace),
+                due_str=due_str,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=tmpl.get("style", {}),
+            )
         from_addr = (
             f"{workspace.name} <{custom_from}>" if custom_from else _workspace_from_email(workspace)
         )

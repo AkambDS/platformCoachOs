@@ -1507,15 +1507,18 @@ function EmailTemplatesTab() {
 
   const saved = (workspace as any)?.email_templates || {}
   const initField = (key: string) => ({
-    subject: saved[key]?.subject || '',
-    intro:   saved[key]?.intro   || '',
-    closing: saved[key]?.closing || '',
+    subject:     saved[key]?.subject     || '',
+    intro:       saved[key]?.intro       || '',
+    closing:     saved[key]?.closing     || '',
+    custom_html: saved[key]?.custom_html || '',
   })
-  const [fields, setFields] = useState(initField(activeKey))
+  const [fields, setFields]         = useState(initField(activeKey))
+  const [htmlUploading, setHtmlUploading] = useState(false)
 
   const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
 
-  const renderPreview = async (key: string, f: { intro: string; closing: string }) => {
+  const renderPreview = async (key: string, f: { intro: string; closing: string; custom_html: string }) => {
+    if (f.custom_html) { setPreviewHtml(f.custom_html); return }
     setPreviewLoading(true)
     try {
       const { data } = await api.get('/api/settings/email-preview/', {
@@ -1533,11 +1536,22 @@ function EmailTemplatesTab() {
     renderPreview(key, f)
   }
 
+  const handleHtmlUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setHtmlUploading(true)
+    try {
+      const text = await file.text()
+      setFields(f => { const nf = { ...f, custom_html: text }; setPreviewHtml(text); return nf })
+    } finally { setHtmlUploading(false); e.target.value = '' }
+  }
+
   // Initial preview on mount
   useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh preview 700ms after user stops typing intro/closing
+  // Auto-refresh preview 700ms after user stops typing intro/closing (only when no custom template)
   useEffect(() => {
+    if (fields.custom_html) return
     const t = setTimeout(() => renderPreview(activeKey, fields), 700)
     return () => clearTimeout(t)
   }, [fields.intro, fields.closing]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -1613,7 +1627,56 @@ function EmailTemplatesTab() {
               onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
           </div>
 
-          <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {/* Custom HTML template upload */}
+          <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>
+              Custom HTML Template
+            </div>
+            {fields.custom_html ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{
+                  fontSize: 11, color: '#16a34a', background: '#f0fdf4',
+                  border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 10px',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                  <span>✓</span> Custom template active
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <label style={{
+                    flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer',
+                    padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)',
+                    background: 'var(--white)', color: 'var(--ink)',
+                  }}>
+                    {htmlUploading ? 'Reading…' : 'Replace file'}
+                    <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
+                  </label>
+                  <button onClick={() => { setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
+                    style={{
+                      flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6,
+                      border: '1px solid var(--border)', background: 'var(--white)',
+                      color: 'var(--rust)', cursor: 'pointer',
+                    }}>
+                    Remove
+                  </button>
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
+                  Use <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{client_name}'}</code>,{' '}
+                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{workspace_name}'}</code> etc. as placeholders.
+                </div>
+              </div>
+            ) : (
+              <label style={{
+                display: 'block', textAlign: 'center', fontSize: 12, cursor: 'pointer',
+                padding: '10px', borderRadius: 6, border: '1.5px dashed var(--border)',
+                color: 'var(--muted)', background: 'var(--paper)',
+              }}>
+                {htmlUploading ? 'Reading…' : '+ Upload .html file'}
+                <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
+              </label>
+            )}
+          </div>
+
+          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
             <button className="btn-primary" style={{ width: '100%' }}
               disabled={saving} onClick={handleSave}>
               {saving ? 'Saving…' : 'Save'}
