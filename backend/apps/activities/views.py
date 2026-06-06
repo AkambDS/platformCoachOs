@@ -31,6 +31,9 @@ class ActivityViewSet(viewsets.ModelViewSet):
         end   = self.request.query_params.get("end")
         if start: qs = qs.filter(start_at__gte=start)
         if end:   qs = qs.filter(start_at__lte=end)
+        # Upcoming queries need ascending order; default model ordering is -start_at
+        if start and not end:
+            qs = qs.order_by("start_at")
         return qs
 
     def perform_destroy(self, instance):

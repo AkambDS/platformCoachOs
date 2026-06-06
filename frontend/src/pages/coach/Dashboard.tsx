@@ -111,7 +111,7 @@ function OwnerDashboard() {
                   <button className="btn btn-outline btn-sm" onClick={() => navigate("/calendar")} style={{ fontSize: 11 }}>Schedule one →</button>
                 </div>
               </div>
-            ) : upcomingList.map((a: any) => (
+            ) : upcomingList.slice(0, 5).map((a: any) => (
               <div key={a.id} style={{ padding: "11px 18px", borderBottom: "1px solid #f5f2ec", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
@@ -286,7 +286,7 @@ function CoachDashboard() {
                   <button className="btn btn-outline btn-sm" onClick={() => navigate("/calendar")} style={{ fontSize: 11 }}>Schedule one →</button>
                 </div>
               </div>
-            ) : upcomingList.map((a: any) => (
+            ) : upcomingList.slice(0, 5).map((a: any) => (
               <div key={a.id} style={{ padding: "11px 18px", borderBottom: "1px solid #f5f2ec", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 500 }}>{a.title}</div>
