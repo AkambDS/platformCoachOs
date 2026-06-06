@@ -1504,6 +1504,8 @@ function EmailTemplatesTab() {
   const [saving, setSaving]       = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [htmlMode, setHtmlMode] = useState<'upload' | 'paste'>('upload')
+  const [pasteBuffer, setPasteBuffer] = useState('')
 
   const saved = (workspace as any)?.email_templates || {}
   const initField = (key: string) => ({
@@ -1627,19 +1629,33 @@ function EmailTemplatesTab() {
               onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
           </div>
 
-          {/* Custom HTML template upload */}
+          {/* Custom HTML template — upload or paste */}
           <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>
-              Custom HTML Template
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>Custom HTML Template</div>
+              {!fields.custom_html && (
+                <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+                  {(['upload', 'paste'] as const).map(m => (
+                    <button key={m} onClick={() => setHtmlMode(m)} style={{
+                      padding: '3px 10px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer',
+                      letterSpacing: '.04em', textTransform: 'uppercase',
+                      background: htmlMode === m ? 'var(--ink)' : 'var(--white)',
+                      color:      htmlMode === m ? 'var(--white)' : 'var(--muted)',
+                    }}>{m === 'upload' ? 'File' : 'Paste'}</button>
+                  ))}
+                </div>
+              )}
             </div>
+
             {fields.custom_html ? (
+              /* ── Active custom template ── */
               <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                 <div style={{
                   fontSize: 11, color: '#16a34a', background: '#f0fdf4',
                   border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 10px',
                   display: 'flex', alignItems: 'center', gap: 6,
                 }}>
-                  <span>✓</span> Custom template active
+                  ✓ Custom template active ({fields.custom_html.length.toLocaleString()} chars)
                 </div>
                 <div style={{ display: 'flex', gap: 6 }}>
                   <label style={{
@@ -1650,21 +1666,35 @@ function EmailTemplatesTab() {
                     {htmlUploading ? 'Reading…' : 'Replace file'}
                     <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
                   </label>
-                  <button onClick={() => { setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
-                    style={{
-                      flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6,
-                      border: '1px solid var(--border)', background: 'var(--white)',
-                      color: 'var(--rust)', cursor: 'pointer',
-                    }}>
+                  <button
+                    onClick={() => { setPasteBuffer(fields.custom_html); setHtmlMode('paste'); setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
+                    style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}
+                  >
+                    Edit HTML
+                  </button>
+                  <button
+                    onClick={() => { setFields(f => ({ ...f, custom_html: '' })); setPasteBuffer(''); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
+                    style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: '#b91c1c', cursor: 'pointer' }}
+                  >
                     Remove
                   </button>
                 </div>
-                <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.4 }}>
-                  Use <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{client_name}'}</code>,{' '}
-                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{workspace_name}'}</code> etc. as placeholders.
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    onClick={() => {
+                      const blob = new Blob([fields.custom_html], { type: 'text/html' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a'); a.href = url; a.download = `${activeKey}-template.html`; a.click()
+                      URL.revokeObjectURL(url)
+                    }}
+                    style={{ fontSize: 11, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}
+                  >
+                    ↓ Download HTML
+                  </button>
                 </div>
               </div>
-            ) : (
+            ) : htmlMode === 'upload' ? (
+              /* ── File upload ── */
               <label style={{
                 display: 'block', textAlign: 'center', fontSize: 12, cursor: 'pointer',
                 padding: '10px', borderRadius: 6, border: '1.5px dashed var(--border)',
@@ -1673,7 +1703,39 @@ function EmailTemplatesTab() {
                 {htmlUploading ? 'Reading…' : '+ Upload .html file'}
                 <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
               </label>
+            ) : (
+              /* ── Paste HTML ── */
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <textarea
+                  rows={7}
+                  placeholder="Paste your HTML email here…"
+                  value={pasteBuffer}
+                  onChange={e => { setPasteBuffer(e.target.value); if (e.target.value) setPreviewHtml(e.target.value) }}
+                  style={{
+                    width: '100%', resize: 'vertical', fontSize: 11, fontFamily: 'monospace',
+                    padding: '8px', border: '1px solid var(--border)', borderRadius: 6,
+                    background: '#fafafa', lineHeight: 1.5,
+                  }}
+                />
+                <button
+                  disabled={!pasteBuffer.trim()}
+                  onClick={() => { setFields(f => ({ ...f, custom_html: pasteBuffer.trim() })); setPreviewHtml(pasteBuffer.trim()) }}
+                  style={{
+                    fontSize: 11, padding: '7px 0', borderRadius: 6, border: 'none', cursor: pasteBuffer.trim() ? 'pointer' : 'not-allowed',
+                    background: pasteBuffer.trim() ? 'var(--ink)' : 'var(--border)',
+                    color: '#fff', fontWeight: 600, letterSpacing: '.04em',
+                  }}
+                >
+                  Use This HTML
+                </button>
+              </div>
             )}
+            <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginTop: 8 }}>
+              When set, overrides the intro/closing above. Use{' '}
+              <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{client_name}'}</code>{' '}
+              <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{workspace_name}'}</code>{' '}
+              as placeholders.
+            </div>
           </div>
 
           <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -1746,11 +1808,11 @@ function fmtDate(iso: string) {
 function AuditLogTab() {
   const { data, isLoading } = useQuery({
     queryKey: ['audit-log'],
-    queryFn: () => auditApi.list().then(r => r.data),
+    queryFn: () => auditApi.list({ page_size: 10 }).then(r => r.data),
     staleTime: 0,
   })
 
-  const logs: any[] = data || []
+  const logs: any[] = (data?.results || data || []).slice(0, 10)
 
   return (
     <div style={{ maxWidth: 820 }}>
