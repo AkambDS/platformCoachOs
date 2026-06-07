@@ -4,7 +4,7 @@ import { libraryApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
-import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Eye, Download, ChevronRight } from 'lucide-react'
+import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Eye, Download, ChevronRight, Settings2 } from 'lucide-react'
 
 const VISIBILITY_LABELS: Record<string, string> = {
   private:        'Just Me',
@@ -103,7 +103,73 @@ function FolderNode({ folder, selected, onSelect, depth }: any) {
   )
 }
 
-function ItemCard({ item, onDelete }: { item: any; onDelete: () => void }) {
+function EditAccessModal({ item, currentUser, onClose, onSaved }: any) {
+  const { show } = useToast()
+  const isOwner = (currentUser as any)?.role === 'business_owner'
+  const isUploader = item.uploaded_by === (currentUser as any)?.id
+  const canEdit = isOwner || isUploader
+  const visibilityOptions = isOwner ? OWNER_VISIBILITY_OPTIONS : COACH_VISIBILITY_OPTIONS
+  const [visibility, setVisibility] = useState(item.visibility)
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await libraryApi.updateItem(item.id, { visibility })
+      onSaved()
+      show('Access updated')
+    } catch { show('Failed to update access', 'error') }
+    finally { setSaving(false) }
+  }
+
+  return (
+    <Modal title="Edit File Access" onClose={onClose} footer={
+      <>
+        <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
+        <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving || !canEdit}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </>
+    }>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{item.title}</div>
+        {item.uploaded_by_name && (
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>Uploaded by {item.uploaded_by_name}</div>
+        )}
+      </div>
+      {!canEdit ? (
+        <div style={{ padding: '12px 14px', background: 'var(--paper)', borderRadius: 6, fontSize: 13, color: 'var(--muted)' }}>
+          Only the uploader or workspace owner can change access rights.
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.06em', marginBottom: 4 }}>
+            Who can access this file?
+          </div>
+          {visibilityOptions.map((opt: any) => (
+            <label key={opt.value} style={{
+              display: 'flex', alignItems: 'flex-start', gap: 12, cursor: 'pointer',
+              padding: '12px 14px', borderRadius: 6,
+              border: `1px solid ${visibility === opt.value ? 'var(--ink)' : 'var(--border)'}`,
+              background: visibility === opt.value ? 'var(--paper)' : 'var(--white)',
+            }}>
+              <input type="radio" name="edit_visibility" value={opt.value}
+                checked={visibility === opt.value}
+                onChange={() => setVisibility(opt.value)}
+                style={{ marginTop: 2, accentColor: 'var(--ink)', flexShrink: 0 }} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{opt.label}</div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{opt.desc}</div>
+              </div>
+            </label>
+          ))}
+        </div>
+      )}
+    </Modal>
+  )
+}
+
+function ItemCard({ item, onDelete, onEditAccess }: { item: any; onDelete: () => void; onEditAccess: () => void }) {
   const icon = TYPE_ICONS[item.content_type] || <File size={20} color="#8c8279" />
   const hasFile = !!item.presigned_url
 
@@ -169,6 +235,12 @@ function ItemCard({ item, onDelete }: { item: any; onDelete: () => void }) {
             <Eye size={13} /> Open
           </button>
         )}
+        <button onClick={onEditAccess}
+          className="btn btn-ghost btn-sm"
+          style={{ borderRadius: 0, padding: '6px 12px' }}
+          title="Edit access">
+          <Settings2 size={13} />
+        </button>
         <button onClick={onDelete}
           className="btn btn-ghost btn-sm"
           style={{ borderRadius: 0, color: '#c0392b', padding: '6px 12px' }}>
@@ -339,11 +411,13 @@ function NewFolderModal({ onClose, onCreated }: any) {
 
 export default function Library() {
   const qc = useQueryClient()
+  const { user } = useAuthStore()
   const { show, el: toastEl } = useToast()
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [showUpload, setShowUpload] = useState(false)
   const [showNewFolder, setShowNewFolder] = useState(false)
+  const [editAccessTarget, setEditAccessTarget] = useState<any>(null)
 
   const { data: foldersData = [] } = useQuery({
     queryKey: ['library-folders'],
@@ -454,6 +528,7 @@ export default function Library() {
                   key={item.id}
                   item={item}
                   onDelete={() => handleDeleteItem(item.id, item.title)}
+                  onEditAccess={() => setEditAccessTarget(item)}
                 />
               ))}
             </div>
@@ -472,6 +547,14 @@ export default function Library() {
         <NewFolderModal
           onClose={() => setShowNewFolder(false)}
           onCreated={() => { setShowNewFolder(false); qc.invalidateQueries({ queryKey: ['library-folders'] }) }}
+        />
+      )}
+      {editAccessTarget && (
+        <EditAccessModal
+          item={editAccessTarget}
+          currentUser={user}
+          onClose={() => setEditAccessTarget(null)}
+          onSaved={() => { setEditAccessTarget(null); qc.invalidateQueries({ queryKey: ['library-items'] }) }}
         />
       )}
       {toastEl}
