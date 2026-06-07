@@ -58,13 +58,40 @@ class ActivityViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="cancel")
     def cancel(self, request, pk=None):
+        from django.db.models import Q
         activity = self.get_object()
         if activity.status == Activity.Status.CANCELLED:
             return Response({"detail": "Already cancelled."}, status=status.HTTP_400_BAD_REQUEST)
-        serializer = self.get_serializer(activity, data={"status": "cancelled"}, partial=True)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data)
+
+        scope = request.data.get("scope", "this")  # 'this' | 'future' | 'all'
+
+        if scope == "this":
+            serializer = self.get_serializer(activity, data={"status": "cancelled"}, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            from tasks.email import send_activity_cancellation_email
+            send_activity_cancellation_email.delay(str(activity.id))
+            return Response(serializer.data)
+
+        # Series cancel — find all related activities
+        root_id = activity.recurrence_id or activity.id
+        series_qs = Activity.objects.filter(
+            Q(id=root_id) | Q(recurrence_id=root_id),
+            workspace=request.user.workspace,
+        ).exclude(status=Activity.Status.CANCELLED)
+
+        if scope == "future":
+            series_qs = series_qs.filter(start_at__gte=activity.start_at)
+
+        ids = list(series_qs.values_list("id", flat=True))
+        series_qs.update(status="cancelled")
+
+        # Send cancellation email for each cancelled activity
+        for aid in ids:
+            from tasks.email import send_activity_cancellation_email
+            send_activity_cancellation_email.delay(str(aid))
+
+        return Response({"cancelled": len(ids), "scope": scope})
 
     @action(detail=True, methods=["get"], url_path="email-preview")
     def email_preview(self, request, pk=None):

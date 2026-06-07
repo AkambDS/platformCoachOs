@@ -42,6 +42,7 @@ export const authApi = {
   passwordResetConfirm:  (d: any) => api.post('/api/auth/password-reset/confirm/', d),
   tokenInfo:             (token: string) => api.get('/api/auth/token-info/', { params: { token } }),
   team:               ()                   => api.get('/api/auth/team/'),
+  addCoach:           (d: any)             => api.post('/api/auth/team/add-coach/', d),
   updateMember:       (id: string, d: any) => api.patch(`/api/auth/team/${id}/`, d),
   deleteMember:       (id: string)         => api.delete(`/api/auth/team/${id}/`),
 }
@@ -103,7 +104,8 @@ export const activitiesApi = {
   markComplete:    (id: string) => api.patch(`/api/activities/${id}/`, { status: 'completed' }),
   markLate:        (id: string) => api.patch(`/api/activities/${id}/`, { status: 'late' }),
   markRescheduled: (id: string) => api.patch(`/api/activities/${id}/`, { status: 'rescheduled' }),
-  cancel:          (id: string) => api.post(`/api/activities/${id}/cancel/`),
+  cancel: (id: string, scope: 'this' | 'future' | 'all' = 'this') =>
+    api.post(`/api/activities/${id}/cancel/`, { scope }),
   emailPreview: (id: string, type: string) =>
     api.get(`/api/activities/${id}/email-preview/`, { params: { type } }),
 }

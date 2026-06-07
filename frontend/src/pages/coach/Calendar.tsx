@@ -6,7 +6,7 @@ import interactionPlugin from '@fullcalendar/interaction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi, settingsApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { Modal, StatusBadge, useToast, ConfirmDialog } from '../../components/ui'
+import { Modal, StatusBadge, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
 
 // ── Type config ───────────────────────────────────────────────────────────────
@@ -640,6 +640,7 @@ export default function Calendar() {
   const [selectedAct,   setSelectedAct]   = useState<any>(null)
   const [editingAct,    setEditingAct]    = useState<any>(null)
   const [cancelTarget,  setCancelTarget]  = useState<any>(null)
+  const [cancelScope,   setCancelScope]   = useState<'this'|'future'|'all'>('this')
 
   const { data: activitiesData } = useQuery({
     queryKey: ['activities', range.start, range.end],
@@ -703,11 +704,14 @@ export default function Calendar() {
 
   const handleCancel = async () => {
     if (!cancelTarget) return
+    const inSeries = !!(cancelTarget.recurrence_id || cancelTarget.rrule)
+    const scope = inSeries ? cancelScope : 'this'
     try {
-      await activitiesApi.cancel(cancelTarget.id)
+      await activitiesApi.cancel(cancelTarget.id, scope)
       qc.invalidateQueries({ queryKey: ['activities'] })
-      setSelectedAct(null); setCancelTarget(null)
-      showToast('Session cancelled — client notified by email')
+      setSelectedAct(null); setCancelTarget(null); setCancelScope('this')
+      const msg = scope === 'all' ? 'All sessions cancelled' : scope === 'future' ? 'This and future sessions cancelled' : 'Session cancelled — client notified by email'
+      showToast(msg)
     } catch { showToast('Cancellation failed', 'error') }
   }
 
@@ -995,14 +999,42 @@ export default function Calendar() {
           onSaved={() => { setEditingAct(null); qc.invalidateQueries({ queryKey: ['activities'] }); showToast('Activity updated') }}
         />
       )}
-      {cancelTarget && (
-        <ConfirmDialog
-          message={`Cancel "${cancelTarget.title}" for ${cancelTarget.client_name}? The client will be notified by email.`}
-          confirmLabel="Yes, Cancel Session" danger
-          onConfirm={handleCancel}
-          onCancel={() => setCancelTarget(null)}
-        />
-      )}
+      {cancelTarget && (() => {
+        const inSeries = !!(cancelTarget.recurrence_id || cancelTarget.rrule)
+        return (
+          <Modal title="Cancel Session" onClose={() => { setCancelTarget(null); setCancelScope('this') }}
+            footer={
+              <>
+                <button className="btn btn-outline btn-sm" onClick={() => { setCancelTarget(null); setCancelScope('this') }}>Keep</button>
+                <button className="btn btn-danger btn-sm" onClick={handleCancel}>Yes, Cancel</button>
+              </>
+            }>
+            <p style={{ fontSize: 14, color: 'var(--ink)', marginBottom: 16 }}>
+              Cancel <strong>"{cancelTarget.title}"</strong> for {cancelTarget.client_name}?
+              The client will be notified by email.
+            </p>
+            {inSeries && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {([
+                  { value: 'this',   label: 'This session only' },
+                  { value: 'future', label: 'This and all future sessions in the series' },
+                  { value: 'all',    label: 'All sessions in the series' },
+                ] as const).map(opt => (
+                  <label key={opt.value} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, cursor: 'pointer',
+                    padding: '10px 12px', borderRadius: 6, border: `1px solid ${cancelScope === opt.value ? 'var(--ink)' : 'var(--border)'}`,
+                    background: cancelScope === opt.value ? 'var(--paper)' : 'var(--white)' }}>
+                    <input type="radio" name="cal_cancel_scope" value={opt.value}
+                      checked={cancelScope === opt.value}
+                      onChange={() => setCancelScope(opt.value)}
+                      style={{ accentColor: 'var(--ink)' }} />
+                    {opt.label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </Modal>
+        )
+      })()}
       {toastEl}
     </AppShell>
   )
