@@ -48,10 +48,14 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAssistantOrAbove]
 
     def get_queryset(self):
-        qs = KnowledgeItem.objects.filter(workspace=self.request.user.workspace)
-        q     = self.request.query_params.get("q")
-        ctype = self.request.query_params.get("content_type")
-        vis   = self.request.query_params.get("visibility")
+        user = self.request.user
+        qs = KnowledgeItem.objects.filter(workspace=user.workspace)
+        # Coaches and assistants cannot see owner-only files
+        if user.role not in ("business_owner", "platform_admin"):
+            qs = qs.exclude(visibility="owner_only")
+        q      = self.request.query_params.get("q")
+        ctype  = self.request.query_params.get("content_type")
+        vis    = self.request.query_params.get("visibility")
         folder = self.request.query_params.get("folder")
         if q:
             qs = qs.annotate(search=SearchVector("title", "description")).filter(search=SearchQuery(q))

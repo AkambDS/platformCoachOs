@@ -6,13 +6,20 @@ import { PageHeader, Modal, useToast } from '../../components/ui'
 import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Eye, Download, ChevronRight } from 'lucide-react'
 
 const VISIBILITY_LABELS: Record<string, string> = {
-  internal: 'Internal',
+  owner_only:     'Owner Only',
+  internal:       'All Staff',
   client_visible: 'Client Visible',
 }
 const VISIBILITY_COLORS: Record<string, string> = {
-  internal: '#8c8279',
+  owner_only:     '#b91c1c',
+  internal:       '#8c8279',
   client_visible: '#4a7c59',
 }
+const VISIBILITY_OPTIONS = [
+  { value: 'owner_only',     label: 'Owner only',         desc: 'Only you (the business owner) can see this' },
+  { value: 'internal',       label: 'All staff',          desc: 'All coaches and assistants in your workspace' },
+  { value: 'client_visible', label: 'Client visible',     desc: 'Clients can see this in their portal' },
+]
 const TYPE_ICONS: Record<string, any> = {
   pdf:      <FileText size={20} color="#c0392b" />,
   video:    <Film     size={20} color="#7c4d9f" />,
@@ -255,11 +262,26 @@ function UploadModal({ folders, onClose, onUploaded }: any) {
           </select>
         </div>
         <div className="fgroup">
-          <label className="flabel">Visibility</label>
-          <select className="fselect" value={form.visibility} onChange={e => set('visibility', e.target.value)}>
-            <option value="internal">Internal only</option>
-            <option value="client_visible">Client visible</option>
-          </select>
+          <label className="flabel">Who can access this file?</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {VISIBILITY_OPTIONS.map(opt => (
+              <label key={opt.value} style={{
+                display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
+                padding: '10px 12px', borderRadius: 6,
+                border: `1px solid ${form.visibility === opt.value ? 'var(--ink)' : 'var(--border)'}`,
+                background: form.visibility === opt.value ? 'var(--paper)' : 'var(--white)',
+              }}>
+                <input type="radio" name="visibility" value={opt.value}
+                  checked={form.visibility === opt.value}
+                  onChange={() => set('visibility', opt.value)}
+                  style={{ marginTop: 2, accentColor: 'var(--ink)', flexShrink: 0 }} />
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{opt.label}</div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{opt.desc}</div>
+                </div>
+              </label>
+            ))}
+          </div>
         </div>
       </div>
     </Modal>

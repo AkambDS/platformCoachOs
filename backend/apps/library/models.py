@@ -31,7 +31,8 @@ class KnowledgeItem(WorkspaceModel):
         PLAYBOOK = "playbook", "Playbook/Worksheet"
 
     class Visibility(models.TextChoices):
-        INTERNAL       = "internal",       "Internal Only"
+        OWNER_ONLY     = "owner_only",     "Owner Only"
+        INTERNAL       = "internal",       "All Staff (coaches + assistants)"
         CLIENT_VISIBLE = "client_visible", "Client Visible"
 
     id             = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
