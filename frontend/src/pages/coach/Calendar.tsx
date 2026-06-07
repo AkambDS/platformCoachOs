@@ -4,9 +4,10 @@ import dayGridPlugin from '@fullcalendar/daygrid'
 import timeGridPlugin from '@fullcalendar/timegrid'
 import interactionPlugin from '@fullcalendar/interaction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
+import { activitiesApi, clientsApi, settingsApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, ConfirmDialog } from '../../components/ui'
+import { useAuthStore } from '../../store/auth'
 
 // ── Type config ───────────────────────────────────────────────────────────────
 const TYPE_CONFIG: Record<string, { bg: string; border: string; text: string; label: string }> = {
@@ -92,6 +93,7 @@ function MiniCalendar({ currentDate, onNavigate }: { currentDate: Date; onNaviga
 // ── New Activity Modal ────────────────────────────────────────────────────────
 function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const qc = useQueryClient()
+  const { user } = useAuthStore()
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
@@ -101,11 +103,26 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
   })
+  const { data: teamData } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+  })
   const clients: any[] = clientsData?.results || clientsData || []
+  const teamMembers: any[] = teamData?.results || teamData || []
+  const coaches = teamMembers.filter((m: any) => ['coach', 'business_owner'].includes(m.role))
+
   const [form, setForm] = useState({
     client: '', activity_type: 'session', title: '',
     location: '', notes: '',
   })
+  const [coachId, setCoachId] = useState(user?.id || '')
+
+  // Auto-populate coach from the selected client's assigned coach
+  useEffect(() => {
+    const selected = clients.find((c: any) => c.id === form.client)
+    if (selected?.coach) setCoachId(selected.coach)
+    else if (!form.client) setCoachId(user?.id || '')
+  }, [form.client]) // eslint-disable-line react-hooks/exhaustive-deps
   const [date, setDate]           = useState(defaultStart ? defaultStart.slice(0, 10) : '')
   const [startTime, setStartTime] = useState(defaultStart ? defaultStart.slice(11, 16) : '')
   const [endDate, setEndDate]     = useState(defaultStart ? defaultStart.slice(0, 10) : '')
@@ -131,7 +148,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     const end_at      = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.client || !form.title || !start_at || !end_at) return
     setSaving(true)
-    const payload: any = { ...form, start_at: toUTC(start_at), end_at: toUTC(end_at) }
+    const payload: any = { ...form, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at) }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -175,6 +192,8 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
           </select>
         </div>
       </div>
+      <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
+        onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
       <div className="fgroup">
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
@@ -279,6 +298,85 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   )
 }
 
+// ── Coach Field — shared by Schedule + Edit modals ────────────────────────────
+function CoachField({ coaches, coachId, setCoachId, onCoachAdded }: {
+  coaches: any[]; coachId: string; setCoachId: (id: string) => void; onCoachAdded: () => void
+}) {
+  const [showAdd, setShowAdd] = useState(false)
+  const [addForm, setAddForm] = useState({ full_name: '', email: '' })
+  const [adding, setAdding]   = useState(false)
+  const [addError, setAddError] = useState('')
+
+  const handleAdd = async () => {
+    setAddError('')
+    if (!addForm.full_name.trim() || !addForm.email.trim()) { setAddError('Name and email are required'); return }
+    setAdding(true)
+    try {
+      const { data } = await authApi.addCoach({ ...addForm, role: 'coach' })
+      onCoachAdded()
+      setCoachId(data.id)
+      setShowAdd(false)
+      setAddForm({ full_name: '', email: '' })
+    } catch (err: any) {
+      setAddError(err?.response?.data?.detail || 'Failed to add coach')
+    } finally { setAdding(false) }
+  }
+
+  return (
+    <div className="fgroup">
+      <label className="flabel">Coach</label>
+      <select className="fselect" value={coachId} onChange={e => {
+        if (e.target.value === '__add__') { setShowAdd(true) }
+        else { setCoachId(e.target.value); setShowAdd(false) }
+      }}>
+        <option value="">— Auto (from client) —</option>
+        {coaches.map((c: any) => (
+          <option key={c.id} value={c.id}>
+            {c.full_name}{!c.is_active ? ' (pending)' : ''}
+          </option>
+        ))}
+        <option value="__add__">+ Add new coach…</option>
+      </select>
+
+      {showAdd && (
+        <div style={{ marginTop: 10, padding: '12px 14px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.06em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>
+            Add Coach — Portal Login Pending
+          </div>
+          {addError && (
+            <div style={{ fontSize: 12, color: '#b91c1c', marginBottom: 8 }}>{addError}</div>
+          )}
+          <div className="fgrid" style={{ marginBottom: 8 }}>
+            <input className="finput" placeholder="Full name *" value={addForm.full_name}
+              onChange={e => setAddForm(f => ({ ...f, full_name: e.target.value }))}
+              style={{ margin: 0 }} />
+            <input className="finput" type="email" placeholder="Email address *" value={addForm.email}
+              onChange={e => setAddForm(f => ({ ...f, email: e.target.value }))}
+              style={{ margin: 0 }} />
+          </div>
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>
+            Coach will be created as inactive. Send them a login invite from Settings → Team when ready.
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              onClick={handleAdd} disabled={adding}
+              style={{ padding: '7px 16px', background: 'var(--ink)', color: '#fff', border: 'none', borderRadius: 5, fontSize: 12, fontWeight: 600, cursor: 'pointer', opacity: adding ? .7 : 1 }}
+            >
+              {adding ? 'Adding…' : 'Add Coach'}
+            </button>
+            <button
+              onClick={() => { setShowAdd(false); setAddError(''); setAddForm({ full_name: '', email: '' }) }}
+              style={{ padding: '7px 14px', background: 'none', border: '1px solid var(--border)', borderRadius: 5, fontSize: 12, cursor: 'pointer', color: 'var(--muted)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Edit Activity Modal ───────────────────────────────────────────────────────
 function parseRrule(rrule: string): 'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly' {
   if (!rrule) return 'none'
@@ -298,9 +396,17 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
   })
+  const { data: teamData } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+  })
   const clients: any[] = clientsData?.results || clientsData || []
+  const teamMembers: any[] = teamData?.results || teamData || []
+  const coaches = teamMembers.filter((m: any) => ['coach', 'business_owner'].includes(m.role))
+
   const localStart = activity.start_at ? toLocalInput(activity.start_at) : ''
   const localEnd   = activity.end_at   ? toLocalInput(activity.end_at)   : ''
+  const [coachId, setCoachId] = useState(activity.coach || '')
   const [form, setForm] = useState({
     client: activity.client || '',
     activity_type: activity.activity_type || 'session',
@@ -308,6 +414,12 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     location: activity.location || '',
     notes: activity.notes || '',
   })
+
+  // When client changes, auto-populate coach from client's assignment
+  useEffect(() => {
+    const selected = clients.find((c: any) => c.id === form.client)
+    if (selected?.coach) setCoachId(selected.coach)
+  }, [form.client]) // eslint-disable-line react-hooks/exhaustive-deps
   const [date, setDate]           = useState(localStart.slice(0, 10))
   const [startTime, setStartTime] = useState(localStart.slice(11, 16))
   const [endDate, setEndDate]     = useState(localEnd.slice(0, 10) || localStart.slice(0, 10))
@@ -336,6 +448,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     setSaving(true); setSaveError('')
     const payload: any = {
       ...form,
+      coach: coachId || undefined,
       start_at: toUTC(start_at),
       end_at: toUTC(end_at),
       repeat,
@@ -378,6 +491,8 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
           </select>
         </div>
       </div>
+      <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
+        onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
       <div className="fgroup"><label className="flabel">Title</label><input className="finput" value={form.title} onChange={e => set('title', e.target.value)} /></div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
         <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
@@ -470,7 +585,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
 
 // ── Activity Detail Modal ─────────────────────────────────────────────────────
 function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
-  const canAct = activity.status === 'scheduled'
+  const canAct = ['scheduled', 'rescheduled', 'late'].includes(activity.status)
   const cfg = typeConfig(activity.activity_type)
   return (
     <Modal title={activity.title} onClose={onClose} footer={
