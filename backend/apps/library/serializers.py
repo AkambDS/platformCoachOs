@@ -19,16 +19,20 @@ class FolderSerializer(serializers.ModelSerializer):
 
 
 class KnowledgeItemSerializer(serializers.ModelSerializer):
-    presigned_url = serializers.SerializerMethodField()
+    presigned_url    = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model  = KnowledgeItem
         fields = ["id", "folder", "content_type", "title", "description", "tags",
                   "visibility", "s3_key", "file_name", "url", "version",
-                  "view_count", "download_count", "uploaded_by",
+                  "view_count", "download_count", "uploaded_by", "uploaded_by_name",
                   "created_at", "presigned_url"]
         read_only_fields = ["id", "view_count", "download_count",
                             "uploaded_by", "created_at", "version"]
+
+    def get_uploaded_by_name(self, obj):
+        return obj.uploaded_by.full_name if obj.uploaded_by else None
 
     def get_presigned_url(self, obj):
         if not obj.s3_key: return None

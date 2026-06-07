@@ -48,11 +48,17 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAssistantOrAbove]
 
     def get_queryset(self):
+        from django.db.models import Q
         user = self.request.user
         qs = KnowledgeItem.objects.filter(workspace=user.workspace)
-        # Coaches and assistants cannot see owner-only files
-        if user.role not in ("business_owner", "platform_admin"):
-            qs = qs.exclude(visibility="owner_only")
+        if user.role in ("business_owner", "platform_admin"):
+            pass  # owner sees everything
+        else:
+            # Coaches/assistants: see internal + client_visible + their own private uploads
+            qs = qs.filter(
+                Q(visibility__in=["internal", "client_visible"]) |
+                Q(visibility="private", uploaded_by=user)
+            )
         q      = self.request.query_params.get("q")
         ctype  = self.request.query_params.get("content_type")
         vis    = self.request.query_params.get("visibility")

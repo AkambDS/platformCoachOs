@@ -1,24 +1,33 @@
 import { useState, useRef } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { libraryApi } from '../../api/client'
+import { useAuthStore } from '../../store/auth'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Eye, Download, ChevronRight } from 'lucide-react'
 
 const VISIBILITY_LABELS: Record<string, string> = {
+  private:        'Just Me',
   owner_only:     'Owner Only',
-  internal:       'All Staff',
+  internal:       'All Coaches',
   client_visible: 'Client Visible',
 }
 const VISIBILITY_COLORS: Record<string, string> = {
+  private:        '#7c4d9f',
   owner_only:     '#b91c1c',
-  internal:       '#8c8279',
+  internal:       '#2d6a9f',
   client_visible: '#4a7c59',
 }
-const VISIBILITY_OPTIONS = [
-  { value: 'owner_only',     label: 'Owner only',         desc: 'Only you (the business owner) can see this' },
-  { value: 'internal',       label: 'All staff',          desc: 'All coaches and assistants in your workspace' },
-  { value: 'client_visible', label: 'Client visible',     desc: 'Clients can see this in their portal' },
+
+const OWNER_VISIBILITY_OPTIONS = [
+  { value: 'owner_only',     label: 'Owner only',       desc: 'Only you can see this file' },
+  { value: 'internal',       label: 'All coaches',      desc: 'All coaches and assistants in your workspace' },
+  { value: 'client_visible', label: 'Share with clients', desc: 'Clients can view this in their portal' },
+]
+const COACH_VISIBILITY_OPTIONS = [
+  { value: 'private',        label: 'Just me',          desc: 'Only you and the owner can see this' },
+  { value: 'internal',       label: 'All coaches',      desc: 'All coaches and assistants in your workspace' },
+  { value: 'client_visible', label: 'Share with clients', desc: 'Clients can view this in their portal' },
 ]
 const TYPE_ICONS: Record<string, any> = {
   pdf:      <FileText size={20} color="#c0392b" />,
@@ -126,7 +135,7 @@ function ItemCard({ item, onDelete }: { item: any; onDelete: () => void }) {
             {item.description}
           </div>
         )}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 'auto', flexWrap: 'wrap' }}>
           <span style={{
             fontSize: 10, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
             color: VISIBILITY_COLORS[item.visibility] || '#8c8279',
@@ -135,6 +144,11 @@ function ItemCard({ item, onDelete }: { item: any; onDelete: () => void }) {
           }}>
             {VISIBILITY_LABELS[item.visibility] || item.visibility}
           </span>
+          {item.uploaded_by_name && (
+            <span style={{ fontSize: 11, color: 'var(--muted)' }}>
+              by {item.uploaded_by_name}
+            </span>
+          )}
           <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 'auto' }}>
             {item.view_count} views
           </span>
@@ -167,9 +181,14 @@ function ItemCard({ item, onDelete }: { item: any; onDelete: () => void }) {
 
 function UploadModal({ folders, onClose, onUploaded }: any) {
   const { show } = useToast()
+  const { user } = useAuthStore()
+  const isOwner = (user as any)?.role === 'business_owner'
+  const visibilityOptions = isOwner ? OWNER_VISIBILITY_OPTIONS : COACH_VISIBILITY_OPTIONS
+  const defaultVisibility = isOwner ? 'internal' : 'internal'
+
   const fileRef = useRef<HTMLInputElement>(null)
   const [file, setFile] = useState<File | null>(null)
-  const [form, setForm] = useState({ title: '', description: '', visibility: 'internal', folder: '' })
+  const [form, setForm] = useState({ title: '', description: '', visibility: defaultVisibility, folder: '' })
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
@@ -251,37 +270,35 @@ function UploadModal({ folders, onClose, onUploaded }: any) {
         <label className="flabel">Description</label>
         <textarea className="ftextarea" rows={2} value={form.description} onChange={e => set('description', e.target.value)} placeholder="Optional description…" />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-        <div className="fgroup">
-          <label className="flabel">Folder</label>
-          <select className="fselect" value={form.folder} onChange={e => set('folder', e.target.value)}>
-            <option value="">No folder</option>
-            {allFolders.map(f => (
-              <option key={f.id} value={f.id}>{' '.repeat(f.depth * 2)}{f.name}</option>
-            ))}
-          </select>
-        </div>
-        <div className="fgroup">
-          <label className="flabel">Who can access this file?</label>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {VISIBILITY_OPTIONS.map(opt => (
-              <label key={opt.value} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer',
-                padding: '10px 12px', borderRadius: 6,
-                border: `1px solid ${form.visibility === opt.value ? 'var(--ink)' : 'var(--border)'}`,
-                background: form.visibility === opt.value ? 'var(--paper)' : 'var(--white)',
-              }}>
+      <div className="fgroup">
+        <label className="flabel">Folder</label>
+        <select className="fselect" value={form.folder} onChange={e => set('folder', e.target.value)}>
+          <option value="">No folder</option>
+          {allFolders.map(f => (
+            <option key={f.id} value={f.id}>{' '.repeat(f.depth * 2)}{f.name}</option>
+          ))}
+        </select>
+      </div>
+      <div className="fgroup">
+        <label className="flabel">Who can access this file?</label>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+          {visibilityOptions.map((opt: any) => (
+            <label key={opt.value} style={{
+              display: 'flex', flexDirection: 'column', gap: 4, cursor: 'pointer',
+              padding: '10px 12px', borderRadius: 6,
+              border: `1px solid ${form.visibility === opt.value ? 'var(--ink)' : 'var(--border)'}`,
+              background: form.visibility === opt.value ? 'var(--paper)' : 'var(--white)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <input type="radio" name="visibility" value={opt.value}
                   checked={form.visibility === opt.value}
                   onChange={() => set('visibility', opt.value)}
-                  style={{ marginTop: 2, accentColor: 'var(--ink)', flexShrink: 0 }} />
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{opt.label}</div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{opt.desc}</div>
-                </div>
-              </label>
-            ))}
-          </div>
+                  style={{ accentColor: 'var(--ink)', flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>{opt.label}</span>
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4, paddingLeft: 18 }}>{opt.desc}</span>
+            </label>
+          ))}
         </div>
       </div>
     </Modal>
