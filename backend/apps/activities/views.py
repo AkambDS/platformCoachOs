@@ -108,7 +108,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
         workspace  = activity.workspace
         coach_name = activity.coach.full_name if activity.coach else workspace.name
         coach_email = activity.coach.email if activity.coach else ""
-        dt_human   = _fmt_dt_human(activity.start_at)
+        dt_human   = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         owner_email, owner_name = _owner_info(workspace)
         logo_url   = _logo_url(workspace)
 

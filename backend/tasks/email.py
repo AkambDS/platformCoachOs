@@ -95,8 +95,16 @@ def _build_ics(activity, method: str = "REQUEST", cancelled: bool = False) -> by
     return "\r\n".join(lines).encode("utf-8")
 
 
-def _fmt_dt_human(dt) -> str:
-    return dt.strftime("%A, %B %d at %I:%M %p").replace(" 0", " ")
+def _fmt_dt_human(dt, tz_name: str = "") -> str:
+    """Format a datetime in the given IANA timezone (e.g. 'America/New_York').
+    Falls back to UTC if tz_name is empty or invalid. Appends the timezone abbreviation."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    try:
+        tz = ZoneInfo(tz_name) if tz_name else ZoneInfo("UTC")
+    except (ZoneInfoNotFoundError, Exception):
+        tz = ZoneInfo("UTC")
+    local_dt = dt.astimezone(tz)
+    return local_dt.strftime("%A, %B %d at %I:%M %p %Z").replace(" 0", " ")
 
 
 def _build_google_cal_url(activity) -> str:
@@ -173,7 +181,7 @@ def send_activity_confirmation_email(activity_id: str):
             logger.warning(f"No email for client on activity {activity_id}")
             return
 
-        dt         = _fmt_dt_human(activity.start_at)
+        dt         = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
         workspace  = activity.workspace
@@ -285,7 +293,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         if not client.email or activity.status != "scheduled":
             return
 
-        dt         = _fmt_dt_human(activity.start_at)
+        dt         = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
         workspace   = activity.workspace
@@ -387,7 +395,7 @@ def send_activity_reschedule_email(activity_id: str):
         if not client.email:
             return
 
-        dt          = _fmt_dt_human(activity.start_at)
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
         workspace   = activity.workspace
@@ -462,7 +470,7 @@ def send_activity_cancellation_email(activity_id: str):
         if not client.email:
             return
 
-        dt          = _fmt_dt_human(activity.start_at)
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
         workspace   = activity.workspace
@@ -864,7 +872,7 @@ def send_client_cancellation_notice(activity_id: str):
             return
 
         client_name = activity.client.full_name
-        dt          = _fmt_dt_human(activity.start_at)
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         workspace   = activity.workspace
 
         subject = f"Session cancelled by {client_name}"
@@ -897,7 +905,7 @@ def send_client_reschedule_request(activity_id: str, message: str = ""):
         workspace    = activity.workspace
         client_name  = activity.client.full_name
         client_email = activity.client.email or ""
-        dt           = _fmt_dt_human(activity.start_at)
+        dt           = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
 
         # Notify assigned coach; fall back to business owner
         coach = activity.coach

@@ -82,7 +82,7 @@ def _shell(workspace_name: str, body: str) -> str:
 
 def _detail_box(activity) -> str:
     from tasks.email import _fmt_dt_human
-    dt = _fmt_dt_human(activity.start_at)
+    dt = _fmt_dt_human(activity.start_at, getattr(activity.workspace, "workspace_timezone", ""))
     coach = escape(activity.coach.full_name if activity.coach else activity.workspace.name)
     rows = [
         ("What",  escape(activity.title)),
