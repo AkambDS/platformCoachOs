@@ -238,9 +238,35 @@ def send_activity_confirmation_email(activity_id: str):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        # Attach ICS as a file — triggers "Add to Calendar" in most clients
         msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
         msg.send()
+
+        # ── Coach copy ──────────────────────────────────────────────────────────
+        if coach_email:
+            frontend_url  = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+            coach_subject = f"Session booked: {activity.title} with {client.full_name}"
+            coach_first   = activity.coach.first_name if activity.coach else coach_name
+            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
+            coach_plain   = (
+                f"Hi {coach_first},\n\n"
+                f"A session has been scheduled with your client {client.full_name}.\n\n"
+                f"  What:   {activity.title}\n"
+                f"  When:   {dt}"
+                f"{loc_note}\n"
+                f"  Client: {client.full_name}"
+                f"{f' ({client.email})' if client.email else ''}\n\n"
+                f"View in CoachOS: {frontend_url}/clients/{client.id}\n\n"
+                f"— {workspace.name}"
+            )
+            coach_msg = EmailMultiAlternatives(
+                subject=coach_subject,
+                body=coach_plain,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[coach_email],
+            )
+            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+            coach_msg.send()
+            logger.info(f"Coach copy sent to {coach_email} for activity {activity_id}")
 
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(confirmation_sent_at=timezone.now())
@@ -323,6 +349,30 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
+
+        # ── Coach copy ──────────────────────────────────────────────────────────
+        if coach_email:
+            coach_first   = activity.coach.first_name if activity.coach else coach_name
+            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
+            coach_subject = f"Reminder: {activity.title} with {client.full_name} in {time_label}"
+            coach_plain   = (
+                f"Hi {coach_first},\n\n"
+                f"Reminder: you have a session with {client.full_name} in {time_label}.\n\n"
+                f"  What:   {activity.title}\n"
+                f"  When:   {dt}"
+                f"{loc_note}\n"
+                f"  Client: {client.full_name}"
+                f"{f' ({client.email})' if client.email else ''}\n\n"
+                f"— {workspace.name}"
+            )
+            coach_msg = EmailMultiAlternatives(
+                subject=coach_subject,
+                body=coach_plain,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[coach_email],
+            )
+            coach_msg.send()
+            logger.info(f"Coach reminder copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
 
@@ -372,6 +422,32 @@ def send_activity_reschedule_email(activity_id: str):
         msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
         msg.send()
         logger.info(f"Reschedule email sent to {client.email} for activity {activity_id}")
+
+        # ── Coach copy ──────────────────────────────────────────────────────────
+        if coach_email:
+            coach_first   = activity.coach.first_name if activity.coach else coach_name
+            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
+            coach_subject = f"Session updated: {activity.title} with {client.full_name}"
+            coach_plain   = (
+                f"Hi {coach_first},\n\n"
+                f"The following session with {client.full_name} has been rescheduled "
+                f"and the client has been notified.\n\n"
+                f"  What:   {activity.title}\n"
+                f"  When:   {dt}"
+                f"{loc_note}\n"
+                f"  Client: {client.full_name}"
+                f"{f' ({client.email})' if client.email else ''}\n\n"
+                f"— {workspace.name}"
+            )
+            coach_msg = EmailMultiAlternatives(
+                subject=coach_subject,
+                body=coach_plain,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[coach_email],
+            )
+            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+            coach_msg.send()
+            logger.info(f"Coach reschedule copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reschedule_email failed: {e}")
 
@@ -411,12 +487,36 @@ def send_activity_cancellation_email(activity_id: str):
         msg = EmailMultiAlternatives(
             subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %d').replace(' 0', ' ')}",
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
         msg.attach("cancel.ics", ics_bytes, "text/calendar")
         msg.send()
+
+        # ── Coach copy ──────────────────────────────────────────────────────────
+        notify_email = coach_email or owner_email
+        notify_name  = (activity.coach.first_name if activity.coach else None) or owner_name or workspace.name
+        if notify_email:
+            coach_plain = (
+                f"Hi {notify_name},\n\n"
+                f"The following session with {client.full_name} has been cancelled "
+                f"and the client has been notified.\n\n"
+                f"  What:   {activity.title}\n"
+                f"  Was:    {dt}\n"
+                f"  Client: {client.full_name}"
+                f"{f' ({client.email})' if client.email else ''}\n\n"
+                f"— {workspace.name}"
+            )
+            coach_msg = EmailMultiAlternatives(
+                subject=f"Session cancelled: {activity.title} with {client.full_name}",
+                body=coach_plain,
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                to=[notify_email],
+            )
+            coach_msg.attach("cancel.ics", ics_bytes, "text/calendar")
+            coach_msg.send()
+            logger.info(f"Coach cancellation copy sent to {notify_email} for activity {activity_id}")
 
         from django.utils import timezone
         Activity.objects.filter(pk=activity_id).update(cancellation_sent_at=timezone.now())
@@ -832,5 +932,28 @@ def send_client_reschedule_request(activity_id: str, message: str = ""):
         )
         msg.send()
         logger.info(f"Reschedule request sent to {recipient_email} for activity {activity_id}")
+
+        # ── Acknowledge to client ───────────────────────────────────────────────
+        if client_email:
+            coach_display = (coach.full_name if coach else workspace.name)
+            ack_subject   = f"Reschedule request received — {activity.title}"
+            ack_body      = (
+                f"Hi {activity.client.first_name or client_name},\n\n"
+                f"Your reschedule request has been received and forwarded to {coach_display}.\n\n"
+                f"  What:  {activity.title}\n"
+                f"  When:  {dt}\n\n"
+                f"They will reach out to confirm a new time. "
+                f"If you need to follow up, you can reply to this email.\n\n"
+                f"— {workspace.name}"
+            )
+            ack_msg = EmailMultiAlternatives(
+                subject=ack_subject,
+                body=ack_body,
+                from_email=_workspace_from_email(workspace),
+                to=[client_email],
+                reply_to=[recipient_email],
+            )
+            ack_msg.send()
+            logger.info(f"Reschedule acknowledgement sent to {client_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_reschedule_request failed: {e}")

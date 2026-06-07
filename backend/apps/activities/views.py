@@ -36,6 +36,15 @@ class ActivityViewSet(viewsets.ModelViewSet):
             qs = qs.order_by("start_at")
         return qs
 
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        # When a coach edits a rescheduled session without explicitly setting status,
+        # reset it to "scheduled" so it no longer shows as pending reschedule
+        data = serializer.validated_data
+        if instance.status == "rescheduled" and "status" not in data:
+            data["status"] = "scheduled"
+        serializer.save(**data)
+
     def perform_destroy(self, instance):
         from tasks.calendar import sync_to_google_calendar
         sync_to_google_calendar.delay(str(instance.id), "delete")
