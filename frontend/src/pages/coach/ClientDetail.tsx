@@ -39,14 +39,22 @@ function fmtDatetime(d: string) {
 }
 
 // ── New Activity Modal ────────────────────────────────────────────────────────
-function NewActivityModal({ clientId, onClose, onSaved }: any) {
+function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   const qc = useQueryClient()
+  const { user } = useAuthStore()
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter((t: any) => t.is_active),
   })
+  const { data: teamData } = useQuery({
+    queryKey: ['team'],
+    queryFn: () => authApi.team().then(r => r.data),
+  })
+  const teamMembers: any[] = teamData?.results || teamData || []
+  const coaches = teamMembers.filter((m: any) => ['coach', 'business_owner'].includes(m.role))
 
+  const [coachId, setCoachId] = useState(defaultCoachId || user?.id || '')
   const [form, setForm] = useState({ activity_type: 'session', title: '', location: '', notes: '' })
   const [date, setDate]           = useState('')
   const [startTime, setStartTime] = useState('')
@@ -73,7 +81,7 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
     const end_at = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.title || !start_at) return
     setSaving(true)
-    const payload: any = { ...form, client: clientId, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation }
+    const payload: any = { ...form, client: clientId, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -96,14 +104,25 @@ function NewActivityModal({ clientId, onClose, onSaved }: any) {
         <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving…' : 'Schedule'}</button>
       </>
     }>
-      {/* Type */}
-      <div className="fgroup">
-        <label className="flabel">Type</label>
-        <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
-          {(activityTypes as any[]).map((t: any) => (
-            <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
-          ))}
-        </select>
+      {/* Type + Coach */}
+      <div className="fgrid">
+        <div className="fgroup">
+          <label className="flabel">Type</label>
+          <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
+            {(activityTypes as any[]).map((t: any) => (
+              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+            ))}
+          </select>
+        </div>
+        <div className="fgroup">
+          <label className="flabel">Coach</label>
+          <select className="fselect" value={coachId} onChange={e => setCoachId(e.target.value)}>
+            <option value="">— Auto (from client) —</option>
+            {coaches.map((c: any) => (
+              <option key={c.id} value={c.id}>{c.full_name}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Title */}
@@ -1481,7 +1500,7 @@ export default function ClientDetail() {
         )}
       </div>
 
-      {showActivity && <NewActivityModal clientId={id} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
+      {showActivity && <NewActivityModal clientId={id} defaultCoachId={(client as any)?.coach} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
       {showGoal && <GoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
       {editingGoal && <GoalModal clientId={id} goal={editingGoal} onClose={() => setEditingGoal(null)} onSaved={() => { setEditingGoal(null); showToast('Goal updated') }} />}
       {showDeleteConfirm && (

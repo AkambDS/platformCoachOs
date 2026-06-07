@@ -214,13 +214,61 @@ def _calendar_block(google_cal_url: str = "") -> str:
     </table>"""
 
 
+# ── Session action buttons ──────────────────────────────────────────────────────
+
+def _action_buttons(confirm_url: str = "", cancel_url: str = "", reschedule_url: str = "") -> str:
+    """Three-button row: Confirm / Cancel / Reschedule. Only rendered when URLs are provided."""
+    if not any([confirm_url, cancel_url, reschedule_url]):
+        return ""
+    return f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:28px;border:1px solid #ede9e1;border-radius:8px;
+                  background:#faf8f4;">
+      <tr>
+        <td style="padding:20px 24px 22px;">
+          <p style="margin:0 0 6px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                    font-size:11px;font-weight:700;letter-spacing:.14em;
+                    text-transform:uppercase;color:#9e9890;">
+            Your response
+          </p>
+          <p style="margin:0 0 18px;font-size:13px;color:#6e6560;line-height:1.6;
+                    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+            Let your coach know you got this — or request a change if needed.
+          </p>
+          <table role="presentation" cellpadding="0" cellspacing="0">
+            <tr>
+              {'<td style="padding-right:8px;"><a href="' + confirm_url + '" style="display:inline-block;padding:11px 20px;background:#2d6a2d;color:#fff;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;border-radius:5px;">&#10003; Confirm</a></td>' if confirm_url else ''}
+              {'<td style="padding-right:8px;"><a href="' + reschedule_url + '" style="display:inline-block;padding:11px 20px;background:#fff;color:#1a2f4e;border:1px solid #c4bfb8;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;border-radius:5px;">&#8635; Reschedule</a></td>' if reschedule_url else ''}
+              {'<td><a href="' + cancel_url + '" style="display:inline-block;padding:11px 20px;background:#fff;color:#b91c1c;border:1px solid #fca5a5;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;text-decoration:none;border-radius:5px;">&#10007; Cancel</a></td>' if cancel_url else ''}
+            </tr>
+          </table>
+          <p style="margin:14px 0 0;font-size:11px;color:#b5afa6;line-height:1.5;
+                    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+            These links are unique to you and expire after the session date.
+          </p>
+        </td>
+      </tr>
+    </table>"""
+
+
 # ── Confirmation email ───────────────────────────────────────────────────────────
 
 def build_confirmation_email(activity, workspace_name: str, logo_url: str,
                               coach_name: str, coach_email: str, dt_human: str,
                               owner_email: str = "", owner_name: str = "",
                               google_cal_url: str = "",
-                              custom_intro: str = "", custom_closing: str = "") -> str:
+                              custom_intro: str = "", custom_closing: str = "",
+                              confirm_url: str = "", cancel_url: str = "",
+                              reschedule_url: str = "",
+                              style: dict = None) -> str:
+    s              = style or {}
+    header_bg      = s.get("header_bg",      "#1a2f4e")
+    accent_color   = s.get("accent_color",   "#b8922e")
+    header_tagline = s.get("header_tagline", "Coaching Platform")
+    body_font      = s.get("body_font",      "'Helvetica Neue',Helvetica,Arial,sans-serif")
+    heading_font   = s.get("heading_font",   "Georgia,'Times New Roman',serif")
+    value_color    = s.get("value_color",    "#1a1714")
+
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
@@ -251,7 +299,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
               font-weight:600;">
       Session Confirmed
     </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       Your session is confirmed
     </h1>
@@ -265,13 +313,14 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
            style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
-      {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
+      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
       {location_row}
       {_divider()}
       {_detail_row("Coach", coach_display)}
     </table>
 
     {notes_block}
+    {_action_buttons(confirm_url, cancel_url, reschedule_url)}
     {_calendar_block(google_cal_url)}
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
@@ -283,7 +332,9 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
       &mdash; {workspace_name}
     </p>"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font)
 
 
 # ── Reschedule / update email ────────────────────────────────────────────────────
@@ -433,13 +484,22 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
                          coach_name: str, coach_email: str, dt_human: str,
                          time_label: str, owner_email: str = "",
                          owner_name: str = "",
-                         custom_intro: str = "", custom_closing: str = "") -> str:
+                         custom_intro: str = "", custom_closing: str = "",
+                         cancel_url: str = "", reschedule_url: str = "",
+                         style: dict = None) -> str:
+    s              = style or {}
+    header_bg      = s.get("header_bg",      "#1a2f4e")
+    accent_color   = s.get("accent_color",   "#b8922e")
+    header_tagline = s.get("header_tagline", "Coaching Platform")
+    body_font      = s.get("body_font",      "'Helvetica Neue',Helvetica,Arial,sans-serif")
+    value_color    = s.get("value_color",    "#1a1714")
+
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
 
-    is_soon = "1 hour" in time_label or ("hour" in time_label.lower() and "24" not in time_label)
-    accent_color = "#c0392b" if is_soon else "#b8922e"
+    is_soon   = "1 hour" in time_label or ("hour" in time_label.lower() and "24" not in time_label)
+    dt_color  = "#c0392b" if is_soon else accent_color
     label_text = f"Upcoming in {time_label}" if is_soon else f"Reminder \u00b7 {time_label} away"
 
     coach_display = (
@@ -457,7 +517,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
               font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-              color:{accent_color};font-weight:600;">
+              color:{dt_color};font-weight:600;">
       {label_text}
     </p>
     <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
@@ -474,11 +534,13 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
            style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
-      {_detail_row("When", f'<strong style="color:{accent_color};">{dt_human}</strong>')}
+      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
       {location_row}
       {_divider()}
       {_detail_row("Coach", coach_display)}
     </table>
+
+    {_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url)}
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
@@ -489,7 +551,9 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
       &mdash; {workspace_name}
     </p>"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font)
 
 
 # ── Cancellation email ───────────────────────────────────────────────────────────
@@ -569,6 +633,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     header_tagline = s.get("header_tagline", "Coaching Platform")
     body_font      = s.get("body_font",      "'Helvetica Neue',Helvetica,Arial,sans-serif")
     heading_font   = s.get("heading_font",   "Georgia,'Times New Roman',serif")
+    value_color    = s.get("value_color",    "#1a1714")
 
     amount = f"{invoice.currency} {invoice.total:,.2f}"
 
@@ -581,7 +646,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     due_row = ""
     if due_str:
-        due_row = _divider() + _detail_row("Due Date", f'<strong style="color:#c0392b;">{due_str}</strong>')
+        due_row = _divider() + _detail_row("Due Date", f'<strong style="color:{value_color};">{due_str}</strong>')
 
     _default_intro   = f"Hi {invoice.client.first_name}, please find your invoice from {workspace_name} below."
     _default_closing = (f"Have questions about this invoice? Contact us at {owner_name or owner_email}."
@@ -609,7 +674,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
            style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
       {_detail_row("Invoice #", invoice.number)}
       {_divider()}
-      {_detail_row("Amount", f'<strong style="color:#1a1714;font-size:18px;">{amount}</strong>')}
+      {_detail_row("Amount", f'<strong style="color:{value_color};font-size:18px;">{amount}</strong>')}
       {due_row}
     </table>
 

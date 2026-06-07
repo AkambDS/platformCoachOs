@@ -292,9 +292,10 @@ def email_preview(request):
         "header_tagline": request.query_params.get("header_tagline", saved_style.get("header_tagline", "")),
         "body_font":      request.query_params.get("body_font",      saved_style.get("body_font",      "")),
         "heading_font":   request.query_params.get("heading_font",   saved_style.get("heading_font",   "")),
+        "value_color":    request.query_params.get("value_color",    saved_style.get("value_color",    "")),
     }
-    # Remove empty values so build functions use their own defaults
-    style = {k: v for k, v in style.items() if v}
+    # Remove None values; keep empty string so header_tagline='' means "logo only, no tagline"
+    style = {k: v for k, v in style.items() if v is not None}
 
     if email_type == "confirmation":
         client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
@@ -308,6 +309,7 @@ def email_preview(request):
             dt_human="Wednesday, June 5 at 10:00 AM",
             owner_email=owner_email, owner_name=owner_name,
             google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
         )
 
     elif email_type in ("reminder_24h", "reminder_1h"):
@@ -324,6 +326,7 @@ def email_preview(request):
             time_label=time_label,
             owner_email=owner_email, owner_name=owner_name,
             custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
         )
 
     elif email_type == "invoice":

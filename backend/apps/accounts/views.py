@@ -422,17 +422,57 @@ def team_member_detail(request, pk):
                         status=status.HTTP_400_BAD_REQUEST)
 
     if request.method == "PATCH":
+        update_fields = []
         role = request.data.get("role")
-        if role not in ("coach", "assistant"):
-            return Response({"detail": "Role must be 'coach' or 'assistant'."},
-                            status=status.HTTP_400_BAD_REQUEST)
-        member.role = role
-        member.save(update_fields=["role"])
+        if role is not None:
+            if role not in ("coach", "assistant"):
+                return Response({"detail": "Role must be 'coach' or 'assistant'."}, status=400)
+            member.role = role
+            update_fields.append("role")
+        is_active = request.data.get("is_active")
+        if is_active is not None:
+            member.is_active = bool(is_active)
+            update_fields.append("is_active")
+        if not update_fields:
+            return Response({"detail": "No valid fields to update."}, status=400)
+        member.save(update_fields=update_fields)
         return Response(UserSerializer(member).data)
 
     # DELETE
     member.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["POST"])
+@permission_classes([IsBusinessOwner])
+def add_pending_coach(request):
+    """
+    POST /api/auth/team/add-coach/
+    Creates a coach (or assistant) with is_active=False — portal login pending.
+    Business Owner only. The user can log in once they set a password via invite.
+    """
+    from apps.accounts.models import User
+    full_name = (request.data.get("full_name") or "").strip()
+    email     = (request.data.get("email")     or "").strip().lower()
+    role      = request.data.get("role", "coach")
+
+    if not full_name or not email:
+        return Response({"detail": "Name and email are required."}, status=400)
+    if role not in ("coach", "assistant"):
+        role = "coach"
+    if User.objects.filter(email=email).exists():
+        return Response({"detail": "A user with this email already exists."}, status=400)
+
+    user = User(
+        email=email,
+        full_name=full_name,
+        workspace=request.user.workspace,
+        role=role,
+        is_active=False,
+    )
+    user.set_unusable_password()
+    user.save()
+    return Response(UserSerializer(user).data, status=201)
 
 
 @api_view(["POST"])

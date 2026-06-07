@@ -443,45 +443,81 @@ function TeamTab() {
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
           ) : members.length === 0 ? (
             <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No team members yet.</div>
-          ) : members.map((m: any) => (
-            <div key={m.id} style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+          ) : members.map((m: any) => {
+            const isPending = m.is_active === false
+            return (
+            <div key={m.id} style={{
+              display: 'flex', alignItems: 'center', gap: 14, padding: '12px 18px',
+              borderBottom: '1px solid var(--border)',
+              background: isPending ? '#fafaf8' : 'transparent',
+            }}>
               {/* Avatar circle */}
               <div style={{
                 width: 36, height: 36, borderRadius: '50%',
-                background: ROLE_COLORS[m.role] + '22',
+                background: isPending ? '#f0ede8' : (ROLE_COLORS[m.role] + '22'),
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 600, color: ROLE_COLORS[m.role] || 'var(--muted)',
-                flexShrink: 0,
+                fontSize: 13, fontWeight: 600,
+                color: isPending ? '#b5afa6' : (ROLE_COLORS[m.role] || 'var(--muted)'),
+                flexShrink: 0, opacity: isPending ? 0.7 : 1,
               }}>
                 {m.full_name?.charAt(0)?.toUpperCase() || '?'}
               </div>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500 }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: isPending ? 'var(--muted)' : 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>
                   {m.full_name}
                   {m.id === currentUser?.id && (
-                    <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>(you)</span>
+                    <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>(you)</span>
+                  )}
+                  {isPending && (
+                    <span style={{
+                      fontSize: 10, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
+                      padding: '1px 7px', borderRadius: 10,
+                      background: '#fff3cd', color: '#856404', border: '1px solid #ffc10740',
+                    }}>
+                      Pending Login
+                    </span>
                   )}
                 </div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{m.email}</div>
               </div>
               <span style={{
                 padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                background: (ROLE_COLORS[m.role] || '#8c8279') + '18',
-                color: ROLE_COLORS[m.role] || 'var(--muted)',
+                background: isPending ? '#f0ede8' : ((ROLE_COLORS[m.role] || '#8c8279') + '18'),
+                color: isPending ? '#8c8279' : (ROLE_COLORS[m.role] || 'var(--muted)'),
               }}>
                 {ROLE_LABELS[m.role] || m.role}
               </span>
               {isOwner && m.id !== currentUser?.id && m.role !== 'business_owner' && (
-                <div style={{ display: 'flex', gap: 4, marginLeft: 4 }}>
-                  <button
-                    onClick={() => { setEditTarget(m); setEditRole(m.role) }}
-                    title="Change role"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = 'var(--ink)')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
-                  >
-                    <Pencil size={13} />
-                  </button>
+                <div style={{ display: 'flex', gap: 4, marginLeft: 4, alignItems: 'center' }}>
+                  {isPending ? (
+                    <button
+                      onClick={async () => {
+                        try {
+                          await authApi.updateMember(m.id, { is_active: true })
+                          qc.invalidateQueries({ queryKey: ['team'] })
+                          show(`${m.full_name} activated`)
+                        } catch { show('Failed to activate', 'error') }
+                      }}
+                      title="Activate coach portal access"
+                      style={{
+                        padding: '4px 10px', borderRadius: 5, border: '1px solid #c9a84c',
+                        background: '#fffbf0', color: '#856404', fontSize: 10, fontWeight: 700,
+                        letterSpacing: '.06em', textTransform: 'uppercase', cursor: 'pointer',
+                      }}
+                    >
+                      Activate
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { setEditTarget(m); setEditRole(m.role) }}
+                      title="Change role"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
+                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--ink)')}
+                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
+                    >
+                      <Pencil size={13} />
+                    </button>
+                  )}
                   <button
                     onClick={() => setDeleteTarget(m)}
                     title="Remove from team"
@@ -494,7 +530,8 @@ function TeamTab() {
                 </div>
               )}
             </div>
-          ))}
+            )
+          })}
         </div>
       </div>
 
@@ -1464,7 +1501,92 @@ function ServicesTab() {
   )
 }
 
+// ── Sample HTML template generator ─────────────────────────────────────────────
+function generateSampleHtml(key: string): string {
+  const isInvoice = key === 'invoice'
+  const headerRow = (label: string, value: string) =>
+    `<tr><td style="padding:10px 4px;color:#9e9890;font-size:12px;text-transform:uppercase;letter-spacing:.1em;width:110px;border-bottom:1px solid #f0ede8;">${label}</td><td style="padding:10px 4px;font-size:14px;font-weight:600;color:#1a1714;border-bottom:1px solid #f0ede8;">${value}</td></tr>`
+
+  const rows = isInvoice
+    ? [headerRow('Invoice #', '{invoice_number}'), headerRow('Amount', '{amount}'), headerRow('Due', '{due_date}')]
+    : [headerRow('Session', '{session_title}'), headerRow('When', '{session_time}'), headerRow('Coach', '{coach_name}')]
+
+  const intro = isInvoice
+    ? `Hi {client_name}, please find your invoice from {workspace_name} below.`
+    : `Hi {client_name}, your session with {coach_name} has been confirmed.`
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+
+      <!-- HEADER: replace text below with an <img> tag for your logo -->
+      <tr>
+        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;font-weight:400;letter-spacing:.04em;">{workspace_name}</span>
+        </td>
+      </tr>
+      <!-- Gold accent bar -->
+      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+
+      <!-- BODY -->
+      <tr>
+        <td style="background:#ffffff;padding:40px;border-radius:0 0 8px 8px;">
+
+          <!-- Greeting -->
+          <p style="margin:0 0 24px;font-size:15px;color:#6e6560;line-height:1.7;">${intro}</p>
+
+          <!-- Detail table -->
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+                 style="border-top:2px solid #1a2f4e;margin-bottom:28px;">
+            ${rows.join('\n            ')}
+          </table>
+
+          <!-- Custom message — edit this section freely -->
+          <p style="margin:0 0 16px;font-size:13px;color:#6e6560;line-height:1.7;">
+            If you have any questions, please reply to this email.
+          </p>
+
+          <p style="margin:24px 0 0;font-family:Georgia,serif;font-size:15px;color:#9e9890;">
+            &mdash; {workspace_name}
+          </p>
+        </td>
+      </tr>
+
+      <!-- FOOTER -->
+      <tr>
+        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
+          Sent by {workspace_name}
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`
+}
+
 // ── Email Templates Tab ────────────────────────────────────────────────────────
+const BODY_FONTS = [
+  { label: 'Helvetica / Arial (default)', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
+  { label: 'Georgia',                     value: "Georgia,'Times New Roman',serif" },
+  { label: 'Verdana',                     value: "Verdana,Geneva,sans-serif" },
+  { label: 'Trebuchet MS',                value: "'Trebuchet MS',Helvetica,sans-serif" },
+]
+const HEADING_FONTS = [
+  { label: 'Georgia (default)',   value: "Georgia,'Times New Roman',serif" },
+  { label: 'Helvetica / Arial',  value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
+  { label: 'Verdana',            value: "Verdana,Geneva,sans-serif" },
+]
+
 const EMAIL_TEMPLATE_DEFS = [
   {
     key: 'confirmation',
@@ -1501,6 +1623,7 @@ function EmailTemplatesTab() {
   const { show } = useToast()
 
   const [activeKey, setActiveKey] = useState('confirmation')
+  const [leftTab, setLeftTab]     = useState<'content' | 'style' | 'custom'>('content')
   const [saving, setSaving]       = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -1509,23 +1632,40 @@ function EmailTemplatesTab() {
 
   const saved = (workspace as any)?.email_templates || {}
   const initField = (key: string) => ({
-    subject:     saved[key]?.subject     || '',
-    intro:       saved[key]?.intro       || '',
-    closing:     saved[key]?.closing     || '',
-    custom_html: saved[key]?.custom_html || '',
+    subject:        saved[key]?.subject        || '',
+    from_email:     saved[key]?.from_email     || '',
+    intro:          saved[key]?.intro          || '',
+    closing:        saved[key]?.closing        || '',
+    custom_html:    saved[key]?.custom_html    || '',
+    header_bg:      saved[key]?.style?.header_bg      || '',
+    accent_color:   saved[key]?.style?.accent_color   || '',
+    header_tagline: saved[key]?.style?.header_tagline !== undefined
+                      ? saved[key].style.header_tagline
+                      : 'Coaching Platform',
+    body_font:      saved[key]?.style?.body_font    || '',
+    heading_font:   saved[key]?.style?.heading_font || '',
+    value_color:    saved[key]?.style?.value_color  || '#1a1714',
   })
   const [fields, setFields]         = useState(initField(activeKey))
   const [htmlUploading, setHtmlUploading] = useState(false)
+  const logoData = (workspace as any)?.logo_data || ''
 
   const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
 
-  const renderPreview = async (key: string, f: { intro: string; closing: string; custom_html: string }) => {
+  const renderPreview = async (key: string, f: ReturnType<typeof initField>) => {
     if (f.custom_html) { setPreviewHtml(f.custom_html); return }
     setPreviewLoading(true)
     try {
-      const { data } = await api.get('/api/settings/email-preview/', {
-        params: { type: key, intro: f.intro, closing: f.closing, _t: Date.now() },
-      })
+      const params: Record<string, string> = {
+        type: key, intro: f.intro, closing: f.closing, _t: String(Date.now()),
+        header_tagline: f.header_tagline,
+      }
+      if (f.header_bg)    params.header_bg    = f.header_bg
+      if (f.accent_color) params.accent_color = f.accent_color
+      if (f.body_font)    params.body_font    = f.body_font
+      if (f.heading_font) params.heading_font = f.heading_font
+      if (f.value_color)  params.value_color  = f.value_color
+      const { data } = await api.get('/api/settings/email-preview/', { params })
       setPreviewHtml(data.html)
     } catch { setPreviewHtml('') }
     finally { setPreviewLoading(false) }
@@ -1551,26 +1691,45 @@ function EmailTemplatesTab() {
   // Initial preview on mount
   useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh preview 700ms after user stops typing intro/closing (only when no custom template)
+  // Auto-refresh preview 700ms after user stops typing or changing style fields
   useEffect(() => {
     if (fields.custom_html) return
     const t = setTimeout(() => renderPreview(activeKey, fields), 700)
     return () => clearTimeout(t)
-  }, [fields.intro, fields.closing]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fields.intro, fields.closing, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      const newEmailTemplates = { ...(saved), [activeKey]: fields }
+      const { header_bg, accent_color, header_tagline, body_font, heading_font, value_color, from_email, ...rest } = fields
+      const templateToSave = {
+        ...rest,
+        from_email,
+        style: { header_bg, accent_color, header_tagline, body_font, heading_font, value_color },
+      }
+      const newEmailTemplates = { ...saved, [activeKey]: templateToSave }
       const { data } = await settingsApi.updateWorkspace({ email_templates: newEmailTemplates })
-      // Merge so workspace.id/slug aren't wiped by the partial PATCH response
       if (user) rehydrate(user, { ...workspace, ...data, email_templates: newEmailTemplates })
       show('Template saved')
-      // Re-render preview with current field values (not re-fetched from DB)
       await renderPreview(activeKey, fields)
     } catch { show('Failed to save', 'error') }
     finally { setSaving(false) }
   }
+
+  const colorRow = (label: string, key: 'header_bg' | 'accent_color' | 'value_color', defaultVal: string) => (
+    <div style={{ marginBottom: 12 }}>
+      <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>{label}</label>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input type="color" value={fields[key] || defaultVal}
+          onChange={e => setFields(f => ({ ...f, [key]: e.target.value }))}
+          style={{ width: 36, height: 28, padding: 2, borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }} />
+        <input className="finput" value={fields[key] || defaultVal}
+          onChange={e => setFields(f => ({ ...f, [key]: e.target.value }))}
+          style={{ margin: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }} />
+        <div style={{ width: 24, height: 24, borderRadius: 4, background: fields[key] || defaultVal, border: '1px solid var(--border)', flexShrink: 0 }} />
+      </div>
+    </div>
+  )
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0, height: 'calc(100vh - 180px)', minHeight: 560 }}>
@@ -1596,151 +1755,190 @@ function EmailTemplatesTab() {
           background: 'var(--white)', border: '1px solid var(--border)',
           borderRadius: 8, padding: '20px 20px 16px', overflow: 'auto',
         }}>
-          <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{def.label}</div>
-          <div style={{ color: 'var(--muted)', fontSize: 12, marginBottom: 14 }}>{def.hint}</div>
-
-          {/* Variable chips */}
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginBottom: 16 }}>
-            {def.vars.map(v => (
-              <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
-                background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
-                padding: '2px 7px', fontSize: 11, fontFamily: 'monospace',
-                cursor: 'pointer', userSelect: 'all',
-              }} title="Click to copy">{v}</span>
+          {/* ── Tab bar ── */}
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16, flexShrink: 0, gap: 0 }}>
+            {(['content', 'style', 'custom'] as const).map(t => (
+              <button key={t} onClick={() => setLeftTab(t)} style={{
+                flex: 1, padding: '9px 4px', border: 'none', cursor: 'pointer',
+                background: leftTab === t ? 'var(--white)' : 'var(--paper)',
+                borderBottom: leftTab === t ? '2px solid var(--ink)' : '2px solid transparent',
+                fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
+                color: leftTab === t ? 'var(--ink)' : 'var(--muted)',
+              }}>
+                {t === 'content' ? 'Content' : t === 'style' ? 'Style' : 'Custom HTML'}
+              </button>
             ))}
           </div>
 
-          <div className="fgroup">
-            <label className="flabel">Subject line</label>
-            <input className="finput" placeholder="Leave blank for default"
-              value={fields.subject}
-              onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Opening paragraph</label>
-            <textarea className="finput" rows={4} placeholder="Leave blank for default"
-              value={fields.intro} style={{ resize: 'vertical' }}
-              onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Closing paragraph</label>
-            <textarea className="finput" rows={4} placeholder="Leave blank for default"
-              value={fields.closing} style={{ resize: 'vertical' }}
-              onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
-          </div>
-
-          {/* Custom HTML template — upload or paste */}
-          <div style={{ marginTop: 16, borderTop: '1px solid var(--border)', paddingTop: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>Custom HTML Template</div>
-              {!fields.custom_html && (
-                <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
-                  {(['upload', 'paste'] as const).map(m => (
-                    <button key={m} onClick={() => setHtmlMode(m)} style={{
-                      padding: '3px 10px', fontSize: 10, fontWeight: 600, border: 'none', cursor: 'pointer',
-                      letterSpacing: '.04em', textTransform: 'uppercase',
-                      background: htmlMode === m ? 'var(--ink)' : 'var(--white)',
-                      color:      htmlMode === m ? 'var(--white)' : 'var(--muted)',
-                    }}>{m === 'upload' ? 'File' : 'Paste'}</button>
+          {/* ── CONTENT tab ── */}
+          {leftTab === 'content' && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>{def.hint}</div>
+              <div className="fgroup">
+                <label className="flabel">Subject line</label>
+                <input className="finput" placeholder={`Default: ${def.defaultSubject}`}
+                  value={fields.subject}
+                  onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">From email <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
+                <input className="finput" type="email" placeholder="Default sender"
+                  value={fields.from_email}
+                  onChange={e => setFields(f => ({ ...f, from_email: e.target.value }))} />
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be a verified AWS SES address.</div>
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Opening paragraph</label>
+                <textarea className="finput" rows={3} placeholder="Leave blank for default"
+                  value={fields.intro} style={{ resize: 'vertical' }}
+                  onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Closing paragraph</label>
+                <textarea className="finput" rows={3} placeholder="Leave blank for default"
+                  value={fields.closing} style={{ resize: 'vertical' }}
+                  onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 6 }}>Available placeholders</div>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                  {def.vars.map(v => (
+                    <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
+                      background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
+                      padding: '2px 7px', fontSize: 10, fontFamily: 'monospace',
+                      cursor: 'pointer', userSelect: 'all',
+                    }} title="Click to copy">{v}</span>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            </>
+          )}
 
-            {fields.custom_html ? (
-              /* ── Active custom template ── */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{
-                  fontSize: 11, color: '#16a34a', background: '#f0fdf4',
-                  border: '1px solid #bbf7d0', borderRadius: 6, padding: '6px 10px',
-                  display: 'flex', alignItems: 'center', gap: 6,
-                }}>
-                  ✓ Custom template active ({fields.custom_html.length.toLocaleString()} chars)
+          {/* ── STYLE tab ── */}
+          {leftTab === 'style' && (
+            <>
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 }}>Header</div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 10 }}>
+                  <div style={{ width: 40, height: 28, borderRadius: 4, border: '1px solid var(--border)', background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
+                    {logoData
+                      ? <img src={logoData} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                      : <span style={{ fontFamily: 'serif', fontSize: 10, color: '#f7f4ef' }}>{(workspace as any)?.name?.charAt(0) || '?'}</span>
+                    }
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', flex: 1 }}>
+                    {logoData ? 'Logo uploaded' : 'No logo'} · <span style={{ color: '#2d6a9f', cursor: 'pointer' }}>Change in Workspace tab</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <label style={{
-                    flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer',
-                    padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)',
-                    background: 'var(--white)', color: 'var(--ink)',
-                  }}>
-                    {htmlUploading ? 'Reading…' : 'Replace file'}
-                    <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                  </label>
-                  <button
-                    onClick={() => { setPasteBuffer(fields.custom_html); setHtmlMode('paste'); setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
-                    style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}
-                  >
-                    Edit HTML
-                  </button>
-                  <button
-                    onClick={() => { setFields(f => ({ ...f, custom_html: '' })); setPasteBuffer(''); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
-                    style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: '#b91c1c', cursor: 'pointer' }}
-                  >
-                    Remove
+                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 8 }}>
+                  <input type="checkbox" checked={fields.header_tagline === ''}
+                    onChange={e => setFields(f => ({ ...f, header_tagline: e.target.checked ? '' : 'Coaching Platform' }))}
+                    style={{ width: 13, height: 13, accentColor: 'var(--gold)' }} />
+                  Show logo only — hide tagline text
+                </label>
+                {fields.header_tagline !== '' && (
+                  <input className="finput" placeholder="Coaching Platform"
+                    value={fields.header_tagline}
+                    onChange={e => setFields(f => ({ ...f, header_tagline: e.target.value }))}
+                    style={{ margin: 0 }} />
+                )}
+              </div>
+              {colorRow('Header background', 'header_bg', '#1a2f4e')}
+              {colorRow('Accent / highlight', 'accent_color', '#b8922e')}
+              {colorRow('Detail values (amount, date, "When")', 'value_color', '#1a1714')}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Body font</label>
+                <select className="fselect" style={{ margin: 0 }} value={fields.body_font}
+                  onChange={e => setFields(f => ({ ...f, body_font: e.target.value }))}>
+                  <option value="">Default</option>
+                  {BODY_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Heading font</label>
+                <select className="fselect" style={{ margin: 0 }} value={fields.heading_font}
+                  onChange={e => setFields(f => ({ ...f, heading_font: e.target.value }))}>
+                  <option value="">Default</option>
+                  {HEADING_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
+                </select>
+              </div>
+            </>
+          )}
+
+          {/* ── CUSTOM HTML tab ── */}
+          {leftTab === 'custom' && (
+            <>
+              {fields.custom_html ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ fontSize: 11, color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '8px 12px' }}>
+                    ✓ Custom template active — overrides Content tab
+                  </div>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)' }}>
+                      {htmlUploading ? 'Reading…' : '↑ Replace file'}
+                      <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
+                    </label>
+                    <button onClick={() => { setPasteBuffer(fields.custom_html); setHtmlMode('paste'); setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
+                      style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
+                      ✎ Edit
+                    </button>
+                    <button onClick={() => { setFields(f => ({ ...f, custom_html: '' })); setPasteBuffer(''); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
+                      style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: '#b91c1c', cursor: 'pointer' }}>
+                      ✕ Remove
+                    </button>
+                  </div>
+                  <button onClick={() => { const b = new Blob([fields.custom_html], { type: 'text/html' }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `${activeKey}-template.html`; a.click(); URL.revokeObjectURL(u) }}
+                    style={{ fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
+                    ↓ Download current template
                   </button>
                 </div>
-                <div style={{ display: 'flex', gap: 6 }}>
-                  <button
-                    onClick={() => {
-                      const blob = new Blob([fields.custom_html], { type: 'text/html' })
+              ) : (
+                <>
+                  <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+                    <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', color: 'var(--muted)', background: 'var(--paper)' }}>
+                      {htmlUploading ? 'Reading…' : '↑ Upload .html file'}
+                      <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
+                    </label>
+                    <button onClick={() => { setHtmlMode('paste'); setPasteBuffer('') }}
+                      style={{ flex: 1, fontSize: 11, padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', background: 'var(--paper)', color: 'var(--muted)', cursor: 'pointer' }}>
+                      ✎ Paste HTML
+                    </button>
+                  </div>
+                  {htmlMode === 'paste' && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                      <textarea rows={8} placeholder="Paste your HTML here…" value={pasteBuffer}
+                        onChange={e => { setPasteBuffer(e.target.value); if (e.target.value) setPreviewHtml(e.target.value) }}
+                        style={{ width: '100%', resize: 'vertical', fontSize: 11, fontFamily: 'monospace', padding: '8px', border: '1px solid var(--border)', borderRadius: 6, background: '#fafafa', lineHeight: 1.5 }} />
+                      <button disabled={!pasteBuffer.trim()}
+                        onClick={() => { setFields(f => ({ ...f, custom_html: pasteBuffer.trim() })); setPreviewHtml(pasteBuffer.trim()) }}
+                        style={{ fontSize: 11, padding: '7px 0', borderRadius: 6, border: 'none', cursor: pasteBuffer.trim() ? 'pointer' : 'not-allowed', background: pasteBuffer.trim() ? 'var(--ink)' : 'var(--border)', color: '#fff', fontWeight: 600 }}>
+                        Apply Template
+                      </button>
+                    </div>
+                  )}
+                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>Start with a sample template pre-filled with all placeholders:</div>
+                    <button onClick={() => {
+                      const html = generateSampleHtml(activeKey)
+                      const blob = new Blob([html], { type: 'text/html' })
                       const url = URL.createObjectURL(blob)
-                      const a = document.createElement('a'); a.href = url; a.download = `${activeKey}-template.html`; a.click()
+                      const a = document.createElement('a'); a.href = url; a.download = `${activeKey}-sample.html`; a.click()
                       URL.revokeObjectURL(url)
-                    }}
-                    style={{ fontSize: 11, padding: '5px 10px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}
-                  >
-                    ↓ Download HTML
-                  </button>
-                </div>
-              </div>
-            ) : htmlMode === 'upload' ? (
-              /* ── File upload ── */
-              <label style={{
-                display: 'block', textAlign: 'center', fontSize: 12, cursor: 'pointer',
-                padding: '10px', borderRadius: 6, border: '1.5px dashed var(--border)',
-                color: 'var(--muted)', background: 'var(--paper)',
-              }}>
-                {htmlUploading ? 'Reading…' : '+ Upload .html file'}
-                <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-              </label>
-            ) : (
-              /* ── Paste HTML ── */
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <textarea
-                  rows={7}
-                  placeholder="Paste your HTML email here…"
-                  value={pasteBuffer}
-                  onChange={e => { setPasteBuffer(e.target.value); if (e.target.value) setPreviewHtml(e.target.value) }}
-                  style={{
-                    width: '100%', resize: 'vertical', fontSize: 11, fontFamily: 'monospace',
-                    padding: '8px', border: '1px solid var(--border)', borderRadius: 6,
-                    background: '#fafafa', lineHeight: 1.5,
-                  }}
-                />
-                <button
-                  disabled={!pasteBuffer.trim()}
-                  onClick={() => { setFields(f => ({ ...f, custom_html: pasteBuffer.trim() })); setPreviewHtml(pasteBuffer.trim()) }}
-                  style={{
-                    fontSize: 11, padding: '7px 0', borderRadius: 6, border: 'none', cursor: pasteBuffer.trim() ? 'pointer' : 'not-allowed',
-                    background: pasteBuffer.trim() ? 'var(--ink)' : 'var(--border)',
-                    color: '#fff', fontWeight: 600, letterSpacing: '.04em',
-                  }}
-                >
-                  Use This HTML
-                </button>
-              </div>
-            )}
-            <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5, marginTop: 8 }}>
-              When set, overrides the intro/closing above. Use{' '}
-              <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{client_name}'}</code>{' '}
-              <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{workspace_name}'}</code>{' '}
-              as placeholders.
-            </div>
-          </div>
+                    }} style={{ width: '100%', padding: '8px 0', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid #2d6a9f', background: '#f0f4ff', color: '#2d6a9f', cursor: 'pointer', letterSpacing: '.04em' }}>
+                      ↓ Download Sample Template
+                    </button>
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
+                      Edit the file, then upload it back or paste it above.
+                      Placeholders: {def.vars.map(v => <code key={v} style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3, fontFamily: 'monospace', marginRight: 3 }}>{v}</code>)}
+                    </div>
+                  </div>
+                </>
+              )}
+            </>
+          )}
 
-          <div style={{ marginTop: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
-            <button className="btn-primary" style={{ width: '100%' }}
-              disabled={saving} onClick={handleSave}>
+          <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }}>
+            <button className="btn-primary" style={{ width: '100%' }} disabled={saving} onClick={handleSave}>
               {saving ? 'Saving…' : 'Save'}
             </button>
           </div>

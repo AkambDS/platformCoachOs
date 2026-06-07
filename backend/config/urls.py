@@ -2,12 +2,14 @@
 from django.contrib import admin
 from django.urls import path, include
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView, SpectacularRedocView
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.conf import settings as django_settings
 from apps.superadmin.views import public_banner
+from apps.activities.public_views import SessionConfirmView, SessionCancelView, SessionRescheduleView
 
 
 @api_view(["POST"])
@@ -150,9 +152,13 @@ def api_root(request):
     }, status=200)
 
 urlpatterns = [
-    path("",                 health_check),  # Root / endpoint for health checks
-    path("api/",             api_root),      # API root endpoint
+    path("",                 health_check),
+    path("api/",             api_root),
     path("django-admin/",    admin.site.urls),
+    # ── Public session action pages (no login, CSRF exempt) ──
+    path("session/confirm/<str:token>/",    csrf_exempt(SessionConfirmView.as_view())),
+    path("session/cancel/<str:token>/",     csrf_exempt(SessionCancelView.as_view())),
+    path("session/reschedule/<str:token>/", csrf_exempt(SessionRescheduleView.as_view())),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
     path("api/activities/",  include("apps.activities.urls")),

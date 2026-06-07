@@ -11,6 +11,7 @@ urlpatterns = [
     path("accept-invite/",        views.accept_invite,             name="auth-accept-invite"),
     path("me/",            views.MeView.as_view(),          name="auth-me"),
     path("team/",          views.TeamView.as_view(),        name="auth-team"),
+    path("team/add-coach/",          views.add_pending_coach,       name="auth-add-coach"),
     path("team/<uuid:pk>/",          views.team_member_detail,      name="auth-team-member"),
     path("password-reset/",          views.password_reset_request,  name="auth-password-reset"),
     path("password-reset/confirm/",  views.password_reset_confirm,  name="auth-password-reset-confirm"),

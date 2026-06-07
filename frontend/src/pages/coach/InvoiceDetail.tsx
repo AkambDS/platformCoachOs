@@ -567,6 +567,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
   const [headerTagline, setHeaderTagline] = useState(savedStyle.header_tagline ?? 'Coaching Platform')
   const [bodyFont,      setBodyFont]      = useState(savedStyle.body_font      || BODY_FONTS[0].value)
   const [headingFont,   setHeadingFont]   = useState(savedStyle.heading_font   || HEADING_FONTS[0].value)
+  const [valueColor,    setValueColor]    = useState(savedStyle.value_color    || '#1a1714')
 
   const [previewHtml,    setPreviewHtml]    = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
@@ -584,6 +585,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
           header_bg: headerBg, accent_color: accentColor,
           header_tagline: headerTagline,
           body_font: bodyFont, heading_font: headingFont,
+          value_color: valueColor,
           ...overrides,
         },
       })
@@ -598,7 +600,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     const t = setTimeout(() => renderPreview(), 700)
     return () => clearTimeout(t)
-  }, [intro, closing, headerBg, accentColor, headerTagline, bodyFont, headingFont]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [intro, closing, headerBg, accentColor, headerTagline, bodyFont, headingFont, valueColor]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleSave = async () => {
     setSaving(true)
@@ -609,7 +611,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
         invoice: {
           ...saved,
           subject, intro, closing, from_email: fromEmail,
-          style: { header_bg: headerBg, accent_color: accentColor, header_tagline: headerTagline, body_font: bodyFont, heading_font: headingFont },
+          style: { header_bg: headerBg, accent_color: accentColor, header_tagline: headerTagline, body_font: bodyFont, heading_font: headingFont, value_color: valueColor },
         },
       }
       const { data } = await settingsApi.updateWorkspace({ email_templates: updated })
@@ -670,14 +672,14 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
 
           {/* Tabs */}
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            {(['content', 'style'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} style={{
-                flex: 1, padding: '10px', border: 'none', cursor: 'pointer',
+            {(['content', 'style', 'custom'] as const).map(t => (
+              <button key={t} onClick={() => setTab(t as any)} style={{
+                flex: 1, padding: '9px 4px', border: 'none', cursor: 'pointer',
                 background: tab === t ? 'var(--white)' : 'var(--paper)',
                 borderBottom: tab === t ? '2px solid #1a2f4e' : '2px solid transparent',
-                fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
+                fontSize: 10, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
                 color: tab === t ? '#1a2f4e' : 'var(--muted)',
-              }}>{t === 'content' ? 'Content' : 'Style'}</button>
+              }}>{t === 'content' ? 'Content' : t === 'style' ? 'Style' : 'HTML'}</button>
             ))}
           </div>
 
@@ -741,6 +743,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
 
                 {colorRow('Header background', headerBg, setHeaderBg)}
                 {colorRow('Accent / highlight color', accentColor, setAccentColor)}
+                {colorRow('Detail values (amount, due date)', valueColor, setValueColor)}
 
                 <div style={{ marginBottom: 14 }}>
                   <label style={labelStyle}>Header tagline</label>
@@ -764,6 +767,77 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
                   </select>
                 </div>
               </>
+            )}
+
+            {(tab as any) === 'custom' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6 }}>
+                  Replace the entire email with your own HTML. When active, the Content and Style tabs are ignored.
+                </div>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button onClick={() => {
+                    const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{workspace_name}</title></head>
+<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+      <tr><td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+        <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
+      </td></tr>
+      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+      <tr><td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
+        <p style="margin:0 0 8px;font-size:11px;color:#b8922e;text-transform:uppercase;letter-spacing:.14em;font-weight:600;">Invoice</p>
+        <h1 style="margin:0 0 24px;font-family:Georgia,serif;font-size:28px;font-weight:400;color:#16130f;">Invoice #{invoice_number}</h1>
+        <p style="margin:0 0 28px;font-size:15px;color:#6e6560;">Hi {client_name}, please find your invoice below.</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-top:2px solid #1a2f4e;margin-bottom:28px;">
+          <tr>
+            <td style="padding:10px 4px;color:#9e9890;font-size:12px;text-transform:uppercase;letter-spacing:.1em;width:110px;border-bottom:1px solid #f0ede8;">Invoice #</td>
+            <td style="padding:10px 4px;font-size:14px;font-weight:600;color:#1a1714;border-bottom:1px solid #f0ede8;">{invoice_number}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 4px;color:#9e9890;font-size:12px;text-transform:uppercase;letter-spacing:.1em;border-bottom:1px solid #f0ede8;">Amount</td>
+            <td style="padding:10px 4px;font-size:14px;font-weight:600;color:#1a1714;border-bottom:1px solid #f0ede8;">{amount}</td>
+          </tr>
+          <tr>
+            <td style="padding:10px 4px;color:#9e9890;font-size:12px;text-transform:uppercase;letter-spacing:.1em;">Due</td>
+            <td style="padding:10px 4px;font-size:14px;font-weight:600;color:#b8922e;">{due_date}</td>
+          </tr>
+        </table>
+        <p style="margin:24px 0 0;font-family:Georgia,serif;font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
+      </td></tr>
+      <tr><td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">Sent by {workspace_name}</td></tr>
+    </table>
+  </td></tr>
+</table>
+</body></html>`
+                    const blob = new Blob([html], { type: 'text/html' })
+                    const url = URL.createObjectURL(blob)
+                    const a = document.createElement('a'); a.href = url; a.download = 'invoice-sample.html'; a.click()
+                    URL.revokeObjectURL(url)
+                  }} style={{ flex: 1, padding: '8px 0', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid #2d6a9f', background: '#f0f4ff', color: '#2d6a9f', cursor: 'pointer' }}>
+                    ↓ Download Sample
+                  </button>
+                  {previewHtml && (
+                    <button onClick={() => {
+                      const blob = new Blob([previewHtml], { type: 'text/html' })
+                      const url = URL.createObjectURL(blob)
+                      const a = document.createElement('a'); a.href = url; a.download = 'invoice-template.html'; a.click()
+                      URL.revokeObjectURL(url)
+                    }} style={{ flex: 1, padding: '8px 0', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
+                      ↓ Save Preview HTML
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--muted)', lineHeight: 1.5 }}>
+                  Placeholders: <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{client_name}'}</code>{' '}
+                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{invoice_number}'}</code>{' '}
+                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{amount}'}</code>{' '}
+                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{due_date}'}</code>{' '}
+                  <code style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3 }}>{'{workspace_name}'}</code>
+                </div>
+              </div>
             )}
           </div>
         </div>

@@ -123,7 +123,11 @@ class ActivitySerializer(serializers.ModelSerializer):
         repeat_until = validated_data.pop("repeat_until", None)
         validated_data.pop("edit_scope", None)
         validated_data["workspace"] = request.user.workspace
-        validated_data.setdefault("coach", request.user)
+        if not validated_data.get("coach"):
+            client = validated_data.get("client")
+            validated_data["coach"] = (
+                client.coach if client and client.coach else request.user
+            )
         activity = super().create(validated_data)
 
         if repeat and repeat != "none" and repeat in _REPEAT_DELTA:
