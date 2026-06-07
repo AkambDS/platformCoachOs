@@ -190,13 +190,6 @@ def send_activity_confirmation_email(activity_id: str):
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Confirmed: {activity.title} with {coach_name}"
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
-            f"You will also receive a reminder 24 hours and 1 hour before your session.\n\n"
-            f"If you need to reschedule, please contact {coach_name} directly.\n\n— {workspace.name}"
-        )
         from apps.activities.tokens import make_session_token
         backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
         confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
@@ -211,6 +204,10 @@ def send_activity_confirmation_email(activity_id: str):
             f"Request reschedule: {reschedule_url}\n"
             f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
         )
+        saved_style      = tmpl.get("style", {})
+        custom_from      = tmpl.get("from_email", "").strip()
+        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
+
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
             html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
@@ -230,13 +227,14 @@ def send_activity_confirmation_email(activity_id: str):
                 confirm_url=confirm_url,
                 cancel_url=cancel_url,
                 reschedule_url=reschedule_url,
+                style=saved_style,
             )
         ics_bytes = _build_ics(activity, method="REQUEST")
 
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=from_email_addr,
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
@@ -280,12 +278,22 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Reminder: {activity.title} in {time_label}"
 
+        from apps.activities.tokens import make_session_token
+        backend_url    = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+        reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+
         plain = (
             f"Hi {client.first_name},\n\nThis is a reminder that you have a "
             f"{activity.activity_type} in {time_label}.\n\n"
             f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"If you need to reschedule, please contact {coach_name} as soon as possible.\n\n— {workspace.name}"
+            f"Cancel session:     {cancel_url}\n"
+            f"Request reschedule: {reschedule_url}\n\n— {workspace.name}"
         )
+        saved_style      = tmpl.get("style", {})
+        custom_from      = tmpl.get("from_email", "").strip()
+        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
+
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
             html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
@@ -302,11 +310,14 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
                 owner_name=owner_name,
                 custom_intro=custom_intro,
                 custom_closing=custom_closing,
+                cancel_url=cancel_url,
+                reschedule_url=reschedule_url,
+                style=saved_style,
             )
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=from_email_addr,
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
@@ -738,3 +749,88 @@ def send_pipeline_alert(deal_id: str):
         logger.info(f"Pipeline alert sent for deal {deal_id} ({stage_label})")
     except Exception as e:
         logger.error(f"send_pipeline_alert failed for deal {deal_id}: {e}")
+
+
+# ── Client session action notifications ────────────────────────────────────────
+
+@shared_task(name="tasks.email.send_client_cancellation_notice")
+def send_client_cancellation_notice(activity_id: str):
+    """Email the coach when a client cancels via their email link."""
+    from apps.activities.models import Activity
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        coach = activity.coach
+        if not coach or not coach.email:
+            return
+
+        client_name = activity.client.full_name
+        dt          = _fmt_dt_human(activity.start_at)
+        workspace   = activity.workspace
+
+        subject = f"Session cancelled by {client_name}"
+        body    = (
+            f"Hi {coach.first_name or coach.full_name},\n\n"
+            f"{client_name} has cancelled their session:\n\n"
+            f"  What:  {activity.title}\n"
+            f"  When:  {dt}\n\n"
+            f"The session has been marked as cancelled in CoachOS.\n\n"
+            f"— {workspace.name}"
+        )
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=[coach.email],
+        )
+        msg.send()
+        logger.info(f"Client cancellation notice sent to coach {coach.email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_client_cancellation_notice failed: {e}")
+
+
+@shared_task(name="tasks.email.send_client_reschedule_request")
+def send_client_reschedule_request(activity_id: str, message: str = ""):
+    """Email the coach (and business owner as fallback) when a client requests a reschedule."""
+    from apps.activities.models import Activity
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        workspace    = activity.workspace
+        client_name  = activity.client.full_name
+        client_email = activity.client.email or ""
+        dt           = _fmt_dt_human(activity.start_at)
+
+        # Notify assigned coach; fall back to business owner
+        coach = activity.coach
+        if coach and coach.email:
+            recipient_email = coach.email
+            recipient_name  = coach.first_name or coach.full_name
+        else:
+            owner_email, owner_name = _owner_info(workspace)
+            if not owner_email:
+                logger.warning(f"No recipient for reschedule notice on activity {activity_id}")
+                return
+            recipient_email = owner_email
+            recipient_name  = owner_name or workspace.name
+
+        subject = f"Reschedule request from {client_name}"
+        note    = f"\nClient's message:\n  {message}\n" if message else ""
+        body    = (
+            f"Hi {recipient_name},\n\n"
+            f"{client_name} has requested to reschedule their session:\n\n"
+            f"  What:  {activity.title}\n"
+            f"  When:  {dt}\n"
+            f"{note}\n"
+            f"Please reply to {client_email} or update the session in CoachOS.\n\n"
+            f"— {workspace.name}"
+        )
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=body,
+            from_email=_workspace_from_email(workspace),
+            to=[recipient_email],
+            reply_to=[client_email] if client_email else [],
+        )
+        msg.send()
+        logger.info(f"Reschedule request sent to {recipient_email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_client_reschedule_request failed: {e}")
