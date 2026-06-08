@@ -834,11 +834,6 @@ def build_portal_invite_email(
       {_cta_button("Access Your Portal", portal_url, "#4a7c59")}
     </div>
 
-    <p style="margin:0;font-size:12px;color:#9e9890;text-align:center;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Or copy this link: <a href="{portal_url}" style="color:#4a7c59;">{portal_url}</a>
-    </p>
-
     {closing_html}
 
     <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
