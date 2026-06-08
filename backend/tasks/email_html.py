@@ -814,7 +814,7 @@ def build_portal_invite_email(
     </p>""" if custom_closing else f"""
     <p style="margin:28px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      If you have any questions, reply to this email or contact {coach_name} directly.
+      If you have any questions, reply to this email or contact {workspace_name}.
     </p>"""
 
     body = f"""
