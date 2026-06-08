@@ -305,7 +305,30 @@ function NoteTypeSelector({ value, onChange }: { value: string; onChange: (v: st
 // ── NoteLog ───────────────────────────────────────────────────────────────────
 const COLLAPSE_CHARS = 220
 
-function NoteLog({ clientId, noteList, refetch, showToast }: { clientId: string; noteList: any[]; refetch: () => Promise<any>; showToast: any }) {
+function fmtNoteDate(iso: string, tz?: string): string {
+  if (!iso) return '—'
+  const opts: Intl.DateTimeFormatOptions = {
+    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
+    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+    ...(tz ? { timeZone: tz } : {}),
+  }
+  const d = new Date(iso)
+  const now = new Date()
+  const diffMs = now.getTime() - d.getTime()
+  const diffH  = diffMs / 3_600_000
+  const diffD  = diffMs / 86_400_000
+
+  if (diffH < 1)  return 'Just now'
+  if (diffH < 24) return `Today at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short', ...(tz ? { timeZone: tz } : {}) })}`
+  if (diffD < 2)  return `Yesterday at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short', ...(tz ? { timeZone: tz } : {}) })}`
+  return d.toLocaleString('en-US', opts)
+}
+
+function wasEdited(created: string, updated: string): boolean {
+  return Math.abs(new Date(updated).getTime() - new Date(created).getTime()) > 60_000
+}
+
+function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: string; noteList: any[]; refetch: () => Promise<any>; showToast: any; tz?: string }) {
   const [adding, setAdding]     = useState(false)
   const [saving, setSaving]     = useState(false)
   const [noteText, setNoteText] = useState('')
@@ -420,17 +443,24 @@ function NoteLog({ clientId, noteList, refetch, showToast }: { clientId: string;
               padding: '13px 20px', borderBottom: '1px solid var(--border)',
               background: 'var(--paper)',
             }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 11 }}>
                   {typeLabel(n.note_type)}
                 </span>
                 <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                  {new Date(n.created_at).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}
-                  {' · '}
-                  {new Date(n.created_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                  {fmtNoteDate(n.created_at, tz)}
                 </span>
                 {n.created_by_name && (
-                  <span style={{ fontSize: 12, color: 'var(--muted-faint)' }}>— {n.created_by_name}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>by {n.created_by_name}</span>
+                )}
+                {wasEdited(n.created_at, n.updated_at) && (
+                  <span style={{
+                    fontSize: 10, color: 'var(--muted)', fontStyle: 'italic',
+                    background: 'var(--paper)', padding: '1px 6px', borderRadius: 10,
+                    border: '1px solid var(--border)',
+                  }}>
+                    edited {fmtNoteDate(n.updated_at, tz)}
+                  </span>
                 )}
               </div>
               {/* Actions */}
@@ -813,8 +843,9 @@ export default function ClientDetail() {
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { show: showToast, el: toastEl } = useToast()
-  const { user } = useAuthStore()
+  const { user, workspace } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
+  const tz: string | undefined = (workspace as any)?.workspace_timezone || undefined
   const [tab, setTab] = useState('Overview')
   const [showActivity, setShowActivity] = useState(false)
   const [showGoal, setShowGoal]       = useState(false)
@@ -1463,7 +1494,7 @@ export default function ClientDetail() {
 
         {/* ── Notes (date-stamped log) ── */}
         {tab === 'Notes' && (
-          <NoteLog clientId={id!} noteList={noteList} refetch={refetchNotes} showToast={showToast} />
+          <NoteLog clientId={id!} noteList={noteList} refetch={refetchNotes} showToast={showToast} tz={tz} />
         )}
 
         {/* ── Files ── */}
