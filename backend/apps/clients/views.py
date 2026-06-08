@@ -221,6 +221,48 @@ class ClientNoteViewSet(viewsets.ModelViewSet):
         _log(self.request, instance.client, "deleted_note")
         instance.delete()
 
+    @action(detail=False, methods=["get"], url_path="export")
+    def export(self, request, client_pk=None):
+        """GET /api/clients/{client_pk}/notes/export/ — download all notes as plain text."""
+        import json
+        from django.http import HttpResponse
+        client = self._get_client()
+        notes  = self.get_queryset().order_by("-created_at")
+
+        lines = [
+            f"Notes Export — {client.full_name}",
+            f"Exported by: {request.user.full_name}",
+            "=" * 60,
+            "",
+        ]
+        for n in notes:
+            created = n.created_at.strftime("%a %b %d, %Y at %I:%M %p UTC")
+            author  = n.created_by.full_name if n.created_by else "Unknown"
+            lines.append(f"[{n.note_type.upper()}]  {created}  —  {author}")
+            lines.append("-" * 60)
+
+            # Structured session notes
+            if n.text.startswith("##STRUCTURED##"):
+                try:
+                    data = json.loads(n.text[len("##STRUCTURED##"):])
+                    if data.get("notes"):
+                        lines += ["NOTES:", data["notes"], ""]
+                    if data.get("reflection"):
+                        lines += ["COACH REFLECTION:", data["reflection"], ""]
+                    if data.get("commitment"):
+                        lines += ["COMMITMENT:", data["commitment"], ""]
+                except Exception:
+                    lines.append(n.text)
+            else:
+                lines.append(n.text)
+            lines.append("")
+
+        content = "\n".join(lines)
+        safe_name = client.full_name.replace(" ", "_")
+        response = HttpResponse(content, content_type="text/plain; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="notes_{safe_name}.txt"'
+        return response
+
 
 class AssessmentViewSet(viewsets.ModelViewSet):
     """GET/DELETE /api/clients/{client_id}/assessments/ + POST upload/"""

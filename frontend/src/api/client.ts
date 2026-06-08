@@ -89,6 +89,7 @@ export const clientsApi = {
   createNote:   (id: string, d: any)            => api.post(`/api/clients/${id}/notes/`, d),
   updateNote:   (id: string, nid: string, d: any) => api.patch(`/api/clients/${id}/notes/${nid}/`, d),
   deleteNote:   (id: string, nid: string)       => api.delete(`/api/clients/${id}/notes/${nid}/`),
+  exportNotes:  (id: string)                    => api.get(`/api/clients/${id}/notes/export/`, { responseType: 'text' }),
   listFiles:    (id: string)           => api.get(`/api/clients/${id}/assessments/`),
   deleteFile:   (id: string, fid: string) => api.delete(`/api/clients/${id}/assessments/${fid}/`),
   uploadFile:   (id: string, fd: FormData) =>

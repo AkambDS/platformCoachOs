@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi } from '../../api/client'
+import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
@@ -328,43 +328,110 @@ function wasEdited(created: string, updated: string): boolean {
   return Math.abs(new Date(updated).getTime() - new Date(created).getTime()) > 60_000
 }
 
-function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: string; noteList: any[]; refetch: () => Promise<any>; showToast: any; tz?: string }) {
+const STRUCTURED_PREFIX = '##STRUCTURED##'
+const emptyStruct = () => ({ notes: '', reflection: '', commitment: '' })
+
+function parseStructured(text: string): { notes: string; reflection: string; commitment: string } | null {
+  if (!text.startsWith(STRUCTURED_PREFIX)) return null
+  try { return JSON.parse(text.slice(STRUCTURED_PREFIX.length)) } catch { return null }
+}
+
+function StructuredForm({ value, onChange }: { value: { notes: string; reflection: string; commitment: string }; onChange: (v: any) => void }) {
+  const s = (k: string, v: string) => onChange({ ...value, [k]: v })
+  const sections = [
+    { key: 'notes',      label: 'Session Notes',     placeholder: 'What happened in this session…' },
+    { key: 'reflection', label: 'Coach Reflection',  placeholder: 'Your observations and reflections…' },
+    { key: 'commitment', label: 'Commitment',        placeholder: 'What did the client commit to…' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
+      {sections.map(sec => (
+        <div key={sec.key}>
+          <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
+            {sec.label}
+          </label>
+          <textarea className="ftextarea" rows={3} style={{ fontSize: 13, lineHeight: 1.7 }}
+            value={(value as any)[sec.key]} placeholder={sec.placeholder}
+            onChange={e => s(sec.key, e.target.value)} />
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function StructuredDisplay({ data }: { data: { notes: string; reflection: string; commitment: string } }) {
+  const sections = [
+    { key: 'notes',      label: 'Session Notes' },
+    { key: 'reflection', label: 'Coach Reflection' },
+    { key: 'commitment', label: 'Commitment' },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      {sections.map(sec => {
+        const text = (data as any)[sec.key]
+        if (!text?.trim()) return null
+        return (
+          <div key={sec.key}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+              {sec.label}
+            </div>
+            <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{text}</p>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { clientId: string; clientName?: string; noteList: any[]; refetch: () => Promise<any>; showToast: any; tz?: string }) {
   const [adding, setAdding]     = useState(false)
   const [saving, setSaving]     = useState(false)
+  const [noteType, setNoteType] = useState('session')
   const [noteText, setNoteText] = useState('')
-  const [noteType, setNoteType] = useState('general')
+  const [struct, setStruct]     = useState(emptyStruct())
 
-  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [expanded, setExpanded]     = useState<Set<string>>(new Set())
   const [editingId, setEditingId]   = useState<string | null>(null)
+  const [editType, setEditType]     = useState('session')
   const [editText, setEditText]     = useState('')
-  const [editType, setEditType]     = useState('general')
+  const [editStruct, setEditStruct] = useState(emptyStruct())
   const [editSaving, setEditSaving] = useState(false)
+  const [exporting, setExporting]   = useState(false)
 
   const toggle = (id: string) =>
     setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
-  const startEdit = (n: any) => { setEditingId(n.id); setEditText(n.text); setEditType(n.note_type) }
-  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('general') }
+  const startEdit = (n: any) => {
+    setEditingId(n.id); setEditType(n.note_type)
+    const parsed = parseStructured(n.text)
+    if (parsed) { setEditStruct(parsed); setEditText('') }
+    else { setEditText(n.text); setEditStruct(emptyStruct()) }
+  }
+  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('session'); setEditStruct(emptyStruct()) }
+
+  const buildText = (type: string, text: string, s: typeof struct) =>
+    type === 'session' ? STRUCTURED_PREFIX + JSON.stringify(s) : text
 
   const handleAdd = async () => {
-    if (!noteText.trim()) return
+    const text = buildText(noteType, noteText, struct)
+    if (noteType === 'session' && !struct.notes.trim() && !struct.reflection.trim() && !struct.commitment.trim()) return
+    if (noteType !== 'session' && !noteText.trim()) return
     setSaving(true)
     try {
-      await clientsApi.createNote(clientId, { text: noteText, note_type: noteType })
+      await clientsApi.createNote(clientId, { text, note_type: noteType })
       await refetch()
-      setNoteText(''); setNoteType('general'); setAdding(false)
+      setNoteText(''); setStruct(emptyStruct()); setNoteType('session'); setAdding(false)
       showToast('Note added')
     } catch { showToast('Failed to save note', 'error') }
     finally { setSaving(false) }
   }
 
   const handleSaveEdit = async (nid: string) => {
-    if (!editText.trim()) return
+    const text = buildText(editType, editText, editStruct)
     setEditSaving(true)
     try {
-      await clientsApi.updateNote(clientId, nid, { text: editText, note_type: editType })
-      await refetch()
-      cancelEdit()
+      await clientsApi.updateNote(clientId, nid, { text, note_type: editType })
+      await refetch(); cancelEdit()
       showToast('Note updated')
     } catch { showToast('Failed to update', 'error') }
     finally { setEditSaving(false) }
@@ -372,10 +439,22 @@ function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: str
 
   const handleDelete = async (nid: string) => {
     try {
-      await clientsApi.deleteNote(clientId, nid)
-      await refetch()
+      await clientsApi.deleteNote(clientId, nid); await refetch()
       showToast('Note deleted')
     } catch { showToast('Failed to delete', 'error') }
+  }
+
+  const handleExport = async () => {
+    setExporting(true)
+    try {
+      const res = await clientsApi.exportNotes(clientId)
+      const blob = new Blob([res.data], { type: 'text/plain' })
+      const url  = URL.createObjectURL(blob)
+      const a    = document.createElement('a')
+      a.href = url; a.download = `notes_${(clientName || clientId).replace(/\s+/g, '_')}.txt`
+      a.click(); URL.revokeObjectURL(url)
+    } catch { showToast('Export failed', 'error') }
+    finally { setExporting(false) }
   }
 
   const typePill  = (t: string) => t === 'session' ? 'pill-blue' : t === 'observation' ? 'pill-gold' : t === 'commitment' ? 'pill-green' : 'pill-grey'
@@ -393,9 +472,16 @@ function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: str
             </span>
           )}
         </div>
-        <button className="btn btn-dark btn-sm" onClick={() => { setAdding(a => !a); setNoteText(''); setNoteType('general') }}>
-          {adding ? 'Cancel' : '+ Add Note'}
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {noteList.length > 0 && (
+            <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting}>
+              {exporting ? 'Exporting…' : '↓ Export'}
+            </button>
+          )}
+          <button className="btn btn-dark btn-sm" onClick={() => { setAdding(a => !a); setNoteText(''); setStruct(emptyStruct()); setNoteType('session') }}>
+            {adding ? 'Cancel' : '+ Add Note'}
+          </button>
+        </div>
       </div>
 
       {/* Add note form */}
@@ -406,14 +492,14 @@ function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: str
           </div>
           <div style={{ padding: '16px 20px' }}>
             <NoteTypeSelector value={noteType} onChange={setNoteType} />
-            <textarea
-              className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
-              value={noteText} onChange={e => setNoteText(e.target.value)}
-              placeholder="Write your note here…"
-            />
+            {noteType === 'session'
+              ? <StructuredForm value={struct} onChange={setStruct} />
+              : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
+                  value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
+            }
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-outline btn-sm" onClick={() => { setAdding(false); setNoteText('') }}>Cancel</button>
-              <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving || !noteText.trim()}>
+              <button className="btn btn-outline btn-sm" onClick={() => { setAdding(false); setNoteText(''); setStruct(emptyStruct()) }}>Cancel</button>
+              <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>
                 {saving ? 'Saving…' : 'Save Note'}
               </button>
             </div>
@@ -430,10 +516,11 @@ function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: str
 
       {/* Note cards */}
       {noteList.map((n: any) => {
-        const isExpanded = expanded.has(n.id)
-        const isEditing  = editingId === n.id
-        const needsCollapse = n.text.length > COLLAPSE_CHARS
-        const displayText = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
+        const isExpanded    = expanded.has(n.id)
+        const isEditing     = editingId === n.id
+        const structured    = parseStructured(n.text)
+        const needsCollapse = !structured && n.text.length > COLLAPSE_CHARS
+        const displayText   = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
 
         return (
           <div key={n.id} className="card" style={{ marginBottom: 14 }}>
@@ -480,31 +567,34 @@ function NoteLog({ clientId, noteList, refetch, showToast, tz }: { clientId: str
             {isEditing ? (
               <div style={{ padding: '16px 20px' }}>
                 <NoteTypeSelector value={editType} onChange={setEditType} />
-                <textarea
-                  className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
-                  value={editText} onChange={e => setEditText(e.target.value)}
-                />
+                {editType === 'session'
+                  ? <StructuredForm value={editStruct} onChange={setEditStruct} />
+                  : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
+                      value={editText} onChange={e => setEditText(e.target.value)} />
+                }
                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
                   <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
-                  <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving || !editText.trim()}>
+                  <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
                     {editSaving ? 'Saving…' : 'Save Changes'}
                   </button>
                 </div>
               </div>
             ) : (
               <div style={{ padding: '16px 20px' }}>
-                <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>
-                  {displayText}
-                </p>
-                {needsCollapse && (
-                  <button onClick={() => toggle(n.id)}
-                    style={{
-                      background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0',
-                      fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif",
-                    }}>
-                    {isExpanded ? '↑ Collapse' : '↓ Read more'}
-                  </button>
-                )}
+                {structured
+                  ? <StructuredDisplay data={structured} />
+                  : <>
+                      <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>
+                        {displayText}
+                      </p>
+                      {needsCollapse && (
+                        <button onClick={() => toggle(n.id)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0', fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif" }}>
+                          {isExpanded ? '↑ Collapse' : '↓ Read more'}
+                        </button>
+                      )}
+                    </>
+                }
               </div>
             )}
           </div>
@@ -823,10 +913,8 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
 const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices']
 
 const NOTE_TYPES = [
-  { value: 'general',     label: 'General' },
-  { value: 'session',     label: 'Session Note' },
-  { value: 'observation', label: 'Observation' },
-  { value: 'commitment',  label: 'Commitment' },
+  { value: 'session', label: 'Session Note' },
+  { value: 'general', label: 'General' },
 ]
 
 const FILE_TYPES = [
@@ -1494,7 +1582,7 @@ export default function ClientDetail() {
 
         {/* ── Notes (date-stamped log) ── */}
         {tab === 'Notes' && (
-          <NoteLog clientId={id!} noteList={noteList} refetch={refetchNotes} showToast={showToast} tz={tz} />
+          <NoteLog clientId={id!} clientName={client ? `${client.first_name} ${client.last_name}` : ''} noteList={noteList} refetch={refetchNotes} showToast={showToast} tz={tz} />
         )}
 
         {/* ── Files ── */}
