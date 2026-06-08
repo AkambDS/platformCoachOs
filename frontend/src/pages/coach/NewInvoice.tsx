@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { invoicesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
@@ -253,15 +253,17 @@ function CatalogDescInput({ value, onChange, onSelectCatalog, catalog }: {
 
 export default function NewInvoice() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { id: editId } = useParams<{ id: string }>()
   const isEdit = !!editId
+  const preselectedClientId: string = (location.state as any)?.clientId || ''
   const qc = useQueryClient()
   const { show: showToast, el: toastEl } = useToast()
   const workspace = useAuthStore(s => s.workspace)
 
   const [tab, setTab] = useState<'one_time' | 'subscription'>('one_time')
   const [form, setForm] = useState({
-    client: '',
+    client: preselectedClientId,
     currency: 'USD',
     issue_date: today(),
     due_date: '',

@@ -1476,6 +1476,9 @@ export default function ClientDetail() {
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Invoices</div>
+              <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>
+                + Create Invoice
+              </button>
             </div>
             {invList.length === 0
               ? <EmptyState icon="$" title="No invoices" message="Create the first invoice for this client" />
