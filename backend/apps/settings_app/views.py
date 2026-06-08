@@ -253,7 +253,7 @@ def email_preview(request):
     the user has typed in the editor, not what's committed to the DB.
     """
     from types import SimpleNamespace
-    from tasks.email_html import build_confirmation_email, build_reminder_email, build_invoice_email
+    from tasks.email_html import build_confirmation_email, build_reminder_email, build_invoice_email, build_portal_invite_email
     from tasks.email import _logo_src, _owner_info
 
     email_type = request.query_params.get("type", "confirmation")
@@ -340,6 +340,21 @@ def email_preview(request):
             due_str="June 30, 2026",
             owner_email=owner_email, owner_name=owner_name,
             custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
+        )
+
+    elif email_type == "portal_invite":
+        frontend_url = getattr(__import__('django.conf', fromlist=['settings']).settings, 'FRONTEND_URL', '').rstrip('/')
+        html = build_portal_invite_email(
+            client_name="Jane Smith",
+            workspace_name=workspace.name,
+            portal_url=f"{frontend_url}/portal",
+            coach_name="Coach Mike",
+            logo_url=logo_url,
+            owner_email=owner_email,
+            owner_name=owner_name,
+            custom_intro=custom_intro,
+            custom_closing=custom_closing,
             style=style,
         )
 

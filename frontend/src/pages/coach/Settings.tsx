@@ -1616,6 +1616,13 @@ const EMAIL_TEMPLATE_DEFS = [
     defaultSubject: 'Invoice #{invoice_number} from {workspace_name}',
     vars: ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
   },
+  {
+    key: 'portal_invite',
+    label: 'Portal Invite',
+    hint: 'Sent when you grant a client access to their portal.',
+    defaultSubject: 'Your portal access is ready — {workspace_name}',
+    vars: ['{client_name}', '{workspace_name}', '{coach_name}', '{portal_url}'],
+  },
 ]
 
 function EmailTemplatesTab() {
