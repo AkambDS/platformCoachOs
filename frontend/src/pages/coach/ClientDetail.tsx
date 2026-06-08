@@ -384,19 +384,20 @@ function StructuredDisplay({ data }: { data: { notes: string; reflection: string
 }
 
 function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { clientId: string; clientName?: string; noteList: any[]; refetch: () => Promise<any>; showToast: any; tz?: string }) {
-  const [adding, setAdding]     = useState(false)
   const [saving, setSaving]     = useState(false)
   const [noteType, setNoteType] = useState('session')
   const [noteText, setNoteText] = useState('')
   const [struct, setStruct]     = useState(emptyStruct())
 
-  const [expanded, setExpanded]     = useState<Set<string>>(new Set())
-  const [editingId, setEditingId]   = useState<string | null>(null)
-  const [editType, setEditType]     = useState('session')
-  const [editText, setEditText]     = useState('')
-  const [editStruct, setEditStruct] = useState(emptyStruct())
-  const [editSaving, setEditSaving] = useState(false)
-  const [exporting, setExporting]   = useState(false)
+  const [expanded, setExpanded]         = useState<Set<string>>(new Set())
+  const [editingId, setEditingId]       = useState<string | null>(null)
+  const [editType, setEditType]         = useState('session')
+  const [editText, setEditText]         = useState('')
+  const [editStruct, setEditStruct]     = useState(emptyStruct())
+  const [editSaving, setEditSaving]     = useState(false)
+  const [exporting, setExporting]       = useState(false)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; preview: string } | null>(null)
+  const [deleting, setDeleting]         = useState(false)
 
   const toggle = (id: string) =>
     setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
@@ -420,7 +421,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     try {
       await clientsApi.createNote(clientId, { text, note_type: noteType })
       await refetch()
-      setNoteText(''); setStruct(emptyStruct()); setNoteType('session'); setAdding(false)
+      setNoteText(''); setStruct(emptyStruct()); setNoteType('session')
       showToast('Note added')
     } catch { showToast('Failed to save note', 'error') }
     finally { setSaving(false) }
@@ -437,11 +438,15 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     finally { setEditSaving(false) }
   }
 
-  const handleDelete = async (nid: string) => {
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
     try {
-      await clientsApi.deleteNote(clientId, nid); await refetch()
+      await clientsApi.deleteNote(clientId, deleteTarget.id); await refetch()
       showToast('Note deleted')
+      setDeleteTarget(null)
     } catch { showToast('Failed to delete', 'error') }
+    finally { setDeleting(false) }
   }
 
   const handleExport = async () => {
@@ -459,147 +464,149 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
 
   const typePill  = (t: string) => t === 'session' ? 'pill-blue' : t === 'observation' ? 'pill-gold' : t === 'commitment' ? 'pill-green' : 'pill-grey'
   const typeLabel = (t: string) => NOTE_TYPES.find(n => n.value === t)?.label || t
+  const notePreview = (n: any) => {
+    const parsed = parseStructured(n.text)
+    if (parsed) return parsed.notes?.trim() || parsed.reflection?.trim() || 'Session note'
+    return n.text.slice(0, 60)
+  }
 
   return (
-    <div style={{ maxWidth: 800 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 22 }}>
-        <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400 }}>
-          Session Notes
-          {noteList.length > 0 && (
-            <span style={{ fontSize: 13, fontFamily: "'DM Sans', sans-serif", fontWeight: 400, color: 'var(--muted)', marginLeft: 10 }}>
-              {noteList.length}
-            </span>
-          )}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          {noteList.length > 0 && (
-            <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting}>
-              {exporting ? 'Exporting…' : '↓ Export'}
-            </button>
-          )}
-          <button className="btn btn-dark btn-sm" onClick={() => { setAdding(a => !a); setNoteText(''); setStruct(emptyStruct()); setNoteType('session') }}>
-            {adding ? 'Cancel' : '+ Add Note'}
-          </button>
-        </div>
-      </div>
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', maxWidth: 1100 }}>
 
-      {/* Add note form */}
-      {adding && (
-        <div className="card" style={{ marginBottom: 18, border: '2px solid var(--gold)' }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>New Note</span>
+      {/* ── LEFT: New Note Form ── */}
+      <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 20 }}>
+        <div className="card" style={{ border: '1.5px solid var(--gold)' }}>
+          <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>New Note</span>
+            {noteList.length > 0 && (
+              <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting} style={{ fontSize: 10 }}>
+                {exporting ? 'Exporting…' : '↓ Export'}
+              </button>
+            )}
           </div>
-          <div style={{ padding: '16px 20px' }}>
+          <div style={{ padding: '14px 18px' }}>
             <NoteTypeSelector value={noteType} onChange={setNoteType} />
             {noteType === 'session'
               ? <StructuredForm value={struct} onChange={setStruct} />
-              : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
+              : <textarea className="ftextarea" rows={6} style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
                   value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
             }
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-outline btn-sm" onClick={() => { setAdding(false); setNoteText(''); setStruct(emptyStruct()) }}>Cancel</button>
-              <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>
-                {saving ? 'Saving…' : 'Save Note'}
-              </button>
-            </div>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}
+              style={{ width: '100%', marginTop: 12, justifyContent: 'center' }}>
+              {saving ? 'Saving…' : 'Save Note'}
+            </button>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* Empty state */}
-      {noteList.length === 0 && !adding && (
-        <EmptyState icon="✎" title="No notes yet" message="Add date-stamped notes — session observations, commitments, and context." action={
-          <button className="btn btn-dark" onClick={() => setAdding(true)}>+ Add First Note</button>
-        } />
-      )}
+      {/* ── RIGHT: Note List ── */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+          <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 400 }}>
+            Session Notes{noteList.length > 0 && <span style={{ fontSize: 13, fontFamily: 'sans-serif', fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>{noteList.length}</span>}
+          </span>
+        </div>
 
-      {/* Note cards */}
-      {noteList.map((n: any) => {
-        const isExpanded    = expanded.has(n.id)
-        const isEditing     = editingId === n.id
-        const structured    = parseStructured(n.text)
-        const needsCollapse = !structured && n.text.length > COLLAPSE_CHARS
-        const displayText   = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
+        {noteList.length === 0 ? (
+          <EmptyState icon="✎" title="No notes yet" message="Use the form on the left to add your first note." />
+        ) : noteList.map((n: any) => {
+          const isExpanded    = expanded.has(n.id)
+          const isEditing     = editingId === n.id
+          const structured    = parseStructured(n.text)
+          const needsCollapse = !structured && n.text.length > COLLAPSE_CHARS
+          const displayText   = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
 
-        return (
-          <div key={n.id} className="card" style={{ marginBottom: 14 }}>
-            {/* Card header */}
-            <div style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              padding: '13px 20px', borderBottom: '1px solid var(--border)',
-              background: 'var(--paper)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-                <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 11 }}>
-                  {typeLabel(n.note_type)}
-                </span>
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
-                  {fmtNoteDate(n.created_at, tz)}
-                </span>
-                {n.created_by_name && (
-                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>by {n.created_by_name}</span>
-                )}
-                {wasEdited(n.created_at, n.updated_at) && (
-                  <span style={{
-                    fontSize: 10, color: 'var(--muted)', fontStyle: 'italic',
-                    background: 'var(--paper)', padding: '1px 6px', borderRadius: 10,
-                    border: '1px solid var(--border)',
-                  }}>
-                    edited {fmtNoteDate(n.updated_at, tz)}
+          return (
+            <div key={n.id} className="card" style={{ marginBottom: 12 }}>
+              {/* Card header */}
+              <div style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '11px 18px', borderBottom: '1px solid var(--border)', background: 'var(--paper)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 10 }}>
+                    {typeLabel(n.note_type)}
                   </span>
-                )}
-              </div>
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
-                {!isEditing && (
-                  <button onClick={() => startEdit(n)}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 6px', fontSize: 12, fontFamily: "'DM Sans', sans-serif" }}
-                    title="Edit note">Edit</button>
-                )}
-                <button onClick={() => handleDelete(n.id)}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 19, lineHeight: 1, padding: '0 4px' }}
-                  title="Delete note">×</button>
-              </div>
-            </div>
-
-            {/* Card body */}
-            {isEditing ? (
-              <div style={{ padding: '16px 20px' }}>
-                <NoteTypeSelector value={editType} onChange={setEditType} />
-                {editType === 'session'
-                  ? <StructuredForm value={editStruct} onChange={setEditStruct} />
-                  : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 14, fontSize: 14, lineHeight: 1.7 }}
-                      value={editText} onChange={e => setEditText(e.target.value)} />
-                }
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 12 }}>
-                  <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
-                  <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
-                    {editSaving ? 'Saving…' : 'Save Changes'}
-                  </button>
+                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtNoteDate(n.created_at, tz)}</span>
+                  {n.created_by_name && <span style={{ fontSize: 11, color: 'var(--muted)' }}>by {n.created_by_name}</span>}
+                  {wasEdited(n.created_at, n.updated_at) && (
+                    <span style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic', background: 'var(--paper)', padding: '1px 6px', borderRadius: 10, border: '1px solid var(--border)' }}>
+                      edited {fmtNoteDate(n.updated_at, tz)}
+                    </span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
+                  {!isEditing && (
+                    <button onClick={() => startEdit(n)}
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 8px', fontSize: 11 }}
+                      title="Edit note">Edit</button>
+                  )}
+                  <button
+                    onClick={() => setDeleteTarget({ id: n.id, preview: notePreview(n) })}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', color: 'var(--muted)', fontSize: 17, lineHeight: 1 }}
+                    title="Delete note">×</button>
                 </div>
               </div>
-            ) : (
-              <div style={{ padding: '16px 20px' }}>
-                {structured
-                  ? <StructuredDisplay data={structured} />
-                  : <>
-                      <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>
-                        {displayText}
-                      </p>
-                      {needsCollapse && (
-                        <button onClick={() => toggle(n.id)}
-                          style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '8px 0 0', fontSize: 12, color: 'var(--gold)', fontFamily: "'DM Sans', sans-serif" }}>
-                          {isExpanded ? '↑ Collapse' : '↓ Read more'}
-                        </button>
-                      )}
-                    </>
-                }
-              </div>
-            )}
-          </div>
-        )
-      })}
+
+              {/* Card body */}
+              {isEditing ? (
+                <div style={{ padding: '14px 18px' }}>
+                  <NoteTypeSelector value={editType} onChange={setEditType} />
+                  {editType === 'session'
+                    ? <StructuredForm value={editStruct} onChange={setEditStruct} />
+                    : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
+                        value={editText} onChange={e => setEditText(e.target.value)} />
+                  }
+                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                    <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                    <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
+                      {editSaving ? 'Saving…' : 'Save Changes'}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ padding: '14px 18px' }}>
+                  {structured
+                    ? <StructuredDisplay data={structured} />
+                    : <>
+                        <p style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{displayText}</p>
+                        {needsCollapse && (
+                          <button onClick={() => toggle(n.id)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0 0', fontSize: 12, color: 'var(--gold)' }}>
+                            {isExpanded ? '↑ Collapse' : '↓ Read more'}
+                          </button>
+                        )}
+                      </>
+                  }
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      {/* ── Delete confirmation modal ── */}
+      {deleteTarget && (
+        <Modal title="Delete Note" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" style={{ background: '#b91c1c', color: '#fff', border: 'none' }}
+              onClick={handleDeleteConfirm} disabled={deleting}>
+              {deleting ? 'Deleting…' : 'Delete Note'}
+            </button>
+          </>
+        }>
+          <p style={{ fontSize: 14, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
+            Are you sure you want to permanently delete this note?
+          </p>
+          {deleteTarget.preview && (
+            <div style={{ marginTop: 12, padding: '10px 14px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, color: 'var(--ink)', lineHeight: 1.5 }}>
+              "{deleteTarget.preview}{deleteTarget.preview.length >= 60 ? '…' : ''}"
+            </div>
+          )}
+          <p style={{ fontSize: 12, color: '#b91c1c', marginTop: 10, margin: '10px 0 0' }}>This action cannot be undone.</p>
+        </Modal>
+      )}
     </div>
   )
 }
@@ -683,23 +690,35 @@ function fileCategory(name: string): FileCategory {
   return 'document'
 }
 
-const CAT_CONFIG: Record<FileCategory, { bg: string; icon: JSX.Element; action: string }> = {
-  pdf:      { bg: '#fdf0ef', icon: <IconPdf />,   action: 'Download PDF' },
-  video:    { bg: '#edf4fc', icon: <IconVideo />,  action: 'Watch Now' },
-  document: { bg: '#fdf0ef', icon: <IconDoc />,    action: 'Open Document' },
-  image:    { bg: '#f0f4ef', icon: <IconImage />,  action: 'View Image' },
-  link:     { bg: '#fdf9ed', icon: <IconLink />,   action: 'Open Link' },
+const CAT_CONFIG: Record<FileCategory, { bg: string; bar: string; icon: JSX.Element; action: string }> = {
+  pdf:      { bg: '#fdf0ef', bar: '#c0392b', icon: <IconPdf />,   action: 'Download PDF' },
+  video:    { bg: '#edf4fc', bar: '#7c4d9f', icon: <IconVideo />,  action: 'Watch Now' },
+  document: { bg: '#f0f4f8', bar: '#2d6a9f', icon: <IconDoc />,    action: 'Open Document' },
+  image:    { bg: '#f0f4ef', bar: '#4a7c59', icon: <IconImage />,  action: 'View Image' },
+  link:     { bg: '#fdf9ed', bar: '#c9a84c', icon: <IconLink />,   action: 'Open Link' },
+}
+const LIB_VIS_C: Record<string, string> = {
+  private: '#7c4d9f', owner_only: '#b91c1c', internal: '#2d6a9f', client_visible: '#4a7c59',
+}
+const LIB_VIS_L: Record<string, string> = {
+  private: 'Just Me', owner_only: 'Owner Only', internal: 'All Coaches', client_visible: 'Client Visible',
 }
 
 function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clientId: string; fileList: any[]; refetch: () => Promise<any>; showToast: any; canDelete: boolean }) {
+  const [section, setSection]       = useState<'client' | 'library'>('client')
   const [uploading, setUploading]   = useState(false)
   const [fileType, setFileType]     = useState('other')
   const [dragOver, setDragOver]     = useState(false)
   const [showUpload, setShowUpload] = useState(false)
   const [search, setSearch]         = useState('')
-  const [filterCat, setFilterCat]   = useState<'all' | FileCategory>('all')
   const [confirmFile, setConfirmFile] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting]     = useState(false)
+
+  const { data: libData } = useQuery({
+    queryKey: ['library-client-visible'],
+    queryFn: () => libraryApi.items({ visibility: 'client_visible', page_size: 200 }).then(r => r.data),
+  })
+  const libItems: any[] = libData?.results || libData || []
 
   const handleUpload = async (file: File) => {
     setUploading(true)
@@ -728,56 +747,50 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
     finally { setDeleting(false) }
   }
 
-  const isNew = (dateStr: string) =>
-    (Date.now() - new Date(dateStr).getTime()) < 7 * 24 * 60 * 60 * 1000
+  const isNew = (d: string) => (Date.now() - new Date(d).getTime()) < 7 * 24 * 60 * 60 * 1000
 
-  const filtered = fileList.filter(f => {
-    const cat = fileCategory(f.file_name)
-    if (filterCat !== 'all' && cat !== filterCat) return false
-    if (search && !f.file_name.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
-
-  const FILTERS: Array<{ value: 'all' | FileCategory; label: string }> = [
-    { value: 'all',      label: 'All' },
-    { value: 'pdf',      label: 'PDF' },
-    { value: 'video',    label: 'Video' },
-    { value: 'document', label: 'Document' },
-    { value: 'image',    label: 'Image' },
-  ]
+  const filteredClient = fileList.filter(f =>
+    !search || f.file_name?.toLowerCase().includes(search.toLowerCase()))
+  const filteredLib = libItems.filter(f =>
+    !search || f.title?.toLowerCase().includes(search.toLowerCase()) || f.file_name?.toLowerCase().includes(search.toLowerCase()))
 
   return (
     <div style={{ maxWidth: 980 }}>
-      {/* Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-        <div>
-          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 24, fontWeight: 300 }}>Files & Documents</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 3 }}>
-            {fileList.length} item{fileList.length !== 1 ? 's' : ''} · Available immediately after upload
-          </div>
+      {/* Section toggle + Upload */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+          {(['client', 'library'] as const).map(s => (
+            <button key={s} onClick={() => { setSection(s); setSearch(''); setShowUpload(false) }} style={{
+              padding: '8px 18px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              background: section === s ? 'var(--ink)' : 'var(--white)',
+              color: section === s ? '#fff' : 'var(--muted)',
+            }}>
+              {s === 'client' ? `Client Files (${fileList.length})` : `Shared Library (${libItems.length})`}
+            </button>
+          ))}
         </div>
-        <button className="btn btn-dark btn-sm" onClick={() => setShowUpload(s => !s)}>
-          {showUpload ? 'Cancel' : '+ Upload File'}
-        </button>
+        {section === 'client' && (
+          <button className="btn btn-dark btn-sm" onClick={() => setShowUpload(s => !s)}>
+            {showUpload ? 'Cancel' : '+ Upload File'}
+          </button>
+        )}
       </div>
 
       {/* Upload panel */}
-      {showUpload && (
-        <div className="card" style={{ marginBottom: 24 }}>
-          <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Upload File</span>
+      {section === 'client' && showUpload && (
+        <div className="card" style={{ marginBottom: 20 }}>
+          <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>Upload File</span>
           </div>
-          <div style={{ padding: '16px 20px' }}>
-            <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexWrap: 'wrap' }}>
+          <div style={{ padding: '14px 18px' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
               {FILE_TYPES.map(ft => (
-                <button key={ft.value} onClick={() => setFileType(ft.value)}
-                  style={{
-                    padding: '5px 12px', fontSize: 11, cursor: 'pointer',
-                    border: '1px solid var(--border)',
-                    background: fileType === ft.value ? 'var(--ink)' : 'var(--white)',
-                    color: fileType === ft.value ? 'var(--paper)' : 'var(--ink)',
-                    fontFamily: "'DM Sans', sans-serif",
-                  }}>{ft.label}</button>
+                <button key={ft.value} onClick={() => setFileType(ft.value)} style={{
+                  padding: '4px 12px', fontSize: 11, cursor: 'pointer', borderRadius: 4,
+                  border: '1px solid var(--border)',
+                  background: fileType === ft.value ? 'var(--ink)' : 'var(--white)',
+                  color: fileType === ft.value ? 'var(--paper)' : 'var(--ink)',
+                }}>{ft.label}</button>
               ))}
             </div>
             <label
@@ -788,17 +801,14 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                 border: `2px dashed ${dragOver ? 'var(--gold)' : 'var(--border)'}`,
                 background: dragOver ? 'var(--gold-faint)' : 'var(--paper)',
-                padding: '32px 20px', cursor: 'pointer', transition: 'all .2s',
-                borderRadius: 'var(--radius-sm)',
+                padding: '28px 20px', cursor: 'pointer', transition: '.2s', borderRadius: 6,
               }}>
               <input type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
-              {uploading ? (
-                <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading…</span>
-              ) : (
+              {uploading ? <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading…</span> : (
                 <>
                   <IconFile />
-                  <span style={{ fontSize: 13, color: 'var(--ink)', fontWeight: 500, marginTop: 10, marginBottom: 4 }}>Drop file here or click to browse</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>PDF, Word, Excel, images — max 50 MB</span>
+                  <span style={{ fontSize: 13, fontWeight: 500, marginTop: 8 }}>Drop or click to upload</span>
+                  <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>PDF, Word, images — max 50 MB</span>
                 </>
               )}
             </label>
@@ -806,102 +816,149 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
         </div>
       )}
 
-      {/* Search + filters */}
-      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 22 }}>
-        <div style={{ position: 'relative', flex: 1 }}>
-          <svg style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }}
-            width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-          </svg>
-          <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search files…"
-            style={{
-              width: '100%', paddingLeft: 36, paddingRight: 12, height: 38, boxSizing: 'border-box',
-              border: '1px solid var(--border)', background: 'var(--white)',
-              fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none',
-            }}/>
-        </div>
-        {FILTERS.map(f => (
-          <button key={f.value} onClick={() => setFilterCat(f.value)}
-            style={{
-              padding: '8px 16px', fontSize: 12, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-              border: '1px solid var(--border)', whiteSpace: 'nowrap',
-              background: filterCat === f.value ? 'var(--ink)' : 'var(--white)',
-              color: filterCat === f.value ? 'var(--paper)' : 'var(--ink)',
-            }}>{f.label}</button>
-        ))}
+      {/* Search */}
+      <div style={{ position: 'relative', marginBottom: 20 }}>
+        <svg style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }}
+          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+        </svg>
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder={section === 'client' ? 'Search client files…' : 'Search shared library…'}
+          style={{ width: '100%', paddingLeft: 36, paddingRight: 12, height: 38, boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--white)', fontSize: 13, outline: 'none' }} />
       </div>
 
-      {/* Grid */}
-      {filtered.length === 0 ? (
-        <EmptyState icon="📁" title="No files yet" message="Upload signed contracts, assessments, and reports." />
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-          {filtered.map((f: any) => {
-            const cat = fileCategory(f.file_name)
-            const { bg, icon, action } = CAT_CONFIG[cat]
-            const typeLabel = FILE_TYPES.find(t => t.value === f.assessment_type)?.label || f.assessment_type
-            return (
-              <div key={f.id} className="card" style={{ overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                {/* Thumbnail */}
-                <div style={{ position: 'relative', height: 118, background: bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {icon}
-                  {isNew(f.created_at) && (
-                    <div style={{
-                      position: 'absolute', top: 10, right: 10,
-                      background: 'var(--gold)', color: 'var(--ink)',
-                      fontSize: 9, fontWeight: 700, letterSpacing: '.1em',
-                      padding: '3px 8px',
-                    }}>NEW</div>
-                  )}
-                </div>
-                {/* Body */}
-                <div style={{ padding: '13px 15px 15px', flex: 1, display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ fontSize: 10, color: 'var(--muted)', letterSpacing: '.08em', textTransform: 'uppercase', marginBottom: 6 }}>
-                    {cat} · {typeLabel}
-                  </div>
-                  <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', lineHeight: 1.4, flex: 1, wordBreak: 'break-word' }}>
-                    {f.file_name}
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, marginBottom: 12 }}>
-                    Added {fmtDate(f.date || f.created_at)}
-                    {f.uploaded_by_name && <> · {f.uploaded_by_name}</>}
-                  </div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    {f.presigned_url ? (
-                      <a href={f.presigned_url} target="_blank" rel="noreferrer"
-                        style={{ fontSize: 12, fontWeight: 500, color: 'var(--gold)', textDecoration: 'none' }}>
-                        {action} →
-                      </a>
-                    ) : (
-                      <span style={{ fontSize: 12, color: 'var(--muted-faint)' }}>No preview</span>
-                    )}
-                    {canDelete && (
-                      <button onClick={() => setConfirmFile({ id: f.id, name: f.file_name })}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 18, padding: '0 2px', lineHeight: 1 }}
-                        title="Delete file">×</button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )
-          })}
-        </div>
+      {/* ── CLIENT FILES ── */}
+      {section === 'client' && (
+        filteredClient.length === 0
+          ? <EmptyState icon="📁" title="No files yet" message="Upload contracts, assessments, and session notes." />
+          : <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              <table className="tbl" style={{ margin: 0 }}>
+                <thead>
+                  <tr>
+                    <th>File</th>
+                    <th>Type</th>
+                    <th>Date</th>
+                    <th>Uploaded by</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filteredClient.map((f: any) => {
+                    const cat = fileCategory(f.file_name)
+                    const { bar, icon, action } = CAT_CONFIG[cat]
+                    const typeLabel = FILE_TYPES.find(t => t.value === f.assessment_type)?.label || f.assessment_type || cat
+                    return (
+                      <tr key={f.id}>
+                        <td>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                            <div style={{ width: 3, height: 32, background: bar, borderRadius: 2, flexShrink: 0 }} />
+                            {icon}
+                            <div>
+                              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{f.file_name}</div>
+                              {isNew(f.created_at) && (
+                                <span style={{ fontSize: 9, fontWeight: 700, background: 'var(--gold)', color: 'var(--ink)', padding: '1px 5px', borderRadius: 3 }}>NEW</span>
+                              )}
+                            </div>
+                          </div>
+                        </td>
+                        <td style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{typeLabel}</td>
+                        <td style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtDate(f.date || f.created_at)}</td>
+                        <td style={{ fontSize: 12, color: 'var(--muted)' }}>{f.uploaded_by_name || '—'}</td>
+                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                          {f.presigned_url && (
+                            <a href={f.presigned_url} target="_blank" rel="noreferrer"
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 11, textDecoration: 'none', padding: '4px 10px' }}>
+                              ↓ {action}
+                            </a>
+                          )}
+                          {canDelete && (
+                            <button onClick={() => setConfirmFile({ id: f.id, name: f.file_name })}
+                              className="btn btn-ghost btn-sm"
+                              style={{ color: '#c0392b', padding: '4px 8px', fontSize: 14, marginLeft: 4 }}>×</button>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
       )}
 
-      {/* Delete confirmation modal */}
+      {/* ── SHARED LIBRARY ── */}
+      {section === 'library' && (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, padding: '8px 12px', background: '#f0f4ff', border: '1px solid #d0daf0', borderRadius: 6 }}>
+            Library files marked <strong>Client Visible</strong> — accessible by all clients. Manage visibility in <strong>Library</strong>.
+          </div>
+          {filteredLib.length === 0
+            ? <EmptyState icon="📚" title="No shared files" message="Mark Library files as 'Client Visible' to share them with clients." />
+            : <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                <table className="tbl" style={{ margin: 0 }}>
+                  <thead>
+                    <tr>
+                      <th>File</th>
+                      <th>Access</th>
+                      <th>Uploaded by</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filteredLib.map((item: any) => {
+                      const name = item.file_name || item.title || ''
+                      const cat = item.content_type === 'link' ? 'link' as FileCategory : fileCategory(name)
+                      const { bar, icon, action } = CAT_CONFIG[cat]
+                      const vc = LIB_VIS_C[item.visibility] || '#8c8279'
+                      const vl = LIB_VIS_L[item.visibility] || item.visibility
+                      return (
+                        <tr key={item.id}>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <div style={{ width: 3, height: 32, background: bar, borderRadius: 2, flexShrink: 0 }} />
+                              {icon}
+                              <div>
+                                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{item.title}</div>
+                                {item.file_name && item.file_name !== item.title && (
+                                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>{item.file_name}</div>
+                                )}
+                              </div>
+                            </div>
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: `${vc}18`, color: vc }}>{vl}</span>
+                          </td>
+                          <td style={{ fontSize: 12, color: 'var(--muted)' }}>{item.uploaded_by_name || '—'}</td>
+                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                            {(item.presigned_url || item.url) && (
+                              <button onClick={() => window.open(item.presigned_url || item.url, '_blank')}
+                                className="btn btn-ghost btn-sm"
+                                style={{ fontSize: 11, padding: '4px 10px' }}>
+                                {item.url && !item.presigned_url ? '↗ Open' : `↓ ${action}`}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+          }
+        </>
+      )}
+
+      {/* Delete confirmation */}
       {confirmFile && (
         <Modal title="Delete File" onClose={() => setConfirmFile(null)} footer={
           <>
             <button className="btn btn-outline btn-sm" onClick={() => setConfirmFile(null)}>Cancel</button>
-            <button className="btn btn-sm" style={{ background: 'var(--rust)', color: '#fff', border: 'none' }}
-              onClick={handleDelete} disabled={deleting}>
-              {deleting ? 'Deleting…' : 'Delete'}
-            </button>
+            <button className="btn btn-sm" style={{ background: '#b91c1c', color: '#fff', border: 'none' }}
+              onClick={handleDelete} disabled={deleting}>{deleting ? 'Deleting…' : 'Delete'}</button>
           </>
         }>
           <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0 }}>
-            Are you sure you want to permanently delete <strong>"{confirmFile.name}"</strong>?
-            This action cannot be undone.
+            Delete <strong>"{confirmFile.name}"</strong>? This cannot be undone.
           </p>
         </Modal>
       )}
