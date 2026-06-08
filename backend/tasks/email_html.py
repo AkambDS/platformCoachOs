@@ -779,3 +779,75 @@ def build_pipeline_alert_email(
     </p>"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+
+
+def build_portal_invite_email(
+    client_name: str,
+    workspace_name: str,
+    portal_url: str,
+    coach_name: str,
+    logo_url: str = "",
+    owner_email: str = "",
+    owner_name: str = "",
+    custom_intro: str = "",
+    custom_closing: str = "",
+    style: dict = None,
+) -> str:
+    s = style or {}
+    first_name = client_name.split()[0] if client_name else client_name
+
+    intro_html = f"""
+    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      {custom_intro}
+    </p>""" if custom_intro else f"""
+    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {first_name}, {workspace_name} has set up a private portal for you where you can
+      view your sessions, goals, and shared resources.
+    </p>"""
+
+    closing_html = f"""
+    <p style="margin:28px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      {custom_closing}
+    </p>""" if custom_closing else f"""
+    <p style="margin:28px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      If you have any questions, reply to this email or contact {coach_name} directly.
+    </p>"""
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+              color:#4a7c59;font-weight:600;">
+      Portal Access
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Your portal is ready
+    </h1>
+
+    {intro_html}
+
+    <div style="margin:32px 0;text-align:center;">
+      {_cta_button("Access Your Portal", portal_url, "#4a7c59")}
+    </div>
+
+    <p style="margin:0;font-size:12px;color:#9e9890;text-align:center;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Or copy this link: <a href="{portal_url}" style="color:#4a7c59;">{portal_url}</a>
+    </p>
+
+    {closing_html}
+
+    <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=s.get("header_bg", "#1a2f4e"),
+                        accent_color=s.get("accent_color", "#b8922e"),
+                        header_tagline=s.get("header_tagline", "Coaching Platform"),
+                        body_font=s.get("body_font", "'Helvetica Neue',Helvetica,Arial,sans-serif"))
