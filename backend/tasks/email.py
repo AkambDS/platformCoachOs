@@ -216,7 +216,7 @@ def send_activity_confirmation_email(activity_id: str):
         custom_from      = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr  = custom_from or owner_email or settings.DEFAULT_FROM_EMAIL
+        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
 
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
@@ -330,7 +330,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         custom_from      = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr  = custom_from or owner_email or settings.DEFAULT_FROM_EMAIL
+        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
 
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
@@ -581,14 +581,14 @@ def send_invoice_email(invoice_id: str):
                 custom_closing=custom_closing,
                 style=tmpl.get("style", {}),
             )
-        _fallback = (f"{workspace.name} <{owner_email}>" if owner_email
-                     else _workspace_from_email(workspace))
-        from_addr = f"{workspace.name} <{custom_from}>" if custom_from else _fallback
+        from_addr = (f"{workspace.name} <{custom_from}>"
+                     if custom_from else _workspace_from_email(workspace))
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
             from_email=from_addr,
             to=[invoice.client.email],
+            reply_to=[owner_email] if owner_email else None,
         )
         msg.attach_alternative(html, "text/html")
         try:
@@ -1021,7 +1021,7 @@ def send_portal_invite_email(client_id: str):
         custom_from   = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr = custom_from or owner_email or settings.DEFAULT_FROM_EMAIL
+        from_email_addr = custom_from or settings.DEFAULT_FROM_EMAIL
 
         custom_html = tmpl.get("custom_html", "").strip()
         if custom_html:
