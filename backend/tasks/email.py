@@ -587,7 +587,21 @@ def send_invoice_email(invoice_id: str):
         msg.attach_alternative(html, "text/html")
         try:
             from weasyprint import HTML as WeasyHTML
-            pdf_bytes = WeasyHTML(string=html).write_pdf()
+            # Rebuild HTML without the logo URL so WeasyPrint doesn't make an external
+            # HTTP request to fetch it — that self-request hangs inside gunicorn.
+            # (custom_html_tmpl is user-supplied and unlikely to reference our backend URLs)
+            pdf_html = html if custom_html_tmpl else build_invoice_email(
+                invoice=invoice,
+                workspace_name=workspace.name,
+                logo_url="",
+                due_str=due_str,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=tmpl.get("style", {}),
+            )
+            pdf_bytes = WeasyHTML(string=pdf_html).write_pdf()
             msg.attach(f"{invoice.number}.pdf", pdf_bytes, "application/pdf")
         except Exception as pdf_err:
             logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
