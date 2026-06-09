@@ -178,7 +178,7 @@ class PortalGoalsView(APIView):
 
         goals = list(ClientGoal.objects.filter(
             client_id=client_id, workspace_id=workspace_id,
-            status="active", visible_to_client=True,
+            status="active",
         ))
         commitments = Commitment.objects.filter(
             client_id=client_id, workspace_id=workspace_id
