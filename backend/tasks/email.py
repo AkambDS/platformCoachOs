@@ -181,10 +181,10 @@ def send_activity_confirmation_email(activity_id: str):
             logger.warning(f"No email for client on activity {activity_id}")
             return
 
+        workspace  = activity.workspace
         dt         = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
-        workspace  = activity.workspace
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
@@ -399,10 +399,10 @@ def send_activity_reschedule_email(activity_id: str):
         if not client.email:
             return
 
+        workspace   = activity.workspace
         dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
-        workspace   = activity.workspace
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
@@ -474,10 +474,10 @@ def send_activity_cancellation_email(activity_id: str):
         if not client.email:
             return
 
+        workspace   = activity.workspace
         dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
-        workspace   = activity.workspace
         owner_email, owner_name = _owner_info(workspace)
         ics_bytes   = _build_ics(activity, method="CANCEL", cancelled=True)
 
@@ -891,9 +891,9 @@ def send_client_cancellation_notice(activity_id: str):
         if not coach or not coach.email:
             return
 
+        workspace   = activity.workspace
         client_name = activity.client.full_name
         dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
-        workspace   = activity.workspace
 
         subject = f"Session cancelled by {client_name}"
         body    = (
