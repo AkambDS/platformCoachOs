@@ -1792,7 +1792,7 @@ function EmailTemplatesTab() {
                 <input className="finput" type="email" placeholder="Default sender"
                   value={fields.from_email}
                   onChange={e => setFields(f => ({ ...f, from_email: e.target.value }))} />
-                <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be a verified AWS SES address.</div>
+                <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be an address @rass-consulting.com or @lauratreonze.com.</div>
               </div>
               <div className="fgroup">
                 <label className="flabel">Opening paragraph</label>

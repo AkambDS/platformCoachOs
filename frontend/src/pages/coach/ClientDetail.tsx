@@ -230,10 +230,11 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
   const qc = useQueryClient()
   const isEdit = !!goal
   const [form, setForm] = useState({
-    title:       goal?.title       || '',
-    description: goal?.description || '',
-    target_date: goal?.target_date ? goal.target_date.slice(0, 10) : '',
-    status:      goal?.status      || 'active',
+    title:            goal?.title            || '',
+    description:      goal?.description      || '',
+    target_date:      goal?.target_date ? goal.target_date.slice(0, 10) : '',
+    status:           goal?.status           || 'active',
+    visible_to_client: goal?.visible_to_client ?? false,
   })
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))

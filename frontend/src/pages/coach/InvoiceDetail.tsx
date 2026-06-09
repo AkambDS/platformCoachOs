@@ -697,7 +697,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
                   <input className="finput" type="email" placeholder="laura@yourbusiness.com"
                     value={fromEmail} onChange={e => setFromEmail(e.target.value)} />
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                    Overrides the default sender. Must be a verified address in your email provider (AWS SES).
+                    Overrides the default sender. Must be an address @rass-consulting.com or @lauratreonze.com.
                   </div>
                 </div>
                 <div className="fgroup">
