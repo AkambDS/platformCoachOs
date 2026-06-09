@@ -121,6 +121,19 @@ class SessionConfirmView(View):
                   Please contact your coach for a new confirmation.</p>
               </div>"""), status=400)
 
+        # Mark confirmed in DB and notify coach
+        if not activity.client_confirmed:
+            from django.utils import timezone
+            activity.client_confirmed = True
+            activity.client_confirmed_at = timezone.now()
+            activity.save(update_fields=["client_confirmed", "client_confirmed_at"])
+            try:
+                import threading
+                from tasks.email import send_client_confirmation_notice
+                threading.Thread(target=send_client_confirmation_notice, args=(str(activity.id),), daemon=True).start()
+            except Exception as e:
+                logger.error(f"Coach confirmation notice failed: {e}")
+
         ws = activity.workspace
         client_name = escape(activity.client.first_name or activity.client.full_name)
 
@@ -132,7 +145,7 @@ class SessionConfirmView(View):
               We look forward to seeing you.</p>
             {_detail_box(activity)}
             <p style="font-size:12px;color:{_MUTED};">
-              Need to cancel or reschedule? Contact your coach directly.
+              Need to cancel or reschedule? Use the links in your email.
             </p>
           </div>"""
         return HttpResponse(_shell(ws.name, body))
@@ -202,8 +215,9 @@ class SessionCancelView(View):
 
         # Notify coach
         try:
+            import threading
             from tasks.email import send_client_cancellation_notice
-            send_client_cancellation_notice.delay(str(activity.id))
+            threading.Thread(target=send_client_cancellation_notice, args=(str(activity.id),), daemon=True).start()
         except Exception as e:
             logger.error(f"Coach cancellation notice failed: {e}")
 
@@ -281,8 +295,9 @@ class SessionRescheduleView(View):
 
         # Send reschedule request to coach
         try:
+            import threading
             from tasks.email import send_client_reschedule_request
-            send_client_reschedule_request.delay(str(activity.id), message)
+            threading.Thread(target=send_client_reschedule_request, args=(str(activity.id), message), daemon=True).start()
         except Exception as e:
             logger.error(f"Coach reschedule notice failed: {e}")
 

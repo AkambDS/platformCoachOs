@@ -49,6 +49,9 @@ class Activity(WorkspaceModel):
     caldav_uid     = models.CharField(max_length=500, blank=True)
     # Edit history (FR-ACT-15) — list of {changed_by, changed_at, diff}
     edit_history   = models.JSONField(default=list)
+    # Client RSVP
+    client_confirmed      = models.BooleanField(default=False)
+    client_confirmed_at   = models.DateTimeField(null=True, blank=True)
     # Notification tracking — timestamps show exactly when each email was sent
     confirmation_sent_at  = models.DateTimeField(null=True, blank=True)
     cancellation_sent_at  = models.DateTimeField(null=True, blank=True)

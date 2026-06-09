@@ -406,10 +406,20 @@ def send_activity_reschedule_email(activity_id: str):
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
+        from apps.activities.tokens import make_session_token
+        backend_url    = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        confirm_url    = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
+        cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+        reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+
         plain = (
             f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
             f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A new calendar invite is attached. Open it to update your calendar.\n\n— {workspace.name}"
+            f"A new calendar invite is attached. Open it to update your calendar.\n\n"
+            f"Confirm attendance: {confirm_url}\n"
+            f"Request reschedule: {reschedule_url}\n"
+            f"Cancel session:     {cancel_url}\n\n"
+            f"— {workspace.name}"
         )
         html = build_reschedule_email(
             activity=activity,
@@ -880,6 +890,35 @@ def send_pipeline_alert(deal_id: str):
 
 
 # ── Client session action notifications ────────────────────────────────────────
+
+def send_client_confirmation_notice(activity_id: str):
+    """Email the coach when a client confirms attendance via their email link."""
+    from apps.activities.models import Activity
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        coach = activity.coach
+        if not coach or not coach.email:
+            return
+        workspace   = activity.workspace
+        client_name = activity.client.full_name
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        subject = f"{client_name} confirmed attendance"
+        body = (
+            f"Hi {coach.first_name or coach.full_name},\n\n"
+            f"{client_name} has confirmed their attendance for:\n\n"
+            f"  What:  {activity.title}\n"
+            f"  When:  {dt}\n\n"
+            f"The session is marked as confirmed in CoachOS.\n\n"
+            f"— {workspace.name}"
+        )
+        EmailMultiAlternatives(
+            subject=subject, body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL, to=[coach.email],
+        ).send()
+        logger.info(f"Client confirmation notice sent to coach {coach.email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_client_confirmation_notice failed: {e}")
+
 
 @shared_task(name="tasks.email.send_client_cancellation_notice")
 def send_client_cancellation_notice(activity_id: str):
