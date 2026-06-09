@@ -112,6 +112,10 @@ class User(AbstractBaseUser, PermissionsMixin):
         return f"{self.full_name} <{self.email}>"
 
     @property
+    def first_name(self):
+        return self.full_name.split()[0] if self.full_name else ""
+
+    @property
     def is_business_owner(self):
         return self.role == self.Role.BUSINESS_OWNER
 
