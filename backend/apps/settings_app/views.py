@@ -284,18 +284,25 @@ def email_preview(request):
     custom_intro   = apply(raw_intro)
     custom_closing = apply(raw_closing)
 
-    # Style overrides: request params take priority over saved DB values
+    # Style overrides: request params take priority over saved DB values.
+    # header_tagline uses None sentinel so '' (logo-only) is preserved;
+    # all other fields use '' sentinel so absent params are omitted (builders use defaults).
     saved_style = tmpl.get("style", {})
-    style = {
-        "header_bg":      request.query_params.get("header_bg",      saved_style.get("header_bg",      "")),
-        "accent_color":   request.query_params.get("accent_color",   saved_style.get("accent_color",   "")),
-        "header_tagline": request.query_params.get("header_tagline", saved_style.get("header_tagline", "")),
-        "body_font":      request.query_params.get("body_font",      saved_style.get("body_font",      "")),
-        "heading_font":   request.query_params.get("heading_font",   saved_style.get("heading_font",   "")),
-        "value_color":    request.query_params.get("value_color",    saved_style.get("value_color",    "")),
-    }
-    # Remove None values; keep empty string so header_tagline='' means "logo only, no tagline"
-    style = {k: v for k, v in style.items() if v is not None}
+    style = {}
+    for key, default in (
+        ("header_bg",      ""),
+        ("accent_color",   ""),
+        ("body_font",      ""),
+        ("heading_font",   ""),
+        ("value_color",    ""),
+    ):
+        v = request.query_params.get(key, saved_style.get(key, default))
+        if v:  # omit empty strings — builders supply defaults
+            style[key] = v
+    # header_tagline is special: '' means "logo only / no tagline", not "use default"
+    style["header_tagline"] = request.query_params.get(
+        "header_tagline", saved_style.get("header_tagline", "Coaching Platform")
+    )
 
     if email_type == "confirmation":
         client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
@@ -348,7 +355,7 @@ def email_preview(request):
         html = build_portal_invite_email(
             client_name="Jane Smith",
             workspace_name=workspace.name,
-            portal_url=f"{frontend_url}/portal",
+            portal_url=f"{frontend_url}/client-portal",
             coach_name="Coach Mike",
             logo_url=logo_url,
             owner_email=owner_email,

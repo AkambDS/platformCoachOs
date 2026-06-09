@@ -965,3 +965,75 @@ def send_client_reschedule_request(activity_id: str, message: str = ""):
             logger.info(f"Reschedule acknowledgement sent to {client_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_reschedule_request failed: {e}")
+
+
+# ── Portal invite ──────────────────────────────────────────────────────────────
+
+@shared_task(name="tasks.email.send_portal_invite_email")
+def send_portal_invite_email(client_id: str):
+    """Send portal access invitation email to the client."""
+    from apps.clients.models import Client
+    from tasks.email_html import build_portal_invite_email
+    try:
+        client    = Client.objects.select_related("workspace", "coach").get(id=client_id)
+        workspace = client.workspace
+        if not client.email:
+            return
+
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        portal_url   = f"{frontend_url}/client-portal"
+        coach_name   = client.coach.full_name if client.coach else workspace.name
+        owner_email, owner_name = _owner_info(workspace)
+
+        tmpl      = (workspace.email_templates or {}).get("portal_invite", {})
+        tmpl_vars = dict(
+            client_name=client.full_name,
+            workspace_name=workspace.name,
+            portal_url=portal_url,
+            coach_name=coach_name,
+        )
+        custom_intro   = _apply_tmpl(tmpl.get("intro",   ""), **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject        = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or \
+                         f"Your portal access is ready — {workspace.name}"
+
+        saved_style   = tmpl.get("style", {})
+        custom_from   = tmpl.get("from_email", "").strip()
+        from_email_addr = custom_from or settings.DEFAULT_FROM_EMAIL
+
+        custom_html = tmpl.get("custom_html", "").strip()
+        if custom_html:
+            html = _apply_tmpl(custom_html, **tmpl_vars)
+        else:
+            html = build_portal_invite_email(
+                client_name=client.full_name,
+                workspace_name=workspace.name,
+                portal_url=portal_url,
+                coach_name=coach_name,
+                logo_url=_logo_src(workspace),
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=saved_style,
+            )
+
+        plain = (
+            f"Hi {client.first_name},\n\n"
+            f"{workspace.name} has given you access to your client portal.\n\n"
+            f"Log in here: {portal_url}\n\n"
+            f"Your login email is: {client.email}\n\n"
+            f"If you have any questions, reply to this email or contact {coach_name}.\n\n"
+            f"— {workspace.name}"
+        )
+        msg = EmailMultiAlternatives(
+            subject=subject,
+            body=plain,
+            from_email=from_email_addr,
+            to=[client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Portal invite sent to {client.email} for client {client_id}")
+    except Exception as e:
+        logger.error(f"send_portal_invite_email failed: {e}")

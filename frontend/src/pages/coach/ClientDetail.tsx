@@ -999,6 +999,9 @@ export default function ClientDetail() {
   const [editForm, setEditForm] = useState<Client | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [showInviteConfirm, setShowInviteConfirm] = useState(false)
+  const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
+  const [portalLoading, setPortalLoading] = useState(false)
 
   const { data: client, isLoading } = useQuery<Client, Error>({
     queryKey: ['client', id],
@@ -1110,7 +1113,18 @@ export default function ClientDetail() {
       qc.invalidateQueries({ queryKey: ['clients'] })
       setEditMode(false)
       showToast('Client updated')
-    } catch { showToast('Failed to save', 'error') }
+    } catch (err: any) {
+      const data = err.response?.data
+      if (data) {
+        const msg = Object.entries(data)
+          .filter(([k]) => k !== 'detail')
+          .map(([, v]) => (Array.isArray(v) ? v[0] : v))
+          .join(' ') || data.detail || 'Failed to save'
+        showToast(String(msg), 'error')
+      } else {
+        showToast('Failed to save', 'error')
+      }
+    }
   }
 
   const handleDelete = async () => {
@@ -1222,10 +1236,9 @@ export default function ClientDetail() {
                 </>
               ) : (
                 <>
-                  <button className="btn btn-outline btn-sm" onClick={async () => {
-                    await clientsApi.patch(id!, { portal_access: !client.portal_access })
-                    qc.invalidateQueries({ queryKey: ['client', id] })
-                    showToast(client.portal_access ? 'Portal access removed' : 'Portal invite sent')
+                  <button className="btn btn-outline btn-sm" onClick={() => {
+                    if (client.portal_access) setShowRevokeConfirm(true)
+                    else setShowInviteConfirm(true)
                   }}>
                     {client.portal_access ? 'Revoke Portal' : 'Invite to Portal'}
                   </button>
@@ -1695,6 +1708,57 @@ export default function ClientDetail() {
               disabled={deleting}
               style={{ background: '#c0392b', color: '#fff', border: 'none' }}
             >{deleting ? 'Deleting…' : 'Delete Client'}</button>
+          </div>
+        </Modal>
+      )}
+      {showInviteConfirm && (
+        <Modal title="Invite to Portal" onClose={() => !portalLoading && setShowInviteConfirm(false)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Send a portal invite to <strong>{client.first_name} {client.last_name}</strong> at <strong>{client.email}</strong>? They will receive an email with a link to access their client portal.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowInviteConfirm(false)} disabled={portalLoading}>Cancel</button>
+            <button
+              className="btn btn-dark btn-sm"
+              disabled={portalLoading}
+              onClick={async () => {
+                setPortalLoading(true)
+                try {
+                  await clientsApi.invitePortal(id!)
+                  await qc.invalidateQueries({ queryKey: ['client', id] })
+                  showToast('Portal invite sent')
+                  setShowInviteConfirm(false)
+                } finally {
+                  setPortalLoading(false)
+                }
+              }}
+            >{portalLoading ? 'Sending…' : 'Send Invite'}</button>
+          </div>
+        </Modal>
+      )}
+      {showRevokeConfirm && (
+        <Modal title="Revoke Portal Access" onClose={() => !portalLoading && setShowRevokeConfirm(false)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Remove portal access for <strong>{client.first_name} {client.last_name}</strong>? They will no longer be able to log in to the client portal.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowRevokeConfirm(false)} disabled={portalLoading}>Cancel</button>
+            <button
+              className="btn btn-sm"
+              disabled={portalLoading}
+              onClick={async () => {
+                setPortalLoading(true)
+                try {
+                  await clientsApi.revokePortal(id!)
+                  await qc.invalidateQueries({ queryKey: ['client', id] })
+                  showToast('Portal access removed')
+                  setShowRevokeConfirm(false)
+                } finally {
+                  setPortalLoading(false)
+                }
+              }}
+              style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+            >{portalLoading ? 'Revoking…' : 'Revoke Access'}</button>
           </div>
         </Modal>
       )}

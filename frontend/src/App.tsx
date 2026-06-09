@@ -5,6 +5,7 @@ import { queryClient } from "./lib/queryClient"
 import { useAuthStore } from "./store/auth"
 import { authApi } from "./api/client"
 import { useInactivityTimer } from "./hooks/useInactivityTimer"
+import ClientPortal from "./pages/portal/ClientPortal"
 import Login     from "./pages/auth/Login"
 import Register  from "./pages/auth/Register"
 import AcceptInvite    from "./pages/auth/AcceptInvite"
@@ -152,6 +153,7 @@ export default function App() {
           <Route path="/library"         element={<PrivateRoute><Library /></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"          element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />
+          <Route path="/client-portal"   element={<ClientPortal />} />
           <Route path="/feedback"        element={<PrivateRoute><FeedbackList /></PrivateRoute>} />
           <Route path="/feedback/:id"    element={<PrivateRoute><FeedbackDetail /></PrivateRoute>} />
 

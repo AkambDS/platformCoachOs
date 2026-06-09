@@ -82,14 +82,22 @@ class ClientDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "workspace", "created_at", "updated_at"]
 
     def validate_email(self, value):
+        if not value:
+            return value
         request = self.context.get("request")
         if not request or not request.user.workspace_id:
             return value
-        qs = Client.objects.filter(workspace_id=request.user.workspace_id, email=value)
+        workspace_id = request.user.workspace_id
+        # Duplicate client check
+        qs = Client.objects.filter(workspace_id=workspace_id, email=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("A client with this email already exists in your workspace.")
+        # Workspace user (coach/owner) check
+        from apps.accounts.models import User
+        if User.objects.filter(workspace_id=workspace_id, email=value).exists():
+            raise serializers.ValidationError("This email belongs to a coach or team member in your workspace.")
         return value
 
 

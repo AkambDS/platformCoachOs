@@ -109,6 +109,32 @@ class ClientViewSet(viewsets.ModelViewSet):
             coach=coach,
         )
 
+    @action(detail=True, methods=["post"], url_path="invite-portal")
+    def invite_portal(self, request, pk=None):
+        """POST /api/clients/{id}/invite-portal/ — grant portal access and email the client."""
+        client = self.get_object()
+        if not client.email:
+            return Response({"detail": "Client has no email address."}, status=400)
+        client.portal_access = True
+        client.save(update_fields=["portal_access"])
+        try:
+            from tasks.email import send_portal_invite_email
+            send_portal_invite_email.delay(str(client.id))
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error("send_portal_invite_email failed: %s", exc)
+        from .serializers import ClientDetailSerializer
+        return Response(ClientDetailSerializer(client, context={"request": request}).data)
+
+    @action(detail=True, methods=["post"], url_path="revoke-portal")
+    def revoke_portal(self, request, pk=None):
+        """POST /api/clients/{id}/revoke-portal/ — remove portal access."""
+        client = self.get_object()
+        client.portal_access = False
+        client.save(update_fields=["portal_access"])
+        from .serializers import ClientDetailSerializer
+        return Response(ClientDetailSerializer(client, context={"request": request}).data)
+
     @action(detail=False, methods=["get"], url_path="export")
     def csv_export(self, request):
         """GET /api/clients/export/ — download all clients as CSV"""

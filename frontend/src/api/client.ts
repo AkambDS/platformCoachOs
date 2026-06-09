@@ -94,6 +94,8 @@ export const clientsApi = {
   deleteFile:   (id: string, fid: string) => api.delete(`/api/clients/${id}/assessments/${fid}/`),
   uploadFile:   (id: string, fd: FormData) =>
     api.post(`/api/clients/${id}/assessments/upload/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  invitePortal: (id: string) => api.post(`/api/clients/${id}/invite-portal/`),
+  revokePortal: (id: string) => api.post(`/api/clients/${id}/revoke-portal/`),
 }
 export const activitiesApi = {
   list:         (p?: any)            => api.get('/api/activities/', { params: p }),

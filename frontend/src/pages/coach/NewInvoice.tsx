@@ -1,9 +1,9 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
 import { useNavigate, useParams, useLocation } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { invoicesApi, clientsApi, settingsApi } from '../../api/client'
+import { api, invoicesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { useToast } from '../../components/ui'
+import { Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -249,6 +249,80 @@ function CatalogDescInput({ value, onChange, onSelectCatalog, catalog }: {
   )
 }
 
+// ── Send preview modal ────────────────────────────────────────────────────────
+
+function SendPreviewModal({ client, onClose, onConfirm, sending }: {
+  client: any
+  onClose: () => void
+  onConfirm: () => void
+  sending: boolean
+}) {
+  const [html, setHtml] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    api.get('/api/settings/email-preview/', { params: { type: 'invoice', _t: Date.now() } })
+      .then(r => setHtml(r.data.html || ''))
+      .catch(() => setHtml(''))
+      .finally(() => setLoading(false))
+  }, [])
+
+  const clientName = client ? `${client.first_name} ${client.last_name}` : ''
+  const clientEmail = client?.email || ''
+
+  return (
+    <Modal title="Review before sending" size="lg" onClose={() => !sending && onClose()}>
+      {/* Recipient line */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
+        background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 16,
+      }}>
+        <span style={{ fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase' }}>To</span>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{clientName}</span>
+        {clientEmail && (
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>·</span>
+        )}
+        {clientEmail && (
+          <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'monospace' }}>{clientEmail}</span>
+        )}
+      </div>
+
+      {/* Email preview iframe */}
+      <div style={{ border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', height: 440, position: 'relative' }}>
+        {loading && (
+          <div style={{
+            position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
+            justifyContent: 'center', background: '#faf9f7', fontSize: 13, color: 'var(--muted)',
+          }}>
+            Loading preview…
+          </div>
+        )}
+        {!loading && (
+          <iframe
+            srcDoc={html}
+            title="Invoice email preview"
+            sandbox="allow-same-origin"
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+          />
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 16 }}>
+        <button className="btn btn-outline btn-sm" onClick={onClose} disabled={sending}>Cancel</button>
+        <button
+          className="btn btn-dark"
+          onClick={onConfirm}
+          disabled={sending}
+          style={{ letterSpacing: '.06em', fontSize: 12, fontWeight: 600, padding: '10px 24px' }}
+        >
+          {sending ? 'Sending…' : `CONFIRM & SEND →`}
+        </button>
+      </div>
+    </Modal>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function NewInvoice() {
@@ -280,6 +354,7 @@ export default function NewInvoice() {
   const [items, setItems] = useState([{ description: '', quantity: '1', unit_price: '' }])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [showSendPreview, setShowSendPreview] = useState(false)
 
   // Load existing invoice when editing
   const { data: existingInv } = useQuery({
@@ -463,7 +538,7 @@ export default function NewInvoice() {
           </button>
           <button
             className="btn btn-dark"
-            onClick={handleSend}
+            onClick={() => { if (validate()) setShowSendPreview(true) }}
             disabled={saving}
             style={{ letterSpacing: '.06em', fontSize: 12, fontWeight: 600 }}
           >
@@ -807,7 +882,7 @@ export default function NewInvoice() {
             </div>
             <button
               className="btn btn-dark"
-              onClick={handleSend}
+              onClick={() => { if (validate()) setShowSendPreview(true) }}
               disabled={saving || !form.client}
               style={{
                 width: '100%', textAlign: 'center', letterSpacing: '.06em',
@@ -837,6 +912,14 @@ export default function NewInvoice() {
         </div>
       </div>
 
+      {showSendPreview && (
+        <SendPreviewModal
+          client={selectedClient}
+          sending={saving}
+          onClose={() => setShowSendPreview(false)}
+          onConfirm={() => { setShowSendPreview(false); handleSend() }}
+        />
+      )}
       {toastEl}
     </AppShell>
   )
