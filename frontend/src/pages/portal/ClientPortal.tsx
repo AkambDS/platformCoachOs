@@ -40,7 +40,6 @@ function fmtTime(iso: string) {
   if (!iso) return ''
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
-function isPast(iso: string) { return new Date(iso) < new Date() }
 function isUpcoming(iso: string) { return new Date(iso) > new Date() }
 
 function Pill({ status }: { status: string }) {
@@ -274,10 +273,17 @@ function GoalsTab({ goals, commitments, onProgressSaved }: { goals: Goal[]; comm
 }
 
 // ── Activities ────────────────────────────────────────────────────────────────
-function ActivitiesTab({ activities, onUpdate }: { activities: Activity[]; onUpdate: (id: string, p: Partial<Activity>) => void }) {
+type ActivityFilter = 'Upcoming' | 'Scheduled' | 'Completed' | 'Cancelled' | 'Missed'
+const ACTIVITY_FILTERS: ActivityFilter[] = ['Upcoming', 'Scheduled', 'Completed', 'Cancelled', 'Missed']
+
+function ActivitiesTab({ activities, onUpdate, onRefresh }: { activities: Activity[]; onUpdate: (id: string, p: Partial<Activity>) => void; onRefresh: () => void }) {
+  const [filter, setFilter]     = useState<ActivityFilter>('Upcoming')
   const [reschedId, setReschedId] = useState<string | null>(null)
-  const [msg, setMsg] = useState('')
-  const [saving, setSaving] = useState(false)
+  const [msg, setMsg]           = useState('')
+  const [saving, setSaving]     = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+
+  useEffect(() => { onRefresh() }, []) // eslint-disable-line
 
   async function sendReschedule(id: string) {
     setSaving(true)
@@ -287,12 +293,19 @@ function ActivitiesTab({ activities, onUpdate }: { activities: Activity[]; onUpd
     } catch { } finally { setSaving(false) }
   }
 
-  if (!activities.length) return (
-    <div className="empty"><div className="empty-icon">📅</div><h3>No sessions yet</h3><p>Your scheduled sessions will appear here.</p></div>
-  )
+  async function handleRefresh() {
+    setRefreshing(true)
+    try { onRefresh() } finally { setRefreshing(false) }
+  }
 
-  const upcoming = activities.filter(a => isUpcoming(a.start_at) && a.status !== 'cancelled')
-  const past     = activities.filter(a => isPast(a.start_at) || a.status === 'cancelled')
+  const filtered = activities.filter(a => {
+    if (filter === 'Upcoming')   return isUpcoming(a.start_at) && !['cancelled', 'missed'].includes(a.status)
+    if (filter === 'Scheduled')  return a.status === 'scheduled' || a.status === 'rescheduled'
+    if (filter === 'Completed')  return a.status === 'completed'
+    if (filter === 'Cancelled')  return a.status === 'cancelled'
+    if (filter === 'Missed')     return a.status === 'missed'
+    return true
+  })
 
   function ActivityCard({ a }: { a: Activity }) {
     const canReschedule = (a.status === 'scheduled' || a.status === 'rescheduled') && isUpcoming(a.start_at)
@@ -311,14 +324,14 @@ function ActivitiesTab({ activities, onUpdate }: { activities: Activity[]; onUpd
           </div>
           {canReschedule && (
             <button className="btn btn-outline btn-sm" onClick={() => { setReschedId(reschedId === a.id ? null : a.id); setMsg('') }}>
-              {reschedId === a.id ? 'Cancel' : 'Reschedule'}
+              {reschedId === a.id ? 'Close' : 'Reschedule'}
             </button>
           )}
         </div>
         {(a.location || a.meeting_link || a.coach_name) && (
           <div style={{ padding: '8px 20px 14px', borderTop: '1px solid var(--cream)', display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {a.coach_name && <span style={{ fontSize: 12, color: 'var(--muted)' }}>👤 {a.coach_name}</span>}
-            {a.location   && <span style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {a.location}</span>}
+            {a.coach_name  && <span style={{ fontSize: 12, color: 'var(--muted)' }}>👤 {a.coach_name}</span>}
+            {a.location    && <span style={{ fontSize: 12, color: 'var(--muted)' }}>📍 {a.location}</span>}
             {a.meeting_link && <a href={a.meeting_link} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12, color: 'var(--blue)', textDecoration: 'none' }}>🔗 Join Meeting</a>}
           </div>
         )}
@@ -340,19 +353,43 @@ function ActivitiesTab({ activities, onUpdate }: { activities: Activity[]; onUpd
 
   return (
     <div>
-      <div style={{ padding: '24px 0 20px' }}><h1 className="page-title">Sessions &amp; Activities</h1></div>
-      {upcoming.length > 0 && (
-        <>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12 }}>Upcoming</div>
-          {upcoming.map(a => <ActivityCard key={a.id} a={a} />)}
-          <div style={{ height: 12 }} />
-        </>
-      )}
-      {past.length > 0 && (
-        <>
-          <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 12, marginTop: 4 }}>Past</div>
-          {past.map(a => <ActivityCard key={a.id} a={a} />)}
-        </>
+      <div style={{ padding: '24px 0 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <h1 className="page-title">Sessions &amp; Activities</h1>
+        <button onClick={handleRefresh} disabled={refreshing} className="btn btn-outline btn-sm" style={{ fontSize: 11 }}>
+          {refreshing ? 'Refreshing…' : '↻ Refresh'}
+        </button>
+      </div>
+
+      {/* Filter tabs */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 20, flexWrap: 'wrap' }}>
+        {ACTIVITY_FILTERS.map(f => {
+          const count = activities.filter(a => {
+            if (f === 'Upcoming')  return isUpcoming(a.start_at) && !['cancelled', 'missed'].includes(a.status)
+            if (f === 'Scheduled') return a.status === 'scheduled' || a.status === 'rescheduled'
+            if (f === 'Completed') return a.status === 'completed'
+            if (f === 'Cancelled') return a.status === 'cancelled'
+            if (f === 'Missed')    return a.status === 'missed'
+            return true
+          }).length
+          return (
+            <button key={f} onClick={() => setFilter(f)} style={{
+              padding: '5px 14px', borderRadius: 20, border: '1px solid',
+              borderColor: filter === f ? 'var(--ink)' : 'var(--border)',
+              background: filter === f ? 'var(--ink)' : '#fff',
+              color: filter === f ? '#fff' : 'var(--muted)',
+              fontSize: 12, fontWeight: filter === f ? 600 : 400,
+              cursor: 'pointer', fontFamily: 'inherit', transition: 'all .15s',
+            }}>
+              {f} {count > 0 && <span style={{ opacity: 0.7 }}>({count})</span>}
+            </button>
+          )
+        })}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="empty"><div className="empty-icon">📅</div><h3>No {filter.toLowerCase()} sessions</h3></div>
+      ) : (
+        filtered.map(a => <ActivityCard key={a.id} a={a} />)
       )}
     </div>
   )
@@ -676,6 +713,13 @@ export default function ClientPortal() {
     } catch { logout() } finally { setLoading(false) }
   }, []) // eslint-disable-line
 
+  const refetchActivities = useCallback(async () => {
+    try {
+      const r = await api.get('/api/portal/activities/')
+      setActivities(r.data || [])
+    } catch {}
+  }, []) // eslint-disable-line
+
   useEffect(() => { if (session) loadData() }, [session, loadData])
 
   function logout() {
@@ -730,7 +774,7 @@ export default function ClientPortal() {
           <>
             {activeTab === 'Overview'    && <OverviewTab me={me} goals={goals} activities={activities} invoices={invoices} />}
             {activeTab === 'Goals'       && <GoalsTab goals={goals} commitments={commitments} onProgressSaved={(goalId, entry) => setGoals(prev => prev.map(g => g.id === goalId ? { ...g, progress_entries: [entry, ...g.progress_entries], progress_count: g.progress_count + 1 } : g))} />}
-            {activeTab === 'Activities'  && <ActivitiesTab activities={activities} onUpdate={(id, p) => setActivities(prev => prev.map(a => a.id === id ? { ...a, ...p } : a))} />}
+            {activeTab === 'Activities'  && <ActivitiesTab activities={activities} onUpdate={(id, p) => setActivities(prev => prev.map(a => a.id === id ? { ...a, ...p } : a))} onRefresh={refetchActivities} />}
             {activeTab === 'Notes'       && <NotesTab notes={notes} setNotes={setNotes} />}
             {activeTab === 'Files'       && <FilesTab materials={materials} />}
             {activeTab === 'Invoices'    && <InvoicesTab invoices={invoices} />}
