@@ -8,7 +8,7 @@ class ClientNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = ClientNote
-        fields = ["id", "text", "note_type", "created_by_name", "created_at", "updated_at"]
+        fields = ["id", "text", "note_type", "visible_to_client", "created_by_name", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at", "created_by_name"]
 
 

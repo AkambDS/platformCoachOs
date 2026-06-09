@@ -92,13 +92,14 @@ class ClientNote(WorkspaceModel):
         OBSERVATION = "observation", "Observation"
         COMMITMENT  = "commitment",  "Commitment"
 
-    id         = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    client     = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="client_notes")
-    text       = models.TextField()
-    note_type  = models.CharField(max_length=20, choices=NoteType.choices, default=NoteType.GENERAL)
-    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
+    id                = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client            = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="client_notes")
+    text              = models.TextField()
+    note_type         = models.CharField(max_length=20, choices=NoteType.choices, default=NoteType.GENERAL)
+    created_by        = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    visible_to_client = models.BooleanField(default=False, help_text="Share this note with the client in their portal")
+    created_at        = models.DateTimeField(auto_now_add=True)
+    updated_at        = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "clients_clientnote"

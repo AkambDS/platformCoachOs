@@ -10,7 +10,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
                  owner_email: str = "", owner_name: str = "",
                  header_bg: str = "#1a2f4e",
                  accent_color: str = "#b8922e",
-                 header_tagline: str = "Coaching Platform",
+                 header_tagline: str = "",
                  body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif") -> str:
     if logo_url:
         brand = (
@@ -267,7 +267,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     s              = style or {}
     header_bg      = s.get("header_bg")      or "#1a2f4e"
     accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "Coaching Platform")
+    header_tagline = s.get("header_tagline", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
     value_color    = s.get("value_color")    or "#1a1714"
@@ -493,7 +493,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     s              = style or {}
     header_bg      = s.get("header_bg")      or "#1a2f4e"
     accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "Coaching Platform")
+    header_tagline = s.get("header_tagline", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     value_color    = s.get("value_color")    or "#1a1714"
 
@@ -633,7 +633,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     s = style or {}
     header_bg      = s.get("header_bg")      or "#1a2f4e"
     accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "Coaching Platform")
+    header_tagline = s.get("header_tagline", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
     value_color    = s.get("value_color")    or "#1a1714"
@@ -847,5 +847,5 @@ def build_portal_invite_email(
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=s.get("header_bg") or "#1a2f4e",
                         accent_color=s.get("accent_color") or "#b8922e",
-                        header_tagline=s.get("header_tagline", "Coaching Platform"),
+                        header_tagline=s.get("header_tagline", ""),
                         body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif")

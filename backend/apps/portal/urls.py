@@ -10,4 +10,6 @@ urlpatterns = [
     path("invoices/",                                views.PortalInvoicesView.as_view(),       name="portal-invoices"),
     path("activities/",                              views.PortalActivitiesView.as_view(),     name="portal-activities"),
     path("activities/<uuid:activity_id>/respond/",   views.PortalActivityRespondView.as_view(),name="portal-activity-respond"),
+    path("notes/",                                   views.PortalNotesView.as_view(),          name="portal-notes"),
+    path("notes/<uuid:note_id>/",                    views.PortalNoteDetailView.as_view(),     name="portal-note-detail"),
 ]
