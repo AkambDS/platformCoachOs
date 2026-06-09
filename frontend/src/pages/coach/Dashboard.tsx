@@ -220,7 +220,7 @@ function CoachDashboard() {
   const thisYear  = new Date().getFullYear()
   const thisMonth = new Date().getMonth()
 
-  const { data: clients }     = useQuery({ queryKey: ["clients-summary"],     queryFn: () => clientsApi.list({ page_size: 1, active_flag: true }).then(r => r.data) })
+  const { data: clients }     = useQuery({ queryKey: ["clients-summary"],     queryFn: () => clientsApi.list({ page_size: 1 }).then(r => r.data) })
   const { data: upcoming }    = useQuery({ queryKey: ["activities-upcoming"], queryFn: () => activitiesApi.list({ start: today, status: "scheduled", page_size: 5 }).then(r => r.data) })
   const { data: outstanding } = useQuery({ queryKey: ["outstanding"],         queryFn: () => reportsApi.outstanding().then(r => r.data) })
   const { data: revenueData } = useQuery({ queryKey: ["revenue", thisYear],   queryFn: () => reportsApi.revenue(thisYear).then(r => r.data) })
@@ -243,7 +243,7 @@ function CoachDashboard() {
       {/* Stat Cards */}
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 24 }}>
         {[
-          { lbl: "My Clients",    val: clients?.count ?? "—",   sub: "active clients",                 link: "/clients",   accent: "#c8a96a" },
+          { lbl: "My Clients",    val: clients?.count ?? "—",   sub: "total clients",                  link: "/clients",   accent: "#c8a96a" },
           { lbl: "Outstanding",   val: fmt$(outstandingAmount),  sub: overdueCount > 0 ? `⚠ ${overdueCount} overdue` : `${outstandingList.length} unpaid`, link: "/invoices", accent: overdueCount > 0 ? "#e67e22" : "#1a1714" },
           { lbl: "Collected MTD", val: fmt$(mtdRevenue),         sub: "this month",                     link: "/invoices",  accent: "#4a7c59" },
         ].map(s => (
