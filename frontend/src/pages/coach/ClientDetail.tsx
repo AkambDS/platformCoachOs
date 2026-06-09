@@ -282,6 +282,14 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
           </select>
         </div>
       </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0 4px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+        <input type="checkbox" id="goal-visible" checked={form.visible_to_client}
+          onChange={e => setForm(f => ({ ...f, visible_to_client: e.target.checked }))}
+          style={{ width: 15, height: 15, accentColor: 'var(--gold)', cursor: 'pointer' }} />
+        <label htmlFor="goal-visible" style={{ fontSize: 13, color: 'var(--ink)', cursor: 'pointer', userSelect: 'none' }}>
+          Share with client <span style={{ fontSize: 12, color: 'var(--muted)' }}>(visible in client portal)</span>
+        </label>
+      </div>
     </Modal>
   )
 }
@@ -385,17 +393,19 @@ function StructuredDisplay({ data }: { data: { notes: string; reflection: string
 }
 
 function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { clientId: string; clientName?: string; noteList: any[]; refetch: () => Promise<any>; showToast: any; tz?: string }) {
-  const [saving, setSaving]     = useState(false)
-  const [noteType, setNoteType] = useState('session')
-  const [noteText, setNoteText] = useState('')
-  const [struct, setStruct]     = useState(emptyStruct())
+  const [saving, setSaving]         = useState(false)
+  const [noteType, setNoteType]     = useState('session')
+  const [noteText, setNoteText]     = useState('')
+  const [struct, setStruct]         = useState(emptyStruct())
+  const [noteVisible, setNoteVisible] = useState(false)
 
-  const [expanded, setExpanded]         = useState<Set<string>>(new Set())
-  const [editingId, setEditingId]       = useState<string | null>(null)
-  const [editType, setEditType]         = useState('session')
-  const [editText, setEditText]         = useState('')
-  const [editStruct, setEditStruct]     = useState(emptyStruct())
-  const [editSaving, setEditSaving]     = useState(false)
+  const [expanded, setExpanded]           = useState<Set<string>>(new Set())
+  const [editingId, setEditingId]         = useState<string | null>(null)
+  const [editType, setEditType]           = useState('session')
+  const [editText, setEditText]           = useState('')
+  const [editStruct, setEditStruct]       = useState(emptyStruct())
+  const [editVisible, setEditVisible]     = useState(false)
+  const [editSaving, setEditSaving]       = useState(false)
   const [exporting, setExporting]       = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; preview: string } | null>(null)
   const [deleting, setDeleting]         = useState(false)
@@ -404,12 +414,12 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
 
   const startEdit = (n: any) => {
-    setEditingId(n.id); setEditType(n.note_type)
+    setEditingId(n.id); setEditType(n.note_type); setEditVisible(!!n.visible_to_client)
     const parsed = parseStructured(n.text)
     if (parsed) { setEditStruct(parsed); setEditText('') }
     else { setEditText(n.text); setEditStruct(emptyStruct()) }
   }
-  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('session'); setEditStruct(emptyStruct()) }
+  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('session'); setEditStruct(emptyStruct()); setEditVisible(false) }
 
   const buildText = (type: string, text: string, s: typeof struct) =>
     type === 'session' ? STRUCTURED_PREFIX + JSON.stringify(s) : text
@@ -420,9 +430,9 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     if (noteType !== 'session' && !noteText.trim()) return
     setSaving(true)
     try {
-      await clientsApi.createNote(clientId, { text, note_type: noteType })
+      await clientsApi.createNote(clientId, { text, note_type: noteType, visible_to_client: noteVisible })
       await refetch()
-      setNoteText(''); setStruct(emptyStruct()); setNoteType('session')
+      setNoteText(''); setStruct(emptyStruct()); setNoteType('session'); setNoteVisible(false)
       showToast('Note added')
     } catch { showToast('Failed to save note', 'error') }
     finally { setSaving(false) }
@@ -432,7 +442,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     const text = buildText(editType, editText, editStruct)
     setEditSaving(true)
     try {
-      await clientsApi.updateNote(clientId, nid, { text, note_type: editType })
+      await clientsApi.updateNote(clientId, nid, { text, note_type: editType, visible_to_client: editVisible })
       await refetch(); cancelEdit()
       showToast('Note updated')
     } catch { showToast('Failed to update', 'error') }
@@ -492,8 +502,16 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
               : <textarea className="ftextarea" rows={6} style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
                   value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
             }
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, marginBottom: 4 }}>
+              <input type="checkbox" id="note-visible" checked={noteVisible}
+                onChange={e => setNoteVisible(e.target.checked)}
+                style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }} />
+              <label htmlFor="note-visible" style={{ fontSize: 12, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none' }}>
+                Share with client
+              </label>
+            </div>
             <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}
-              style={{ width: '100%', marginTop: 12, justifyContent: 'center' }}>
+              style={{ width: '100%', marginTop: 6, justifyContent: 'center' }}>
               {saving ? 'Saving…' : 'Save Note'}
             </button>
           </div>
@@ -528,6 +546,9 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
                   <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 10 }}>
                     {typeLabel(n.note_type)}
                   </span>
+                  {n.visible_to_client && (
+                    <span className="pill pill-green" style={{ fontSize: 10 }}>Shared with client</span>
+                  )}
                   <span style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtNoteDate(n.created_at, tz)}</span>
                   {n.created_by_name && <span style={{ fontSize: 11, color: 'var(--muted)' }}>by {n.created_by_name}</span>}
                   {wasEdited(n.created_at, n.updated_at) && (
@@ -558,7 +579,13 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
                     : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
                         value={editText} onChange={e => setEditText(e.target.value)} />
                   }
-                  <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                    <input type="checkbox" id={`edit-visible-${n.id}`} checked={editVisible}
+                      onChange={e => setEditVisible(e.target.checked)}
+                      style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }} />
+                    <label htmlFor={`edit-visible-${n.id}`} style={{ fontSize: 12, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none', flex: 1 }}>
+                      Share with client
+                    </label>
                     <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
                     <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
                       {editSaving ? 'Saving…' : 'Save Changes'}
@@ -1627,6 +1654,7 @@ export default function ClientDetail() {
                       {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Target: {fmtDate(g.target_date)}</div>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {g.visible_to_client && <span className="pill pill-green" style={{ fontSize: 10 }}>Shared</span>}
                       <StatusBadge status={g.status} />
                       <button
                         className="btn btn-ghost btn-sm"
