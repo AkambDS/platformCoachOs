@@ -1,3 +1,8 @@
+/**
+ * CoachOS — Client Portal
+ * Standalone page — no AppShell, no coach sidebar.
+ * Uses CoachOS design system CSS classes from index.css.
+ */
 import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
 
@@ -6,332 +11,375 @@ const BASE = import.meta.env.VITE_API_BASE_URL || ''
 const portalHttp = axios.create({ baseURL: BASE, headers: { 'Content-Type': 'application/json' } })
 portalHttp.interceptors.request.use(cfg => {
   const tok = sessionStorage.getItem('portal_token')
-  if (tok) cfg.headers?.set('Authorization', `Bearer ${tok}`)
+  if (tok) cfg.headers['Authorization'] = `Bearer ${tok}`
   return cfg
 })
 
-// ── helpers ──────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
+interface Session { token: string; client_name: string; workspace_name: string; coach_name: string }
+interface Branding { name: string; logo_url: string; primary_colour: string }
+interface Goal { id: string; title: string; description: string; target_date: string | null; status: string; progress_count: number; progress_entries: { id: string; progress_text: string; created_at: string }[] }
+interface Commitment { id: string; text: string; created_at: string }
+interface Activity { id: string; title: string; activity_type: string; status: string; start_at: string; end_at: string | null; location: string; meeting_link: string; coach_name: string }
+interface Material { id: string; title: string; item_type: string; file_url?: string; url?: string }
+interface Invoice { id: string; number: string; status: string; total: string; amount_paid: string; due_date: string | null; stripe_payment_link: string; created_at: string }
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(iso: string) {
   if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 function fmtDateTime(iso: string) {
   if (!iso) return '—'
   return new Date(iso).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
-function StatusPill({ s }: { s: string }) {
-  const cfg: Record<string, { bg: string; color: string }> = {
-    scheduled:   { bg: '#e0f0ff', color: '#1d5a8a' },
-    completed:   { bg: '#e6f4ea', color: '#2e7d32' },
-    cancelled:   { bg: '#fdecea', color: '#c0392b' },
-    rescheduled: { bg: '#e8eaf6', color: '#3949ab' },
-    missed:      { bg: '#fff3e0', color: '#e65100' },
-    late:        { bg: '#fff8e1', color: '#f57f17' },
+
+function StatusPill({ status }: { status: string }) {
+  const map: Record<string, string> = {
+    scheduled: 'pill-blue', completed: 'pill-green', rescheduled: 'pill-gold',
+    cancelled: 'pill-red', late: 'pill-red', missed: 'pill-purple',
+    sent: 'pill-blue', paid: 'pill-green', overdue: 'pill-red',
+    partially_paid: 'pill-gold', draft: 'pill-grey',
   }
-  const { bg, color } = cfg[s] || { bg: '#f5f5f5', color: '#555' }
   return (
-    <span style={{ fontSize: 11, fontWeight: 700, background: bg, color, padding: '2px 8px', borderRadius: 20, textTransform: 'capitalize', letterSpacing: '.04em' }}>
-      {s}
+    <span className={`pill ${map[status] || 'pill-grey'}`}>
+      {status.replace(/_/g, ' ')}
     </span>
   )
 }
 
-// ── Login screen ─────────────────────────────────────────────────────────────
-function LoginScreen({ branding, onLogin }: { branding: any; onLogin: (data: any) => void }) {
-  const [email, setEmail]   = useState('')
-  const [error, setError]   = useState('')
+// ── Login Screen ──────────────────────────────────────────────────────────────
+function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin: (data: Session) => void }) {
+  const [email, setEmail] = useState('')
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    setError(''); setLoading(true)
+    setError('')
+    setLoading(true)
     try {
-      const { data } = await portalHttp.post('/api/portal/login/', { email })
+      const { data } = await axios.post(`${BASE}/api/portal/login/`, { email })
       sessionStorage.setItem('portal_token', data.token)
+      sessionStorage.setItem('portal_client_name', data.client_name)
+      sessionStorage.setItem('portal_workspace_name', data.workspace_name)
+      sessionStorage.setItem('portal_coach_name', data.coach_name)
       onLogin(data)
     } catch (err: any) {
-      setError(err?.response?.data?.detail || 'Login failed. Please check your email.')
-    } finally { setLoading(false) }
+      setError(err?.response?.data?.detail || 'No portal account found for this email.')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  return (
-    <div style={{ minHeight: '100vh', background: '#f5f2ec', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div style={{ width: '100%', maxWidth: 420 }}>
-        {/* Logo / brand */}
-        <div style={{ textAlign: 'center', marginBottom: 32 }}>
-          {branding?.logo_url
-            ? <img src={branding.logo_url} alt={branding.name} style={{ maxHeight: 48, maxWidth: 200, objectFit: 'contain', marginBottom: 12 }} />
-            : <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: '#1a2f4e', marginBottom: 12 }}>{branding?.name || 'CoachOS'}</div>
-          }
-          <div style={{ fontSize: 13, color: '#8c8279' }}>Client Portal</div>
-        </div>
+  const wsName = branding?.name || 'CoachOS'
 
-        <div style={{ background: '#fff', borderRadius: 10, padding: '36px 32px', boxShadow: '0 2px 16px rgba(0,0,0,.08)', border: '1px solid #e8e3db' }}>
-          <h2 style={{ margin: '0 0 6px', fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 400, color: '#1a1714' }}>Welcome back</h2>
-          <p style={{ margin: '0 0 24px', fontSize: 13, color: '#8c8279' }}>Enter your email address to access your portal.</p>
+  return (
+    <div className="auth-split" style={{ minHeight: '100vh' }}>
+      {/* Brand panel */}
+      <div className="auth-brand">
+        <div>
+          <div className="auth-brand-logo">{wsName}</div>
+          <h1 className="auth-brand-headline" style={{ marginTop: 48 }}>
+            Your coaching<br /><em>portal</em>
+          </h1>
+          <p className="auth-brand-sub" style={{ marginTop: 24 }}>
+            Access your goals, sessions, files, and invoices — all in one place.
+          </p>
+          <ul className="auth-brand-features" style={{ marginTop: 32 }}>
+            <li>Track your coaching goals &amp; progress</li>
+            <li>View upcoming &amp; past sessions</li>
+            <li>Download shared resources</li>
+            <li>Review and pay invoices</li>
+          </ul>
+        </div>
+      </div>
+
+      {/* Form panel */}
+      <div className="auth-form-area">
+        <div className="auth-form-card">
+          {branding?.logo_url && (
+            <img src={branding.logo_url} alt={wsName}
+              style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', marginBottom: 24, display: 'block' }} />
+          )}
+          <h2 className="auth-form-title">Client Portal</h2>
+          <p className="auth-form-sub">Enter your email address to access your portal</p>
+
           <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 6 }}>Email address</label>
+            <div className="fgroup">
+              <label className="flabel">Email Address</label>
               <input
-                type="email" value={email} onChange={e => setEmail(e.target.value)} required
-                placeholder="your@email.com" autoFocus
-                style={{ width: '100%', padding: '10px 14px', border: '1px solid #d8d3cc', borderRadius: 6, fontSize: 14, outline: 'none', boxSizing: 'border-box', background: '#faf9f7' }}
+                className="auth-input"
+                type="email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                placeholder="you@example.com"
+                required
+                autoFocus
               />
             </div>
-            {error && <div style={{ fontSize: 13, color: '#c0392b', background: '#fdecea', padding: '8px 12px', borderRadius: 6, marginBottom: 14 }}>{error}</div>}
-            <button type="submit" disabled={loading} style={{
-              width: '100%', padding: '12px', background: '#1a2f4e', color: '#fff', border: 'none',
-              borderRadius: 6, fontSize: 13, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase',
-              cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? .7 : 1,
-            }}>
+
+            {error && <div className="auth-error">{error}</div>}
+
+            <button type="submit" className="auth-btn" disabled={loading} style={{ marginTop: 8 }}>
               {loading ? 'Checking…' : 'Access My Portal'}
             </button>
           </form>
+
+          <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
+            You'll need an invitation from your coach to access this portal.
+          </p>
         </div>
       </div>
     </div>
   )
 }
 
-// ── Goals tab ─────────────────────────────────────────────────────────────────
-function GoalsTab() {
-  const [data, setData]       = useState<any>(null)
-  const [loading, setLoading] = useState(true)
-  const [addingTo, setAddingTo] = useState<string | null>(null)
-  const [progressText, setProgressText] = useState('')
-  const [saving, setSaving]   = useState(false)
+// ── Tabs ──────────────────────────────────────────────────────────────────────
+const TABS = ['Overview', 'Goals', 'Activities', 'Files', 'Invoices'] as const
+type Tab = typeof TABS[number]
 
-  const load = useCallback(async () => {
-    try { const r = await portalHttp.get('/api/portal/goals/'); setData(r.data) }
-    catch { } finally { setLoading(false) }
-  }, [])
-
-  useEffect(() => { load() }, [load])
-
-  const handleAddProgress = async (goalId: string) => {
-    if (!progressText.trim()) return
-    setSaving(true)
-    try {
-      await portalHttp.post(`/api/portal/goals/${goalId}/progress/`, { progress_text: progressText })
-      setProgressText(''); setAddingTo(null); load()
-    } catch { } finally { setSaving(false) }
-  }
-
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8c8279' }}>Loading…</div>
-  const goals: any[] = data?.goals || []
-
-  if (goals.length === 0) return (
-    <div style={{ padding: 60, textAlign: 'center', color: '#8c8279' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>🎯</div>
-      <div style={{ fontSize: 15 }}>No active goals yet.</div>
-      <div style={{ fontSize: 13, marginTop: 6 }}>Your coach will set goals that appear here.</div>
-    </div>
-  )
-
+// ── Overview Tab ──────────────────────────────────────────────────────────────
+function OverviewTab({ session, meData }: { session: Session; meData: any }) {
+  const stats = [
+    { label: 'Your Name',    value: meData?.name            || session.client_name },
+    { label: 'Email',        value: meData?.email           || '—' },
+    { label: 'Coach',        value: meData?.coach_name      || session.coach_name     || '—' },
+    { label: 'Workspace',    value: meData?.workspace_name  || session.workspace_name || '—' },
+    { label: 'Portal Access',value: meData?.portal_access   ? 'Active' : '—' },
+  ]
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      {goals.map((g: any) => (
-        <div key={g.id} style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, overflow: 'hidden' }}>
-          <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0ece4' }}>
-            <div style={{ fontWeight: 600, fontSize: 15, color: '#1a1714', marginBottom: 4 }}>{g.title}</div>
-            {g.description && <div style={{ fontSize: 13, color: '#8c8279', lineHeight: 1.5 }}>{g.description}</div>}
-            {g.target_date && <div style={{ fontSize: 12, color: '#b8922e', marginTop: 6 }}>Target: {fmtDate(g.target_date)}</div>}
-          </div>
-
-          {/* Progress history */}
-          {g.progress_entries?.length > 0 && (
-            <div style={{ padding: '12px 20px', background: '#faf9f7', borderBottom: '1px solid #f0ece4' }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 10 }}>Progress Updates</div>
-              {g.progress_entries.slice(0, 3).map((p: any) => (
-                <div key={p.id} style={{ fontSize: 13, color: '#555', lineHeight: 1.6, paddingBottom: 8, borderBottom: '1px solid #ede9e1', marginBottom: 8 }}>
-                  <span style={{ fontSize: 11, color: '#b5afa6', marginRight: 8 }}>{fmtDate(p.created_at)}</span>
-                  {p.progress_text}
-                </div>
-              ))}
+    <div>
+      <div style={{ padding: '22px 0 18px' }}>
+        <h1 className="page-title">Welcome, {session.client_name}</h1>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 16 }}>
+        {stats.map(({ label, value }) => (
+          <div key={label} className="card" style={{ padding: '20px 22px' }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>
+              {label}
             </div>
-          )}
-
-          {/* Add progress */}
-          <div style={{ padding: '12px 20px' }}>
-            {addingTo === g.id ? (
-              <>
-                <textarea
-                  rows={3} autoFocus value={progressText} onChange={e => setProgressText(e.target.value)}
-                  placeholder="Describe your progress on this goal…"
-                  style={{ width: '100%', padding: '10px 12px', border: '1px solid #d8d3cc', borderRadius: 6, fontSize: 13, lineHeight: 1.6, resize: 'vertical', boxSizing: 'border-box', outline: 'none', fontFamily: 'inherit' }}
-                />
-                <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-                  <button onClick={() => { setAddingTo(null); setProgressText('') }}
-                    style={{ padding: '7px 16px', border: '1px solid #d8d3cc', borderRadius: 5, background: '#fff', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-                  <button onClick={() => handleAddProgress(g.id)} disabled={saving || !progressText.trim()}
-                    style={{ padding: '7px 16px', background: '#1a2f4e', color: '#fff', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                    {saving ? 'Saving…' : 'Save Update'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <button onClick={() => setAddingTo(g.id)}
-                style={{ fontSize: 12, color: '#b8922e', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, padding: 0 }}>
-                + Add Progress Update
-              </button>
-            )}
+            <div style={{ fontSize: 15, color: 'var(--ink)', fontWeight: 500 }}>{value}</div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   )
 }
 
-// ── Activities tab ────────────────────────────────────────────────────────────
-function ActivitiesTab() {
-  const [activities, setActivities] = useState<any[]>([])
-  const [loading, setLoading]       = useState(true)
-  const [rescheduleId, setRescheduleId] = useState<string | null>(null)
-  const [message, setMessage]       = useState('')
-  const [sending, setSending]       = useState(false)
-  const [toast, setToast]           = useState('')
+// ── Goals Tab ─────────────────────────────────────────────────────────────────
+function GoalsTab({ goals, commitments, onProgressSaved }: {
+  goals: Goal[]
+  commitments: Commitment[]
+  onProgressSaved: (goalId: string, entry: any) => void
+}) {
+  const [progressGoalId, setProgressGoalId] = useState<string | null>(null)
+  const [progressText, setProgressText] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    portalHttp.get('/api/portal/activities/')
-      .then(r => setActivities(r.data))
-      .catch(() => {})
-      .finally(() => setLoading(false))
-  }, [])
-
-  const handleReschedule = async (id: string) => {
-    setSending(true)
+  async function saveProgress(goalId: string) {
+    if (!progressText.trim()) return
+    setSaving(true)
     try {
-      await portalHttp.post(`/api/portal/activities/${id}/respond/`, { action: 'reschedule_request', message })
-      setActivities(prev => prev.map(a => a.id === id ? { ...a, status: 'rescheduled' } : a))
-      setRescheduleId(null); setMessage('')
-      setToast('Reschedule request sent to your coach.')
-      setTimeout(() => setToast(''), 4000)
-    } catch { } finally { setSending(false) }
+      const { data } = await portalHttp.post(`/api/portal/goals/${goalId}/progress/`, { progress_text: progressText })
+      onProgressSaved(goalId, data)
+      setProgressText('')
+      setProgressGoalId(null)
+    } catch { /* keep form open */ } finally { setSaving(false) }
   }
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8c8279' }}>Loading…</div>
-  if (activities.length === 0) return (
-    <div style={{ padding: 60, textAlign: 'center', color: '#8c8279' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>📅</div>
-      <div style={{ fontSize: 15 }}>No sessions scheduled yet.</div>
-    </div>
-  )
-
-  const upcoming = activities.filter(a => !['cancelled', 'completed', 'missed'].includes(a.status))
-  const past     = activities.filter(a =>  ['cancelled', 'completed', 'missed'].includes(a.status))
-
-  const SessionRow = ({ a }: { a: any }) => {
-    const canRequest = ['scheduled', 'late'].includes(a.status)
+  if (goals.length === 0 && commitments.length === 0) {
     return (
-      <div style={{ padding: '16px 20px', borderBottom: '1px solid #f0ece4' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: '#1a1714', marginBottom: 4 }}>{a.title}</div>
-            <div style={{ fontSize: 12, color: '#8c8279' }}>{fmtDateTime(a.start_at)}{a.coach_name ? ` · ${a.coach_name}` : ''}</div>
-            {a.location && <div style={{ fontSize: 12, color: '#8c8279', marginTop: 2 }}>📍 {a.location}</div>}
-            {a.meeting_link && (
-              <a href={a.meeting_link} target="_blank" rel="noreferrer"
-                style={{ fontSize: 12, color: '#b8922e', display: 'inline-block', marginTop: 4, fontWeight: 600 }}>
-                🔗 Join Meeting
-              </a>
-            )}
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
-            <StatusPill s={a.status} />
-            {canRequest && rescheduleId !== a.id && (
-              <button onClick={() => setRescheduleId(a.id)}
-                style={{ fontSize: 11, color: '#1a2f4e', border: '1px solid #d8d3cc', background: '#fff', borderRadius: 4, padding: '4px 10px', cursor: 'pointer' }}>
-                Request Reschedule
-              </button>
-            )}
-          </div>
-        </div>
-        {rescheduleId === a.id && (
-          <div style={{ marginTop: 12, padding: 14, background: '#faf9f7', border: '1px solid #e8e3db', borderRadius: 6 }}>
-            <div style={{ fontSize: 12, color: '#8c8279', marginBottom: 8 }}>Let your coach know your availability:</div>
-            <textarea rows={3} value={message} onChange={e => setMessage(e.target.value)}
-              placeholder="e.g. I'm available Mon–Wed after 3pm, or any time Friday."
-              style={{ width: '100%', padding: '8px 10px', border: '1px solid #d8d3cc', borderRadius: 5, fontSize: 13, lineHeight: 1.6, resize: 'vertical', boxSizing: 'border-box', fontFamily: 'inherit', outline: 'none' }} />
-            <div style={{ display: 'flex', gap: 8, marginTop: 8, justifyContent: 'flex-end' }}>
-              <button onClick={() => { setRescheduleId(null); setMessage('') }}
-                style={{ padding: '6px 14px', border: '1px solid #d8d3cc', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12 }}>Cancel</button>
-              <button onClick={() => handleReschedule(a.id)} disabled={sending}
-                style={{ padding: '6px 14px', background: '#1a2f4e', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                {sending ? 'Sending…' : 'Send Request'}
-              </button>
-            </div>
-          </div>
-        )}
+      <div className="empty">
+        <div className="empty-icon">🎯</div>
+        <h3>No goals yet</h3>
+        <p>Your coach will add goals here once your sessions begin.</p>
       </div>
     )
   }
 
   return (
     <div>
-      {toast && (
-        <div style={{ background: '#e6f4ea', border: '1px solid #b5dfbc', color: '#2e7d32', padding: '10px 16px', borderRadius: 6, fontSize: 13, marginBottom: 16 }}>
-          {toast}
-        </div>
-      )}
-      {upcoming.length > 0 && (
-        <div style={{ marginBottom: 24 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 12 }}>Upcoming</div>
-          <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, overflow: 'hidden' }}>
-            {upcoming.map(a => <SessionRow key={a.id} a={a} />)}
+      <div style={{ padding: '22px 0 18px' }}>
+        <h1 className="page-title">Your Goals</h1>
+      </div>
+
+      {goals.map(goal => (
+        <div key={goal.id} className="card" style={{ marginBottom: 16 }}>
+          <div className="card-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>{goal.title}</div>
+              {goal.target_date && (
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                  Target: {fmtDate(goal.target_date)}
+                </div>
+              )}
+            </div>
+            <button
+              className={`btn ${progressGoalId === goal.id ? 'btn-outline' : 'btn-dark'} btn-sm`}
+              onClick={() => { setProgressGoalId(progressGoalId === goal.id ? null : goal.id); setProgressText('') }}
+            >
+              {progressGoalId === goal.id ? 'Cancel' : '+ Add Progress'}
+            </button>
+          </div>
+
+          <div className="card-body">
+            {goal.description && (
+              <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 16 }}>{goal.description}</p>
+            )}
+
+            {progressGoalId === goal.id && (
+              <div style={{ marginBottom: 20, padding: 16, background: 'var(--paper)', borderRadius: 4, border: '1px solid var(--border)' }}>
+                <div className="fgroup">
+                  <label className="flabel">Progress Update</label>
+                  <textarea
+                    className="finput"
+                    value={progressText}
+                    onChange={e => setProgressText(e.target.value)}
+                    placeholder="Describe your progress on this goal…"
+                    rows={3}
+                    autoFocus
+                    style={{ resize: 'vertical' }}
+                  />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                  <button
+                    className="btn btn-dark btn-sm"
+                    onClick={() => saveProgress(goal.id)}
+                    disabled={saving || !progressText.trim()}
+                  >
+                    {saving ? 'Saving…' : 'Save Progress'}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {goal.progress_entries?.length > 0 && (
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
+                  Progress History
+                </div>
+                {goal.progress_entries.map(entry => (
+                  <div key={entry.id} style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 4, marginBottom: 8, border: '1px solid var(--cream)' }}>
+                    <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>{entry.progress_text}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted-faint)', marginTop: 4 }}>{fmtDate(entry.created_at)}</div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
-      )}
-      {past.length > 0 && (
-        <div>
-          <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 12 }}>Past Sessions</div>
-          <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, overflow: 'hidden' }}>
-            {past.map(a => <SessionRow key={a.id} a={a} />)}
-          </div>
+      ))}
+
+      {commitments.length > 0 && (
+        <div className="card" style={{ marginTop: 8 }}>
+          <div className="card-hdr">Commitments</div>
+          <table className="tbl">
+            <tbody>
+              {commitments.map(c => (
+                <tr key={c.id}>
+                  <td>{c.text}</td>
+                  <td style={{ color: 'var(--muted)', whiteSpace: 'nowrap', width: 120, textAlign: 'right' }}>{fmtDate(c.created_at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </div>
   )
 }
 
-// ── Files tab ─────────────────────────────────────────────────────────────────
-function FilesTab() {
-  const [items, setItems] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+// ── Activities Tab ────────────────────────────────────────────────────────────
+function ActivitiesTab({ activities, onActivityUpdated }: {
+  activities: Activity[]
+  onActivityUpdated: (id: string, patch: Partial<Activity>) => void
+}) {
+  const [rescheduleId, setRescheduleId] = useState<string | null>(null)
+  const [rescheduleMsg, setRescheduleMsg] = useState('')
+  const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    portalHttp.get('/api/portal/materials/').then(r => setItems(r.data)).catch(() => {}).finally(() => setLoading(false))
-  }, [])
+  async function sendReschedule(id: string) {
+    setSaving(true)
+    try {
+      await portalHttp.post(`/api/portal/activities/${id}/respond/`, { action: 'reschedule_request', message: rescheduleMsg })
+      onActivityUpdated(id, { status: 'rescheduled' })
+      setRescheduleId(null)
+      setRescheduleMsg('')
+    } catch { /* keep open */ } finally { setSaving(false) }
+  }
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8c8279' }}>Loading…</div>
-  if (items.length === 0) return (
-    <div style={{ padding: 60, textAlign: 'center', color: '#8c8279' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>📂</div>
-      <div style={{ fontSize: 15 }}>No files shared yet.</div>
-    </div>
-  )
+  if (activities.length === 0) {
+    return (
+      <div className="empty">
+        <div className="empty-icon">📅</div>
+        <h3>No sessions yet</h3>
+        <p>Your scheduled sessions with your coach will appear here.</p>
+      </div>
+    )
+  }
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, overflow: 'hidden' }}>
-      {items.map((item: any, i: number) => (
-        <div key={item.id} style={{ padding: '14px 20px', borderBottom: i < items.length - 1 ? '1px solid #f0ece4' : 'none', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ fontSize: 22, flexShrink: 0 }}>
-            {item.content_type === 'pdf' ? '📄' : item.content_type === 'video' ? '🎬' : item.content_type === 'link' ? '🔗' : '📁'}
+    <div>
+      <div style={{ padding: '22px 0 18px' }}>
+        <h1 className="page-title">Sessions &amp; Activities</h1>
+      </div>
+
+      {activities.map(act => (
+        <div key={act.id} className="card" style={{ marginBottom: 12 }}>
+          <div className="card-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4 }}>
+                <span style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)' }}>{act.title}</span>
+                <StatusPill status={act.status} />
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>{fmtDateTime(act.start_at)}</div>
+            </div>
+            {(act.status === 'scheduled' || act.status === 'rescheduled') && (
+              <button
+                className="btn btn-outline btn-sm"
+                onClick={() => { setRescheduleId(rescheduleId === act.id ? null : act.id); setRescheduleMsg('') }}
+              >
+                {rescheduleId === act.id ? 'Cancel' : 'Request Reschedule'}
+              </button>
+            )}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, color: '#1a1714' }}>{item.title}</div>
-            {item.description && <div style={{ fontSize: 12, color: '#8c8279', marginTop: 2 }}>{item.description}</div>}
-          </div>
-          {item.presigned_url && (
-            <a href={item.presigned_url} target="_blank" rel="noreferrer"
-              style={{ fontSize: 12, fontWeight: 600, color: '#1a2f4e', border: '1px solid #d8d3cc', padding: '6px 12px', borderRadius: 5, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-              ↓ Download
-            </a>
+
+          {(act.location || act.meeting_link) && (
+            <div style={{ padding: '0 20px 12px', borderTop: 'none' }}>
+              {act.location && <div style={{ fontSize: 13, color: 'var(--muted)' }}>📍 {act.location}</div>}
+              {act.meeting_link && (
+                <a href={act.meeting_link} target="_blank" rel="noopener noreferrer"
+                  style={{ fontSize: 13, color: 'var(--blue)', textDecoration: 'none', display: 'inline-block', marginTop: 4 }}>
+                  🔗 Join Meeting
+                </a>
+              )}
+            </div>
           )}
-          {item.url && (
-            <a href={item.url} target="_blank" rel="noreferrer"
-              style={{ fontSize: 12, fontWeight: 600, color: '#1a2f4e', border: '1px solid #d8d3cc', padding: '6px 12px', borderRadius: 5, textDecoration: 'none', whiteSpace: 'nowrap' }}>
-              ↗ Open
-            </a>
+
+          {rescheduleId === act.id && (
+            <div className="card-body" style={{ borderTop: '1px solid var(--border)' }}>
+              <div className="fgroup">
+                <label className="flabel">Message to your coach (optional)</label>
+                <textarea
+                  className="finput"
+                  value={rescheduleMsg}
+                  onChange={e => setRescheduleMsg(e.target.value)}
+                  placeholder="e.g. I'm available Monday–Wednesday after 3pm, or anytime Friday."
+                  rows={3}
+                  autoFocus
+                  style={{ resize: 'vertical' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                <button className="btn btn-outline btn-sm" onClick={() => { setRescheduleId(null); setRescheduleMsg('') }}>
+                  Cancel
+                </button>
+                <button className="btn btn-dark btn-sm" onClick={() => sendReschedule(act.id)} disabled={saving}>
+                  {saving ? 'Sending…' : 'Send Request'}
+                </button>
+              </div>
+            </div>
           )}
         </div>
       ))}
@@ -339,154 +387,269 @@ function FilesTab() {
   )
 }
 
-// ── Invoices tab ──────────────────────────────────────────────────────────────
-function InvoicesTab() {
-  const [invoices, setInvoices] = useState<any[]>([])
-  const [loading, setLoading]   = useState(true)
-
-  useEffect(() => {
-    portalHttp.get('/api/portal/invoices/').then(r => setInvoices(r.data)).catch(() => {}).finally(() => setLoading(false))
-  }, [])
-
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: '#8c8279' }}>Loading…</div>
-  if (invoices.length === 0) return (
-    <div style={{ padding: 60, textAlign: 'center', color: '#8c8279' }}>
-      <div style={{ fontSize: 32, marginBottom: 12 }}>💳</div>
-      <div style={{ fontSize: 15 }}>No invoices yet.</div>
-    </div>
-  )
-
-  const statusColor: Record<string, string> = { sent: '#2d6a9f', paid: '#4a7c59', overdue: '#c0392b', partially_paid: '#c9a84c' }
-
+// ── Files Tab ─────────────────────────────────────────────────────────────────
+function FilesTab({ materials }: { materials: Material[] }) {
+  if (materials.length === 0) {
+    return (
+      <div className="empty">
+        <div className="empty-icon">📁</div>
+        <h3>No files shared yet</h3>
+        <p>Resources shared by your coach will appear here.</p>
+      </div>
+    )
+  }
+  const typeMap: Record<string, string> = {
+    article: 'pill-blue', pdf: 'pill-red', video: 'pill-purple',
+    template: 'pill-green', worksheet: 'pill-gold', link: 'pill-grey',
+  }
   return (
-    <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, overflow: 'hidden' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr style={{ background: '#faf9f7' }}>
-            {['Invoice', 'Amount', 'Due', 'Status', ''].map(h => (
-              <th key={h} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: '#8c8279', letterSpacing: '.08em', textTransform: 'uppercase', borderBottom: '1px solid #e8e3db' }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {invoices.map((inv: any) => (
-            <tr key={inv.id} style={{ borderBottom: '1px solid #f0ece4' }}>
-              <td style={{ padding: '12px 16px', fontWeight: 600, fontSize: 14, color: '#1a1714' }}>{inv.number}</td>
-              <td style={{ padding: '12px 16px', fontSize: 15, fontFamily: 'Cormorant Garamond, serif' }}>${Number(inv.total).toFixed(2)}</td>
-              <td style={{ padding: '12px 16px', fontSize: 13, color: inv.status === 'overdue' ? '#c0392b' : '#8c8279' }}>{fmtDate(inv.due_date)}</td>
-              <td style={{ padding: '12px 16px' }}>
-                <span style={{ fontSize: 11, fontWeight: 700, background: `${statusColor[inv.status] || '#8c8279'}18`, color: statusColor[inv.status] || '#8c8279', padding: '2px 8px', borderRadius: 20, textTransform: 'capitalize' }}>
-                  {inv.status.replace('_', ' ')}
-                </span>
-              </td>
-              <td style={{ padding: '12px 16px', textAlign: 'right' }}>
-                {inv.stripe_payment_link && inv.status !== 'paid' && (
-                  <a href={inv.stripe_payment_link} target="_blank" rel="noreferrer"
-                    style={{ fontSize: 12, fontWeight: 700, color: '#fff', background: '#4a7c59', padding: '6px 14px', borderRadius: 5, textDecoration: 'none' }}>
-                    Pay Now
-                  </a>
-                )}
-              </td>
+    <div>
+      <div style={{ padding: '22px 0 18px' }}>
+        <h1 className="page-title">Shared Files</h1>
+      </div>
+      <div className="card">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th></th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {materials.map(item => {
+              const href = item.file_url || item.url || ''
+              return (
+                <tr key={item.id}>
+                  <td style={{ fontWeight: 500 }}>{item.title}</td>
+                  <td><span className={`pill ${typeMap[item.item_type] || 'pill-grey'}`}>{item.item_type || 'file'}</span></td>
+                  <td style={{ textAlign: 'right' }}>
+                    {href && (
+                      <a href={href} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">
+                        Download
+                      </a>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
 
-// ── Overview tab ──────────────────────────────────────────────────────────────
-function OverviewTab({ session }: { session: any }) {
+// ── Invoices Tab ──────────────────────────────────────────────────────────────
+function InvoicesTab({ invoices }: { invoices: Invoice[] }) {
+  if (invoices.length === 0) {
+    return (
+      <div className="empty">
+        <div className="empty-icon">🧾</div>
+        <h3>No invoices yet</h3>
+        <p>Your invoices will appear here once your coach sends them.</p>
+      </div>
+    )
+  }
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: '#fff', border: '1px solid #e8e3db', borderRadius: 8, padding: '20px 24px' }}>
-        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 14 }}>Your Details</div>
-        {[
-          { label: 'Name',      value: session.client_name },
-          { label: 'Coach',     value: session.coach_name },
-          { label: 'Workspace', value: session.workspace_name },
-        ].map(row => (
-          <div key={row.label} style={{ display: 'flex', padding: '10px 0', borderBottom: '1px solid #f0ece4', gap: 12 }}>
-            <span style={{ fontSize: 12, color: '#8c8279', minWidth: 90 }}>{row.label}</span>
-            <span style={{ fontSize: 14, fontWeight: 600, color: '#1a1714' }}>{row.value}</span>
-          </div>
-        ))}
+    <div>
+      <div style={{ padding: '22px 0 18px' }}>
+        <h1 className="page-title">Invoices</h1>
       </div>
-      <div style={{ background: '#fdf9ed', border: '1px solid #e8d98a', borderRadius: 8, padding: '16px 20px', fontSize: 13, color: '#7a6400', lineHeight: 1.6 }}>
-        Welcome to your client portal. Here you can view your goals, upcoming sessions, shared files, and invoices. Use the tabs above to navigate.
+      <div className="card">
+        <table className="tbl">
+          <thead>
+            <tr>
+              <th>Invoice #</th>
+              <th>Amount</th>
+              <th>Status</th>
+              <th>Due Date</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {invoices.map(inv => (
+              <tr key={inv.id}>
+                <td style={{ fontWeight: 600 }}>#{inv.number}</td>
+                <td style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 16 }}>
+                  ${parseFloat(inv.total).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                </td>
+                <td><StatusPill status={inv.status} /></td>
+                <td style={{ color: 'var(--muted)' }}>{inv.due_date ? fmtDate(inv.due_date) : '—'}</td>
+                <td style={{ textAlign: 'right' }}>
+                  {inv.stripe_payment_link && inv.status !== 'paid' && (
+                    <a href={inv.stripe_payment_link} target="_blank" rel="noopener noreferrer" className="btn btn-dark btn-sm">
+                      Pay Now
+                    </a>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   )
 }
 
-// ── Main portal ───────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Goals', 'Activities', 'Files', 'Invoices'] as const
-
+// ── Main Portal ────────────────────────────────────────────────────────────────
 export default function ClientPortal() {
-  const [session, setSession] = useState<any>(null)
-  const [tab, setTab]         = useState<typeof TABS[number]>('Overview')
-  const [branding, setBranding] = useState<any>(null)
+  const [session, setSession]         = useState<Session | null>(null)
+  const [branding, setBranding]       = useState<Branding | null>(null)
+  const [activeTab, setActiveTab]     = useState<Tab>('Overview')
+  const [loading, setLoading]         = useState(false)
+  const [meData, setMeData]           = useState<any>(null)
+  const [goals, setGoals]             = useState<Goal[]>([])
+  const [commitments, setCommitments] = useState<Commitment[]>([])
+  const [activities, setActivities]   = useState<Activity[]>([])
+  const [materials, setMaterials]     = useState<Material[]>([])
+  const [invoices, setInvoices]       = useState<Invoice[]>([])
 
   useEffect(() => {
     axios.get(`${BASE}/api/settings/public-branding/`).then(r => setBranding(r.data)).catch(() => {})
-    const tok = sessionStorage.getItem('portal_token')
-    if (tok) {
-      portalHttp.get('/api/portal/me/')
-        .then(r => setSession({ client_name: r.data.name, coach_name: r.data.coach_name, workspace_name: r.data.workspace_name }))
-        .catch(() => { sessionStorage.removeItem('portal_token') })
+  }, [])
+
+  useEffect(() => {
+    const token = sessionStorage.getItem('portal_token')
+    if (token) {
+      setSession({
+        token,
+        client_name:    sessionStorage.getItem('portal_client_name')    || '',
+        workspace_name: sessionStorage.getItem('portal_workspace_name') || '',
+        coach_name:     sessionStorage.getItem('portal_coach_name')     || '',
+      })
     }
   }, [])
 
-  const handleLogout = () => { sessionStorage.removeItem('portal_token'); setSession(null) }
+  const loadData = useCallback(async () => {
+    setLoading(true)
+    try {
+      const [meRes, goalsRes, activitiesRes, materialsRes, invoicesRes] = await Promise.all([
+        portalHttp.get('/api/portal/me/'),
+        portalHttp.get('/api/portal/goals/'),
+        portalHttp.get('/api/portal/activities/'),
+        portalHttp.get('/api/portal/materials/'),
+        portalHttp.get('/api/portal/invoices/'),
+      ])
+      setMeData(meRes.data)
+      setGoals(goalsRes.data.goals || [])
+      setCommitments(goalsRes.data.commitments || [])
+      setActivities(activitiesRes.data || [])
+      setMaterials(materialsRes.data || [])
+      setInvoices(invoicesRes.data || [])
+    } catch { logout() } finally { setLoading(false) }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => { if (session) loadData() }, [session, loadData])
+
+  function logout() {
+    ['portal_token', 'portal_client_name', 'portal_workspace_name', 'portal_coach_name']
+      .forEach(k => sessionStorage.removeItem(k))
+    setSession(null); setMeData(null); setGoals([]); setCommitments([])
+    setActivities([]); setMaterials([]); setInvoices([]); setActiveTab('Overview')
+  }
 
   if (!session) return <LoginScreen branding={branding} onLogin={data => setSession(data)} />
 
+  const wsName = session.workspace_name || branding?.name || 'CoachOS'
+
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f2ec', fontFamily: "'DM Sans', Helvetica, Arial, sans-serif" }}>
+    <div style={{ minHeight: '100vh', background: 'var(--paper)', display: 'flex', flexDirection: 'column' }}>
+
       {/* Header */}
-      <header style={{ background: '#1a2f4e', padding: '0 24px' }}>
-        <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: 56 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {branding?.logo_url
-              ? <img src={branding.logo_url} alt={branding.name} style={{ maxHeight: 32, objectFit: 'contain' }} />
-              : <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, color: '#f5f0e8' }}>{session.workspace_name}</span>
-            }
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
-            <span style={{ fontSize: 13, color: '#a09888' }}>Hi, {session.client_name.split(' ')[0]}</span>
-            <button onClick={handleLogout}
-              style={{ fontSize: 12, color: '#a09888', background: 'none', border: '1px solid #3a4f6a', borderRadius: 4, padding: '5px 12px', cursor: 'pointer' }}>
-              Log out
-            </button>
-          </div>
+      <header style={{
+        background: 'var(--ink)', color: 'var(--paper)',
+        padding: '0 32px', height: 60,
+        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        position: 'sticky', top: 0, zIndex: 50,
+        boxShadow: 'var(--shadow-md)',
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          {branding?.logo_url
+            ? <img src={branding.logo_url} alt={wsName}
+                style={{ maxHeight: 32, maxWidth: 120, objectFit: 'contain', filter: 'brightness(0) invert(1)' }} />
+            : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, fontWeight: 400, letterSpacing: '0.04em', color: 'var(--paper)' }}>
+                {wsName}
+              </span>
+          }
+          <span style={{
+            fontSize: 10, fontWeight: 700, color: 'rgba(255,255,255,0.45)',
+            textTransform: 'uppercase', letterSpacing: '0.10em',
+            borderLeft: '1px solid rgba(255,255,255,0.18)', paddingLeft: 14,
+          }}>
+            Client Portal
+          </span>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <span style={{ fontSize: 13, color: 'rgba(248,245,240,0.7)' }}>{session.client_name}</span>
+          <button
+            className="btn btn-outline btn-sm"
+            onClick={logout}
+            style={{ color: 'rgba(248,245,240,0.7)', borderColor: 'rgba(255,255,255,0.2)', background: 'transparent' }}
+          >
+            Log out
+          </button>
         </div>
       </header>
 
-      {/* Tabs */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #e8e3db' }}>
-        <div style={{ maxWidth: 900, margin: '0 auto', display: 'flex', padding: '0 24px' }}>
-          {TABS.map(t => (
-            <button key={t} onClick={() => setTab(t)} style={{
-              padding: '14px 18px', fontSize: 13, fontWeight: tab === t ? 600 : 400,
-              color: tab === t ? '#1a1714' : '#8c8279',
-              background: 'none', border: 'none', cursor: 'pointer',
-              borderBottom: `2px solid ${tab === t ? '#b8922e' : 'transparent'}`,
-              marginBottom: -1,
-            }}>
-              {t}
-            </button>
-          ))}
-        </div>
+      {/* Tab bar */}
+      <div style={{
+        background: '#fff', borderBottom: '1px solid var(--border)',
+        padding: '0 32px', display: 'flex', overflowX: 'auto',
+        boxShadow: 'var(--shadow-sm)',
+      }}>
+        {TABS.map(tab => (
+          <button key={tab} onClick={() => setActiveTab(tab)} style={{
+            padding: '14px 20px', border: 'none', background: 'none',
+            fontSize: 13, fontWeight: activeTab === tab ? 600 : 400,
+            color: activeTab === tab ? 'var(--ink)' : 'var(--muted)',
+            cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+            borderBottom: activeTab === tab ? '2px solid var(--gold)' : '2px solid transparent',
+            marginBottom: -1, transition: 'color .15s',
+          }}>
+            {tab}
+          </button>
+        ))}
       </div>
 
       {/* Content */}
-      <main style={{ maxWidth: 900, margin: '0 auto', padding: '28px 24px' }}>
-        {tab === 'Overview'    && <OverviewTab session={session} />}
-        {tab === 'Goals'       && <GoalsTab />}
-        {tab === 'Activities'  && <ActivitiesTab />}
-        {tab === 'Files'       && <FilesTab />}
-        {tab === 'Invoices'    && <InvoicesTab />}
+      <main style={{ flex: 1, maxWidth: 900, width: '100%', margin: '0 auto', padding: '0 32px 48px', boxSizing: 'border-box' }}>
+        {loading ? (
+          <div className="empty">
+            <div className="empty-icon">⏳</div>
+            <h3>Loading your portal…</h3>
+          </div>
+        ) : (
+          <>
+            {activeTab === 'Overview'   && <OverviewTab session={session} meData={meData} />}
+            {activeTab === 'Goals'      && (
+              <GoalsTab
+                goals={goals}
+                commitments={commitments}
+                onProgressSaved={(goalId, entry) =>
+                  setGoals(prev => prev.map(g => g.id === goalId
+                    ? { ...g, progress_entries: [entry, ...g.progress_entries], progress_count: g.progress_count + 1 }
+                    : g))
+                }
+              />
+            )}
+            {activeTab === 'Activities' && (
+              <ActivitiesTab
+                activities={activities}
+                onActivityUpdated={(id, patch) =>
+                  setActivities(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a))
+                }
+              />
+            )}
+            {activeTab === 'Files'      && <FilesTab materials={materials} />}
+            {activeTab === 'Invoices'   && <InvoicesTab invoices={invoices} />}
+          </>
+        )}
       </main>
+
+      <footer style={{ textAlign: 'center', padding: '20px 24px', color: 'var(--muted-faint)', fontSize: 11, borderTop: '1px solid var(--border)' }}>
+        Powered by CoachOS
+      </footer>
     </div>
   )
 }
