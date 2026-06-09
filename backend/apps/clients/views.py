@@ -118,8 +118,9 @@ class ClientViewSet(viewsets.ModelViewSet):
         client.portal_access = True
         client.save(update_fields=["portal_access"])
         try:
+            import threading
             from tasks.email import send_portal_invite_email
-            send_portal_invite_email.delay(str(client.id))
+            threading.Thread(target=send_portal_invite_email, args=(str(client.id),), daemon=True).start()
         except Exception as exc:
             import logging
             logging.getLogger(__name__).error("send_portal_invite_email failed: %s", exc)
