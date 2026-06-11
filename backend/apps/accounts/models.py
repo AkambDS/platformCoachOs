@@ -39,6 +39,8 @@ class Workspace(models.Model):
     # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice
     # Each entry: {subject, intro, closing}
     email_templates    = models.JSONField(default=dict, blank=True)
+    # Third-party integration credentials — keys: zoom {account_id, client_id, client_secret}
+    integrations       = models.JSONField(default=dict, blank=True)
     created_at         = models.DateTimeField(auto_now_add=True)
     updated_at         = models.DateTimeField(auto_now=True)
 

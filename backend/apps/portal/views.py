@@ -228,10 +228,13 @@ class PortalMaterialsView(APIView):
     permission_classes     = [IsAuthenticated]
 
     def get(self, request):
-        _, workspace_id = _get_portal_claims(request)
+        client_id, workspace_id = _get_portal_claims(request)
+        from django.db.models import Q
         items = KnowledgeItem.objects.filter(
             workspace_id=workspace_id,
-            visibility="client_visible",
+        ).filter(
+            Q(visibility="client_visible") |
+            Q(visibility="specific", shared_client_ids__contains=[str(client_id)])
         )
         return Response(KnowledgeItemSerializer(items, many=True, context={"request": request}).data)
 

@@ -35,6 +35,7 @@ class KnowledgeItem(WorkspaceModel):
         OWNER_ONLY     = "owner_only",     "Owner Only"
         INTERNAL       = "internal",       "All Staff"
         CLIENT_VISIBLE = "client_visible", "Client Visible"
+        SPECIFIC       = "specific",       "Specific People"
 
     id             = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     folder         = models.ForeignKey(KnowledgeFolder, on_delete=models.SET_NULL,
@@ -49,6 +50,10 @@ class KnowledgeItem(WorkspaceModel):
     s3_key         = models.CharField(max_length=500, blank=True)
     file_name      = models.CharField(max_length=255, blank=True)
     url            = models.URLField(blank=True)            # for VIDEO/LINK types
+    video_url      = models.URLField(blank=True)            # optional video alongside any content type
+    # Specific sharing — UUIDs of Client / User records when visibility='specific'
+    shared_client_ids = models.JSONField(default=list, blank=True)
+    shared_user_ids   = models.JSONField(default=list, blank=True)
     rich_text      = models.TextField(blank=True)           # for DOCUMENT type
     # Versioning (FR-LIB-10)
     version        = models.PositiveSmallIntegerField(default=1)

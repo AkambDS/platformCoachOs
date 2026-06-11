@@ -17,4 +17,6 @@ urlpatterns = [
     path("client-tags/",              views.client_tag_configs,               name="settings-client-tags"),
     path("client-tags/<int:pk>/",     views.client_tag_config_detail,        name="settings-client-tag-detail"),
     path("email-preview/",           views.email_preview,                  name="settings-email-preview"),
+    path("zoom/",                    views.zoom_settings,                  name="settings-zoom"),
+    path("zoom/create-meeting/",     views.zoom_create_meeting,            name="settings-zoom-create-meeting"),
 ]

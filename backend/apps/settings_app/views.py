@@ -495,3 +495,105 @@ def serve_workspace_logo(request, workspace_id):
     response = HttpResponse(image_bytes, content_type=mime)
     response["Cache-Control"] = "public, max-age=86400"
     return response
+
+
+# ── Zoom integration ───────────────────────────────────────────────────────────
+
+@api_view(["GET", "POST"])
+@permission_classes([IsBusinessOwner])
+def zoom_settings(request):
+    """GET/POST /api/settings/zoom/ — store Zoom Server-to-Server OAuth credentials."""
+    workspace = request.user.workspace
+    integrations = workspace.integrations or {}
+    zoom = integrations.get("zoom", {})
+
+    if request.method == "GET":
+        return Response({
+            "account_id":    zoom.get("account_id", ""),
+            "client_id":     zoom.get("client_id", ""),
+            "client_secret": "***" if zoom.get("client_secret") else "",
+            "configured":    bool(zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret")),
+        })
+
+    data = request.data
+    zoom["account_id"]    = (data.get("account_id")    or "").strip()
+    zoom["client_id"]     = (data.get("client_id")     or "").strip()
+    # Only update secret if a real value was sent (not the masked "***")
+    if data.get("client_secret") and data["client_secret"] != "***":
+        zoom["client_secret"] = (data["client_secret"] or "").strip()
+
+    integrations["zoom"] = zoom
+    workspace.integrations = integrations
+    workspace.save(update_fields=["integrations"])
+    return Response({"detail": "Zoom credentials saved.", "configured": bool(zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret"))})
+
+
+def _get_zoom_token(zoom_creds: dict) -> str:
+    """Exchange Zoom Server-to-Server OAuth credentials for an access token."""
+    import requests
+    from base64 import b64encode
+    account_id    = zoom_creds["account_id"]
+    client_id     = zoom_creds["client_id"]
+    client_secret = zoom_creds["client_secret"]
+    credentials   = b64encode(f"{client_id}:{client_secret}".encode()).decode()
+    resp = requests.post(
+        f"https://zoom.us/oauth/token?grant_type=account_credentials&account_id={account_id}",
+        headers={"Authorization": f"Basic {credentials}"},
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+@api_view(["POST"])
+@permission_classes([IsWorkspaceMember])
+def zoom_create_meeting(request):
+    """
+    POST /api/settings/zoom/create-meeting/
+    Body: { topic, start_time (ISO), duration_minutes }
+    Returns: { join_url, meeting_id }
+    """
+    import requests as req_lib
+    workspace    = request.user.workspace
+    integrations = workspace.integrations or {}
+    zoom         = integrations.get("zoom", {})
+
+    if not (zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret")):
+        return Response({"detail": "Zoom is not configured. Add credentials in Settings → Integrations."}, status=400)
+
+    try:
+        token = _get_zoom_token(zoom)
+    except Exception as e:
+        return Response({"detail": f"Failed to authenticate with Zoom: {e}"}, status=400)
+
+    topic    = (request.data.get("topic") or "Coaching Session").strip()
+    start_time   = request.data.get("start_time", "")
+    duration     = int(request.data.get("duration_minutes", 60))
+
+    payload = {
+        "topic":      topic,
+        "type":       2,           # Scheduled meeting
+        "duration":   duration,
+        "settings": {
+            "join_before_host":     True,
+            "waiting_room":         False,
+            "auto_recording":       "none",
+            "host_video":           True,
+            "participant_video":    True,
+        },
+    }
+    if start_time:
+        payload["start_time"] = start_time
+
+    try:
+        resp = req_lib.post(
+            "https://api.zoom.us/v2/users/me/meetings",
+            json=payload,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return Response({"join_url": data["join_url"], "meeting_id": data["id"]})
+    except Exception as e:
+        return Response({"detail": f"Failed to create Zoom meeting: {e}"}, status=400)

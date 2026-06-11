@@ -55,9 +55,11 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             pass  # owner sees everything
         else:
             # Coaches/assistants: see internal + client_visible + their own private uploads
+            # + items specifically shared with them
             qs = qs.filter(
                 Q(visibility__in=["internal", "client_visible"]) |
-                Q(visibility="private", uploaded_by=user)
+                Q(visibility="private", uploaded_by=user) |
+                Q(visibility="specific", shared_user_ids__contains=[str(user.id)])
             )
         q      = self.request.query_params.get("q")
         ctype  = self.request.query_params.get("content_type")
@@ -92,15 +94,28 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             return Response({"detail": f"Upload failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         folder_id = request.data.get("folder") or None
+        import json as _json
+        def _parse_ids(key):
+            raw = request.data.get(key, "")
+            if not raw:
+                return []
+            try:
+                return _json.loads(raw) if isinstance(raw, str) else raw
+            except Exception:
+                return []
+
         data = {
-            "title":        request.data.get("title") or file.name,
-            "description":  request.data.get("description", ""),
-            "content_type": request.data.get("content_type") or _detect_ctype(mime, file.name),
-            "visibility":   request.data.get("visibility", "internal"),
-            "folder":       folder_id,
-            "tags":         [],
-            "s3_key":       s3_key,
-            "file_name":    file.name,
+            "title":             request.data.get("title") or file.name,
+            "description":       request.data.get("description", ""),
+            "content_type":      request.data.get("content_type") or _detect_ctype(mime, file.name),
+            "visibility":        request.data.get("visibility", "internal"),
+            "folder":            folder_id,
+            "tags":              [],
+            "s3_key":            s3_key,
+            "file_name":         file.name,
+            "video_url":         request.data.get("video_url", ""),
+            "shared_client_ids": _parse_ids("shared_client_ids"),
+            "shared_user_ids":   _parse_ids("shared_user_ids"),
         }
         ser = KnowledgeItemSerializer(data=data, context={"request": request})
         if ser.is_valid():
@@ -108,6 +123,37 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             return Response(ser.data, status=status.HTTP_201_CREATED)
         default_storage.delete(s3_key)
         return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"], url_path="replace-file", parser_classes=[MultiPartParser])
+    def replace_file(self, request, pk=None):
+        """POST /api/library/items/{id}/replace-file/ — swap the file, bump version."""
+        item = self.get_object()
+        file = request.FILES.get("file")
+        if not file:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+        if file.size > FILE_SIZE_LIMIT:
+            return Response({"detail": "File must be under 100 MB."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext    = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else "bin"
+        s3_key = f"library/{request.user.workspace.id}/{uuid_lib.uuid4()}.{ext}"
+        try:
+            default_storage.save(s3_key, file)
+        except Exception as e:
+            return Response({"detail": f"Upload failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        from django.utils import timezone
+        prev = list(item.previous_versions or [])
+        if item.s3_key:
+            prev.append({"version": item.version, "s3_key": item.s3_key, "replaced_at": timezone.now().isoformat()})
+
+        item.previous_versions = prev
+        item.version   += 1
+        item.s3_key     = s3_key
+        item.file_name  = file.name
+        item.save(update_fields=["s3_key", "file_name", "version", "previous_versions"])
+
+        ser = KnowledgeItemSerializer(item, context={"request": request})
+        return Response(ser.data)
 
     @action(detail=True, methods=["post"], url_path="track-view")
     def track_view(self, request, pk=None):

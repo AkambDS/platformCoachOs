@@ -20,16 +20,52 @@ class FolderSerializer(serializers.ModelSerializer):
 
 class KnowledgeItemSerializer(serializers.ModelSerializer):
     presigned_url    = serializers.SerializerMethodField()
+    inline_url       = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()
 
     class Meta:
         model  = KnowledgeItem
         fields = ["id", "folder", "content_type", "title", "description", "tags",
-                  "visibility", "s3_key", "file_name", "url", "version",
-                  "view_count", "download_count", "uploaded_by", "uploaded_by_name",
-                  "created_at", "presigned_url"]
+                  "visibility", "s3_key", "file_name", "url", "video_url",
+                  "shared_client_ids", "shared_user_ids",
+                  "version", "view_count", "download_count", "uploaded_by",
+                  "uploaded_by_name", "created_at", "presigned_url", "inline_url"]
         read_only_fields = ["id", "view_count", "download_count",
                             "uploaded_by", "created_at", "version"]
+
+    def get_inline_url(self, obj):
+        """Presigned URL with inline disposition — for iframe/image preview."""
+        if not obj.s3_key: return None
+        try:
+            from django.core.files.storage import default_storage
+            from django.conf import settings as dj_settings
+
+            filename  = obj.file_name or obj.s3_key.split("/")[-1]
+            safe_name = filename.replace('"', '\\"')
+
+            if hasattr(default_storage, "bucket"):
+                try:
+                    url = default_storage.bucket.meta.client.generate_presigned_url(
+                        "get_object",
+                        Params={
+                            "Bucket": default_storage.bucket_name,
+                            "Key":    obj.s3_key,
+                            "ResponseContentDisposition": f'inline; filename="{safe_name}"',
+                        },
+                        ExpiresIn=3600,
+                    )
+                except Exception:
+                    url = default_storage.url(obj.s3_key)
+            else:
+                url = default_storage.url(obj.s3_key)
+
+            minio_internal = getattr(dj_settings, "AWS_S3_ENDPOINT_URL", "")
+            public_minio   = getattr(dj_settings, "MINIO_PUBLIC_URL", "")
+            if minio_internal and public_minio and minio_internal in url:
+                url = url.replace(minio_internal, public_minio)
+            return url
+        except Exception:
+            return None
 
     def get_uploaded_by_name(self, obj):
         return obj.uploaded_by.full_name if obj.uploaded_by else None
@@ -39,9 +75,29 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
         try:
             from django.core.files.storage import default_storage
             from django.conf import settings as dj_settings
-            url = default_storage.url(obj.s3_key)
-            # In local dev, MinIO is reachable from the browser at localhost:9000
-            # but the Docker-internal hostname is 'minio' — swap it out.
+
+            filename   = obj.file_name or obj.s3_key.split("/")[-1]
+            safe_name  = filename.replace('"', '\\"')
+            disposition = f'attachment; filename="{safe_name}"'
+
+            # S3 / MinIO: generate presigned URL with Content-Disposition so the
+            # browser downloads the file instead of rendering it inline.
+            if hasattr(default_storage, "bucket"):
+                try:
+                    url = default_storage.bucket.meta.client.generate_presigned_url(
+                        "get_object",
+                        Params={
+                            "Bucket": default_storage.bucket_name,
+                            "Key":    obj.s3_key,
+                            "ResponseContentDisposition": disposition,
+                        },
+                        ExpiresIn=3600,
+                    )
+                except Exception:
+                    url = default_storage.url(obj.s3_key)
+            else:
+                url = default_storage.url(obj.s3_key)
+
             minio_internal = getattr(dj_settings, "AWS_S3_ENDPOINT_URL", "")
             public_minio   = getattr(dj_settings, "MINIO_PUBLIC_URL", "")
             if minio_internal and public_minio and minio_internal in url:
