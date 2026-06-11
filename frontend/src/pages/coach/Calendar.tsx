@@ -91,6 +91,35 @@ function MiniCalendar({ currentDate, onNavigate }: { currentDate: Date; onNaviga
 }
 
 // ── New Activity Modal ────────────────────────────────────────────────────────
+// ── Zoom meeting generator ────────────────────────────────────────────────────
+function ZoomButton({ topic, startTime, durationMinutes, onGenerated }: {
+  topic: string
+  startTime: string
+  durationMinutes: number
+  onGenerated: (url: string) => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  async function generate() {
+    setLoading(true)
+    try {
+      const { data } = await settingsApi.createZoomMeeting({ topic, start_time: startTime, duration_minutes: durationMinutes })
+      onGenerated(data.join_url)
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Failed to create Zoom meeting'
+      alert(msg)
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <button type="button" className="btn btn-outline btn-sm" onClick={generate} disabled={loading}
+      style={{ whiteSpace: 'nowrap', flexShrink: 0 }} title="Auto-generate Zoom meeting link">
+      {loading ? '…' : '📹 Zoom'}
+    </button>
+  )
+}
+
+
 function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const qc = useQueryClient()
   const { user } = useAuthStore()
@@ -220,7 +249,15 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       </div>
       <div className="fgroup">
         <label className="flabel">Location / Link</label>
-        <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link, office address…" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link, office address…" style={{ flex: 1 }} />
+          <ZoomButton
+            topic={form.title || 'Coaching Session'}
+            startTime={date && startTime ? `${date}T${startTime}` : ''}
+            durationMinutes={endTime && startTime ? Math.round((new Date(`2000-01-01T${endTime}`).getTime() - new Date(`2000-01-01T${startTime}`).getTime()) / 60000) : 60}
+            onGenerated={url => set('location', url)}
+          />
+        </div>
       </div>
       <div className="fgroup">
         <label className="flabel">Notes (internal)</label>

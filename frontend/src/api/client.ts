@@ -71,6 +71,9 @@ export const settingsApi = {
   createClientTag:      (d: any)             => api.post('/api/settings/client-tags/', d),
   updateClientTag:      (id: number, d: any) => api.patch(`/api/settings/client-tags/${id}/`, d),
   deleteClientTag:      (id: number)         => api.delete(`/api/settings/client-tags/${id}/`),
+  getZoomSettings:      ()                   => api.get('/api/settings/zoom/'),
+  saveZoomSettings:     (d: any)             => api.post('/api/settings/zoom/', d),
+  createZoomMeeting:    (d: any)             => api.post('/api/settings/zoom/create-meeting/', d),
 }
 export const clientsApi = {
   list:         (p?: any)              => api.get('/api/clients/', { params: p }),
@@ -187,6 +190,7 @@ export const libraryApi = {
   updateItem:   (id: string, d: any) => api.patch(`/api/library/items/${id}/`, d),
   deleteItem:   (id: string)         => api.delete(`/api/library/items/${id}/`),
   upload:       (fd: FormData)       => api.post('/api/library/items/upload/', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  replaceFile:  (id: string, fd: FormData) => api.post(`/api/library/items/${id}/replace-file/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
   folders:      ()                   => api.get('/api/library/folders/'),
   createFolder: (d: any)             => api.post('/api/library/folders/', d),
   deleteFolder: (id: string)         => api.delete(`/api/library/folders/${id}/`),

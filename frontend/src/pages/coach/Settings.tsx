@@ -2071,6 +2071,90 @@ function AuditLogTab() {
   )
 }
 
+// ── Integrations Tab ──────────────────────────────────────────────────────────
+function IntegrationsTab() {
+  const { show } = useToast()
+  const [zoom, setZoom] = useState({ account_id: '', client_id: '', client_secret: '' })
+  const [configured, setConfigured] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [testing, setTesting] = useState(false)
+
+  useEffect(() => {
+    settingsApi.getZoomSettings().then(r => {
+      setZoom({ account_id: r.data.account_id, client_id: r.data.client_id, client_secret: r.data.client_secret })
+      setConfigured(r.data.configured)
+    }).catch(() => {})
+  }, [])
+
+  async function save() {
+    setSaving(true)
+    try {
+      const r = await settingsApi.saveZoomSettings(zoom)
+      setConfigured(r.data.configured)
+      show('Zoom credentials saved', 'success')
+    } catch { show('Failed to save', 'error') } finally { setSaving(false) }
+  }
+
+  async function test() {
+    setTesting(true)
+    try {
+      await settingsApi.createZoomMeeting({ topic: 'Test Meeting', duration_minutes: 30 })
+      show('Zoom connected ✓ Test meeting created successfully', 'success')
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Zoom test failed', 'error')
+    } finally { setTesting(false) }
+  }
+
+  return (
+    <div style={{ maxWidth: 560 }}>
+      <div style={{ marginBottom: 24 }}>
+        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
+        <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow.</p>
+      </div>
+
+      <div className="card">
+        <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <span>📹 Zoom — Auto-generate Meeting Links</span>
+          {configured && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
+        </div>
+        <div className="card-body">
+          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
+            Use a <strong>Server-to-Server OAuth</strong> app from{' '}
+            <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
+              Zoom Marketplace
+            </a>. Create an app of type "Server-to-Server OAuth", then copy the credentials below.
+          </p>
+
+          <div className="fgroup">
+            <label className="flabel">Account ID</label>
+            <input className="finput" value={zoom.account_id} onChange={e => setZoom(z => ({ ...z, account_id: e.target.value }))} placeholder="Your Zoom Account ID" />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Client ID</label>
+            <input className="finput" value={zoom.client_id} onChange={e => setZoom(z => ({ ...z, client_id: e.target.value }))} placeholder="OAuth Client ID" />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Client Secret</label>
+            <input className="finput" type="password" value={zoom.client_secret} onChange={e => setZoom(z => ({ ...z, client_secret: e.target.value }))} placeholder={configured ? '••••••••' : 'OAuth Client Secret'} />
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button className="btn btn-dark btn-sm" onClick={save} disabled={saving}>
+              {saving ? 'Saving…' : 'Save Credentials'}
+            </button>
+            {configured && (
+              <button className="btn btn-outline btn-sm" onClick={test} disabled={testing}>
+                {testing ? 'Testing…' : 'Test Connection'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+
 // ── Main Page ──────────────────────────────────────────────────────────────────
 export default function Settings() {
   const { user } = useAuthStore()
@@ -2086,7 +2170,8 @@ export default function Settings() {
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Email Templates',  icon: <Mail size={13} />,          ownerOnly: true  },
-    { key: 'Audit Log',        icon: <ClipboardList size={13} />, ownerOnly: true  },
+    { key: 'Integrations',    icon: <Plus size={13} />,          ownerOnly: true  },
+    { key: 'Audit Log',       icon: <ClipboardList size={13} />, ownerOnly: true  },
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
 
@@ -2120,6 +2205,7 @@ export default function Settings() {
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
         {tab === 'Email Templates' && isOwner && <EmailTemplatesTab />}
+        {tab === 'Integrations'    && isOwner && <IntegrationsTab />}
         {tab === 'Audit Log'       && isOwner && <AuditLogTab />}
       </div>
     </AppShell>

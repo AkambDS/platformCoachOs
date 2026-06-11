@@ -23,7 +23,7 @@ interface Commitment { id: string; text: string; created_at: string }
 interface Activity { id: string; title: string; activity_type: string; status: string; start_at: string; end_at: string | null; location: string; meeting_link: string; coach_name: string }
 interface InvoiceItem { description: string; quantity: string; unit_price: string; line_total: string }
 interface Invoice { id: string; number: string; status: string; total: string; amount_paid: string; due_date: string | null; stripe_payment_link: string; created_at: string; items: InvoiceItem[] }
-interface Material { id: string; title: string; item_type: string; file_url?: string; url?: string }
+interface Material { id: string; title: string; item_type: string; file_url?: string; url?: string; video_url?: string }
 interface Note { id: string; text: string; note_type: string; created_by_name: string | null; client_owned: boolean; created_at: string; updated_at: string }
 interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean }
 
@@ -574,23 +574,27 @@ function FilesTab({ materials }: { materials: Material[] }) {
   return (
     <div>
       <div style={{ padding: '24px 0 20px' }}><h1 className="page-title">Shared Files</h1></div>
-      <div className="card">
-        <table className="tbl">
-          <thead><tr><th>Title</th><th>Type</th><th></th></tr></thead>
-          <tbody>
-            {materials.map(item => (
-              <tr key={item.id}>
-                <td style={{ fontWeight: 500 }}>{item.title}</td>
-                <td><span className={`pill ${typeMap[item.item_type] || 'pill-grey'}`}>{item.item_type || 'file'}</span></td>
-                <td style={{ textAlign: 'right' }}>
-                  {(item.file_url || item.url) && (
-                    <a href={item.file_url || item.url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">Download</a>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {materials.map(item => (
+          <div key={item.id} className="card" style={{ padding: '14px 18px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', marginBottom: 4 }}>{item.title}</div>
+              <span className={`pill ${typeMap[item.item_type] || 'pill-grey'}`}>{item.item_type || 'file'}</span>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              {(item.file_url || item.url) && (
+                <a href={item.file_url || item.url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm">
+                  Download
+                </a>
+              )}
+              {item.video_url && (
+                <a href={item.video_url} target="_blank" rel="noopener noreferrer" className="btn btn-dark btn-sm">
+                  Watch Video
+                </a>
+              )}
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   )
