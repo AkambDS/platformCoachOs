@@ -26,7 +26,9 @@ urlpatterns = [
     path("feedback/<str:pk>/comment/",            views.feedback_comment),
     path("banners/",                              views.admin_banners),
     path("banners/<int:pk>/",                     views.admin_banner_detail),
-    path("platform-invoices/",                    views.platform_invoices),
-    path("platform-invoices/<int:pk>/",           views.platform_invoice_detail),
-    path("platform-invoices/<int:pk>/send/",      views.platform_invoice_send),
+    path("platform-invoices/",                                           views.platform_invoices),
+    path("platform-invoices/<int:pk>/",                                  views.platform_invoice_detail),
+    path("platform-invoices/<int:pk>/send/",                             views.platform_invoice_send),
+    path("platform-invoices/<int:pk>/payments/",                         views.platform_invoice_payments),
+    path("platform-invoices/<int:pk>/payments/<int:payment_pk>/",        views.platform_invoice_payment_detail),
 ]

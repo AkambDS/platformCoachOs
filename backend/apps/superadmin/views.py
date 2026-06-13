@@ -8,7 +8,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.accounts.models import Workspace, User, WorkspaceInvitation, WorkspaceRegistrationToken, AuditLog, ErrorLog
-from .models import PlatformInvoice
+from .models import PlatformInvoice, PlatformPayment
 from apps.pipeline.models import PipelineStageConfig
 from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig
 from apps.activities.models import Activity
@@ -37,6 +37,18 @@ def dashboard(request):
     new_workspaces_7d = workspaces.filter(created_at__gte=seven_days_ago).count()
     total_errors = ErrorLog.objects.count()
 
+    recent_logs = AuditLog.objects.select_related("user", "workspace").order_by("-created_at")[:10]
+    audit_log_entries = [{
+        "id":             entry.id,
+        "action":         entry.action,
+        "table":          entry.table_name,
+        "record_id":      entry.record_id,
+        "user":           entry.user.full_name if entry.user else "—",
+        "user_email":     entry.user.email if entry.user else None,
+        "workspace_name": entry.workspace.name if entry.workspace else None,
+        "created_at":     entry.created_at.isoformat(),
+    } for entry in recent_logs]
+
     return Response({
         "workspaces":         workspaces.count(),
         "workspaces_active":  workspaces.filter(is_active=True).count(),
@@ -50,6 +62,7 @@ def dashboard(request):
         "revenue_total":      float(revenue_total),
         "overdue_count":      overdue_count,
         "total_errors":       total_errors,
+        "audit_logs":         audit_log_entries,
     })
 
 
@@ -680,7 +693,7 @@ def workspace_errors(request, pk):
     except Workspace.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
 
-    logs = ErrorLog.objects.filter(workspace=ws).select_related("user").order_by("-created_at")[:20]
+    logs = ErrorLog.objects.filter(workspace=ws).select_related("user").order_by("-created_at")[:10]
     return Response([{
         "id":         entry.id,
         "severity":   entry.severity,
@@ -891,7 +904,7 @@ def workspace_audit_log(request, pk):
 
     logs = (AccessLog.objects
             .filter(workspace=ws)
-            .order_by("-created_at")[:200])
+            .order_by("-created_at")[:10])
     return Response([{
         "id":          l.id,
         "user_name":   l.user_name,
@@ -965,24 +978,55 @@ def admin_banner_detail(request, pk):
 
 # ── Platform Invoices (CoachOS billing to workspace owners) ───────────────────
 
-def _platform_invoice_data(inv):
+def _parse_date(val):
+    from datetime import date as _date
+    if not val:
+        return None
+    return val if isinstance(val, _date) else _date.fromisoformat(str(val))
+
+
+def _platform_invoice_data(inv, include_payments=True):
     from django.conf import settings as dj_settings
     backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
     logo_url = f"{backend_base}/api/settings/logo/{inv.workspace_id}/" if inv.workspace.logo_data else ""
+
+    payments = []
+    paid_total = 0
+    if include_payments:
+        for p in inv.payments.all():
+            payments.append({
+                "id":           p.id,
+                "amount":       str(p.amount),
+                "payment_date": p.payment_date.isoformat(),
+                "method":       p.method,
+                "notes":        p.notes,
+                "created_at":   p.created_at.isoformat(),
+            })
+            paid_total += float(p.amount)
+
     return {
-        "id":             inv.id,
-        "workspace_id":   str(inv.workspace_id),
-        "workspace_name": inv.workspace.name,
-        "workspace_logo": logo_url,
-        "owner_email":    User.objects.filter(workspace=inv.workspace, role="business_owner").values_list("email", flat=True).first() or "",
-        "amount":         str(inv.amount),
-        "plan":           inv.plan,
-        "period_start":   inv.period_start.isoformat(),
-        "period_end":     inv.period_end.isoformat(),
-        "notes":          inv.notes,
-        "line_items":     inv.line_items or [],
-        "status":         inv.status,
-        "created_at":     inv.created_at.isoformat(),
+        "id":                inv.id,
+        "workspace_id":      str(inv.workspace_id),
+        "workspace_name":    inv.workspace.name,
+        "workspace_logo":    logo_url,
+        "logo_data":           inv.logo_data or "",
+        "show_platform_text":  inv.show_platform_text,
+        "billed_to_name":      inv.billed_to_name or "",
+        "billed_to_email":     inv.billed_to_email or "",
+        "billed_to_extra":     inv.billed_to_extra or "",
+        "owner_email":         User.objects.filter(workspace=inv.workspace, role="business_owner").values_list("email", flat=True).first() or "",
+        "amount":            str(inv.amount),
+        "plan":              inv.plan,
+        "period_start":      inv.period_start.isoformat() if inv.period_start else None,
+        "period_end":        inv.period_end.isoformat() if inv.period_end else None,
+        "notes":             inv.notes,
+        "line_items":        inv.line_items or [],
+        "status":            inv.status,
+        "is_recurring":      inv.is_recurring,
+        "recurrence_months": inv.recurrence_months,
+        "payments":          payments,
+        "paid_total":        str(round(paid_total, 2)),
+        "created_at":        inv.created_at.isoformat(),
     }
 
 
@@ -997,21 +1041,22 @@ def platform_invoices(request):
             ws = Workspace.objects.get(pk=ws_id)
         except Workspace.DoesNotExist:
             return Response({"detail": "Workspace not found."}, status=404)
-        from datetime import date as _date
-        def _parse_date(val):
-            if not val:
-                return None
-            return val if isinstance(val, _date) else _date.fromisoformat(str(val))
-
         inv = PlatformInvoice.objects.create(
-            workspace    = ws,
-            amount       = request.data.get("amount", 0),
-            plan         = request.data.get("plan", ws.plan),
-            period_start = _parse_date(request.data.get("period_start")),
-            period_end   = _parse_date(request.data.get("period_end")),
-            notes        = request.data.get("notes", ""),
-            status       = request.data.get("status", "draft"),
-            line_items   = request.data.get("line_items", []),
+            workspace         = ws,
+            amount            = request.data.get("amount", 0),
+            plan              = request.data.get("plan", ws.plan),
+            period_start      = _parse_date(request.data.get("period_start")),
+            period_end        = _parse_date(request.data.get("period_end")),
+            notes             = request.data.get("notes", ""),
+            status            = request.data.get("status", "draft"),
+            line_items        = request.data.get("line_items", []),
+            is_recurring      = request.data.get("is_recurring", False),
+            recurrence_months = request.data.get("recurrence_months", 1),
+            logo_data           = request.data.get("logo_data", ""),
+            show_platform_text  = request.data.get("show_platform_text", True),
+            billed_to_name      = request.data.get("billed_to_name", ""),
+            billed_to_email     = request.data.get("billed_to_email", ""),
+            billed_to_extra     = request.data.get("billed_to_extra", ""),
         )
         return Response(_platform_invoice_data(inv), status=201)
 
@@ -1036,9 +1081,14 @@ def platform_invoice_detail(request, pk):
         return Response(status=204)
 
     if request.method == "PATCH":
-        for field in ("amount", "plan", "period_start", "period_end", "notes", "status", "line_items"):
+        for field in ("amount", "plan", "notes", "status", "line_items", "is_recurring", "recurrence_months",
+                      "logo_data", "show_platform_text", "billed_to_name", "billed_to_email", "billed_to_extra"):
             if field in request.data:
                 setattr(inv, field, request.data[field])
+        if "period_start" in request.data:
+            inv.period_start = _parse_date(request.data["period_start"])
+        if "period_end" in request.data:
+            inv.period_end = _parse_date(request.data["period_end"])
         inv.save()
 
     return Response(_platform_invoice_data(inv))
@@ -1137,3 +1187,58 @@ def platform_invoice_send(request, pk):
     inv.status = "sent"
     inv.save(update_fields=["status"])
     return Response({"detail": f"Invoice sent to {owner_email}.", "status": "sent"})
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoice_payments(request, pk):
+    """GET list / POST create a payment for a platform invoice."""
+    try:
+        inv = PlatformInvoice.objects.select_related("workspace").get(pk=pk)
+    except PlatformInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "POST":
+        payment = PlatformPayment.objects.create(
+            invoice      = inv,
+            amount       = request.data.get("amount", 0),
+            payment_date = _parse_date(request.data.get("payment_date")),
+            method       = request.data.get("method", "bank_transfer"),
+            notes        = request.data.get("notes", ""),
+        )
+        from django.db.models import Sum as _Sum
+        paid_total = float(inv.payments.aggregate(total=_Sum("amount"))["total"] or 0)
+        if paid_total >= float(inv.amount):
+            inv.status = "paid"
+            inv.save(update_fields=["status"])
+        return Response({
+            "id":           payment.id,
+            "amount":       str(payment.amount),
+            "payment_date": payment.payment_date.isoformat(),
+            "method":       payment.method,
+            "notes":        payment.notes,
+            "created_at":   payment.created_at.isoformat(),
+            "invoice_status": inv.status,
+        }, status=201)
+
+    payments = inv.payments.all()
+    return Response([{
+        "id":           p.id,
+        "amount":       str(p.amount),
+        "payment_date": p.payment_date.isoformat(),
+        "method":       p.method,
+        "notes":        p.notes,
+        "created_at":   p.created_at.isoformat(),
+    } for p in payments])
+
+
+@api_view(["DELETE"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoice_payment_detail(request, pk, payment_pk):
+    """DELETE a specific payment."""
+    try:
+        payment = PlatformPayment.objects.select_related("invoice").get(pk=payment_pk, invoice_id=pk)
+    except PlatformPayment.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    payment.delete()
+    return Response(status=204)
