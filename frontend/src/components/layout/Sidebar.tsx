@@ -17,6 +17,7 @@ import {
   Building2,
   KeyRound,
   ShieldCheck,
+  Bell,
 } from 'lucide-react'
 
 type NavItem =
@@ -43,10 +44,12 @@ const COACH_NAV: NavItem[] = [
 
 const ADMIN_NAV: NavItem[] = [
   { section: 'Platform Admin' },
-  { to: '/admin',            Icon: LayoutDashboard,  label: 'Overview'    },
-  { to: '/admin#workspaces', Icon: Building2,        label: 'Workspaces'  },
-  { to: '/admin#feedback',   Icon: MessageSquarePlus,label: 'Feedback'    },
-  { to: '/admin#tokens',     Icon: KeyRound,         label: 'Invites'     },
+  { to: '/admin',            Icon: LayoutDashboard,  label: 'Overview'          },
+  { to: '/admin#workspaces', Icon: Building2,        label: 'Workspaces'        },
+  { to: '/admin#invoices',   Icon: Receipt,          label: 'Invoices'          },
+  { to: '/admin#tokens',     Icon: KeyRound,         label: 'Workspace Invites' },
+  { to: '/admin#feedback',   Icon: MessageSquarePlus,label: 'Feedback'          },
+  { to: '/admin#banner',     Icon: Bell,             label: 'Maintenance Banner'},
 ]
 
 export default function Sidebar() {

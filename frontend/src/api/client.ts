@@ -182,7 +182,12 @@ export const adminApi = {
   clientTags:           (wsId: string)                         => api.get(`/api/superadmin/workspaces/${wsId}/client-tags/`),
   createClientTag:      (wsId: string, d: any)                 => api.post(`/api/superadmin/workspaces/${wsId}/client-tags/`, d),
   updateClientTag:      (wsId: string, id: number, d: any)     => api.patch(`/api/superadmin/workspaces/${wsId}/client-tags/${id}/`, d),
-  deleteClientTag:      (wsId: string, id: number)             => api.delete(`/api/superadmin/workspaces/${wsId}/client-tags/${id}/`),
+  deleteClientTag:           (wsId: string, id: number)             => api.delete(`/api/superadmin/workspaces/${wsId}/client-tags/${id}/`),
+  platformInvoices:          (params?: any)                         => api.get('/api/superadmin/platform-invoices/', { params }),
+  createPlatformInvoice:     (d: any)                               => api.post('/api/superadmin/platform-invoices/', d),
+  patchPlatformInvoice:      (id: number, d: any)                   => api.patch(`/api/superadmin/platform-invoices/${id}/`, d),
+  deletePlatformInvoice:     (id: number)                           => api.delete(`/api/superadmin/platform-invoices/${id}/`),
+  sendPlatformInvoice:       (id: number)                           => api.post(`/api/superadmin/platform-invoices/${id}/send/`),
 }
 export const libraryApi = {
   items:        (p?: any)            => api.get('/api/library/items/', { params: p }),

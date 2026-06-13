@@ -2,15 +2,16 @@ import { useState, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
-import AppShell from '../../components/layout/AppShell'
+import AdminShell from '../../components/layout/AdminShell'
 
-type Tab = 'overview' | 'workspaces' | 'tokens' | 'feedback' | 'banner'
+type Tab = 'overview' | 'workspaces' | 'invoices' | 'tokens' | 'feedback' | 'banner'
 
 function hashToTab(hash: string): Tab {
   if (hash === '#workspaces') return 'workspaces'
   if (hash === '#tokens') return 'tokens'
   if (hash === '#feedback') return 'feedback'
   if (hash === '#banner') return 'banner'
+  if (hash === '#invoices') return 'invoices'
   return 'overview'
 }
 
@@ -95,6 +96,12 @@ export default function AdminDashboard() {
     queryKey: ['admin', 'workspaces'],
     queryFn: () => adminApi.workspaces().then(r => r.data),
     enabled: tab === 'workspaces' || tab === 'overview',
+  })
+
+  const { data: platformInvoices = [], isLoading: invoicesLoading, refetch: refetchBilling } = useQuery({
+    queryKey: ['admin', 'platform-invoices'],
+    queryFn: () => adminApi.platformInvoices().then(r => r.data),
+    enabled: tab === 'invoices',
   })
 
   const { data: tokens = [], isLoading: tokensLoading } = useQuery({
@@ -195,38 +202,8 @@ export default function AdminDashboard() {
   })
 
   return (
-    <AppShell>
-      {/* Header */}
-      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)', padding: '22px 36px 0' }}>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 32, fontWeight: 300, marginBottom: 4 }}>
-            Super Admin
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--muted)' }}>Platform management — staff only</div>
-        </div>
-        <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['overview', 'workspaces', 'tokens', 'feedback', 'banner'] as Tab[]).map(t => (
-            <button
-              key={t}
-              onClick={() => { navigate('/admin' + (t === 'overview' ? '' : `#${t}`)); setSelectedTicket(null) }}
-              style={{
-                padding: '11px 20px', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500,
-                fontFamily: "'DM Sans', sans-serif",
-                background: 'none', borderBottom: tab === t ? '2px solid var(--ink)' : '2px solid transparent',
-                color: tab === t ? 'var(--ink)' : 'var(--muted)', transition: 'color .15s',
-              }}
-            >
-              {t === 'overview' ? 'Overview'
-                : t === 'workspaces' ? `Workspaces${stats ? ` (${stats.workspaces})` : ''}`
-                : t === 'tokens' ? 'Workspace Invites'
-                : t === 'feedback' ? 'Feedback'
-                : 'Maintenance Banner'}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      <div className="page-body">
+    <AdminShell>
+      <div style={{ padding: '28px 32px', minHeight: '100vh' }}>
         {/* ── Overview tab ─────────────────────────────────── */}
         {tab === 'overview' && (
           <>
@@ -236,24 +213,8 @@ export default function AdminDashboard() {
               <>
                 <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 24 }}>
                   <StatCard label="Workspaces" value={stats.workspaces} sub={`${stats.workspaces_active} active · ${stats.new_workspaces_7d} new this week`} />
-                  <StatCard label="Users" value={stats.users} />
-                  <StatCard label="Clients" value={stats.clients} />
-                  <StatCard label="Deals" value={stats.deals} />
-                  <StatCard label="Invoices" value={stats.invoices} sub={`${stats.overdue_count} overdue`} />
-                  <StatCard label="Revenue Collected" value={`$${Number(stats.revenue_total || 0).toLocaleString('en-US', { maximumFractionDigits: 0 })}`} />
+                  <StatCard label="Platform Invoices" value={stats.invoices} sub={`${stats.overdue_count} overdue`} />
                   <StatCard label="Errors Logged" value={stats.total_errors} sub={stats.total_errors > 0 ? 'check error logs' : 'all clear'} />
-                </div>
-
-                <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
-                  Plan breakdown
-                </div>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 32 }}>
-                  {Object.entries(stats.plans as Record<string, number>).map(([plan, count]) => (
-                    <div key={plan} style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: '14px 22px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <span className={`pill ${PLAN_COLORS[plan] || 'pill-grey'}`}>{plan}</span>
-                      <span style={{ fontSize: 22, fontFamily: 'Cormorant Garamond, serif', fontWeight: 300 }}>{count}</span>
-                    </div>
-                  ))}
                 </div>
 
                 <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
@@ -265,10 +226,9 @@ export default function AdminDashboard() {
                       <th>Workspace</th>
                       <th>Plan</th>
                       <th>Owner</th>
-                      <th>Clients</th>
-                      <th>Revenue</th>
+                      <th>Last Login</th>
                       <th>Errors</th>
-                      <th>Last activity</th>
+                      <th>Last Activity</th>
                       <th>Status</th>
                     </tr>
                   </thead>
@@ -282,13 +242,8 @@ export default function AdminDashboard() {
                         <td><span className={`pill ${PLAN_COLORS[ws.plan] || 'pill-grey'}`}>{ws.plan}</span></td>
                         <td>
                           <div style={{ fontSize: 13 }}>{ws.owner_email || '—'}</div>
-                          <div style={{ fontSize: 11, color: 'var(--muted)' }}>{(ws.owner_role || '').replace(/_/g, ' ')}</div>
-                          {ws.owner_last_login && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Last login: {timeAgo(ws.owner_last_login)}</div>}
                         </td>
-                        <td style={{ fontSize: 14 }}>{ws.clients}</td>
-                        <td style={{ fontSize: 13, color: '#4a7c59', fontWeight: 600 }}>
-                          {ws.revenue > 0 ? `$${Number(ws.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
-                        </td>
+                        <td style={{ fontSize: 12, color: 'var(--muted)' }}>{ws.owner_last_login ? timeAgo(ws.owner_last_login) : '—'}</td>
                         <td>
                           {ws.error_count > 0
                             ? <span className="pill pill-red" style={{ fontSize: 11 }}>{ws.error_count} errors</span>
@@ -321,13 +276,11 @@ export default function AdminDashboard() {
                     <th>Workspace</th>
                     <th>Plan</th>
                     <th>Owner</th>
+                    <th>Last Login</th>
                     <th>Users</th>
-                    <th>Clients</th>
-                    <th>Deals</th>
                     <th>Invoices</th>
-                    <th>Revenue</th>
                     <th>Errors</th>
-                    <th>Last activity</th>
+                    <th>Last Activity</th>
                     <th>Status</th>
                     <th></th>
                   </tr>
@@ -342,18 +295,12 @@ export default function AdminDashboard() {
                       <td><span className={`pill ${PLAN_COLORS[ws.plan] || 'pill-grey'}`}>{ws.plan}</span></td>
                       <td>
                         <div style={{ fontSize: 13 }}>{ws.owner_email || '—'}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>{(ws.owner_role || '').replace(/_/g, ' ')}</div>
-                        {ws.owner_last_login && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Last login: {timeAgo(ws.owner_last_login)}</div>}
                       </td>
+                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{ws.owner_last_login ? timeAgo(ws.owner_last_login) : '—'}</td>
                       <td style={{ fontSize: 14 }}>{ws.users}</td>
-                      <td style={{ fontSize: 14 }}>{ws.clients}</td>
-                      <td style={{ fontSize: 14 }}>{ws.deals}</td>
                       <td style={{ fontSize: 14 }}>
                         {ws.invoices}
                         {ws.overdue > 0 && <span style={{ marginLeft: 4, fontSize: 10, color: '#e67e22' }}>({ws.overdue} overdue)</span>}
-                      </td>
-                      <td style={{ fontSize: 13, color: '#4a7c59', fontWeight: 600 }}>
-                        {ws.revenue > 0 ? `$${Number(ws.revenue).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
                       </td>
                       <td>
                         {ws.error_count > 0
@@ -843,7 +790,446 @@ export default function AdminDashboard() {
             </div>
           </div>
         )}
+        {/* ── Invoices tab ─────────────────────────────────── */}
+        {tab === 'invoices' && (
+          <InvoicesTab
+            invoices={platformInvoices as any[]}
+            workspaces={workspaces as any[]}
+            loading={invoicesLoading}
+            onRefresh={() => refetchBilling()}
+          />
+        )}
       </div>
-    </AppShell>
+    </AdminShell>
+  )
+}
+
+
+// ── Platform Invoice System ───────────────────────────────────────────────────
+const PLAN_PRICES: Record<string, number> = { trial: 0, starter: 29, growth: 79, enterprise: 199 }
+const INV_STATUS_COLORS: Record<string, string> = {
+  draft: 'pill-grey', sent: 'pill-blue', paid: 'pill-green', overdue: 'pill-red',
+}
+
+function calcTotal(lineItems: any[]) {
+  if (!lineItems?.length) return 0
+  return lineItems.reduce((s, li) => s + Number(li.quantity || 1) * Number(li.unit_price || 0), 0)
+}
+
+function InvoicePDF({ inv, logoUrl }: { inv: any; logoUrl?: string }) {
+  const lineItems: any[] = inv.line_items || []
+  const computedTotal = lineItems.length > 0 ? calcTotal(lineItems) : Number(inv.amount)
+  return (
+    <div style={{ fontFamily: 'Helvetica,Arial,sans-serif', color: '#1a1714', padding: '32px 28px', background: '#fff', minHeight: 420 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, paddingBottom: 20, borderBottom: '2px solid #1a1714' }}>
+        <div>
+          {(logoUrl || inv.workspace_logo) && (
+            <img src={logoUrl || inv.workspace_logo} alt="" style={{ maxHeight: 44, maxWidth: 140, objectFit: 'contain', display: 'block', marginBottom: 8 }} />
+          )}
+          <div style={{ fontFamily: 'Georgia,serif', fontSize: 20, fontWeight: 300 }}>CoachOS</div>
+          <div style={{ fontSize: 11, color: '#8c8279' }}>Coaching Management Platform</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontFamily: 'Georgia,serif', fontSize: 28, fontWeight: 300, color: '#1a1714' }}>INVOICE</div>
+          <div style={{ fontSize: 12, color: '#8c8279', marginTop: 4 }}>#{inv.id}</div>
+        </div>
+      </div>
+
+      {/* Billed to / period */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 28 }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 6 }}>Billed to</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{inv.workspace_name}</div>
+          <div style={{ fontSize: 13, color: '#8c8279' }}>{inv.owner_email}</div>
+          <div style={{ fontSize: 12, color: '#8c8279', marginTop: 4, textTransform: 'capitalize' }}>{inv.plan} plan</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 6 }}>Details</div>
+          <div style={{ fontSize: 13 }}>Period: {inv.period_start} – {inv.period_end}</div>
+          <div style={{ fontSize: 13, color: '#8c8279' }}>Issued: {new Date(inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
+          <div style={{ marginTop: 6 }}>
+            <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* Line items */}
+      {lineItems.length > 0 ? (
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
+          <thead>
+            <tr style={{ background: '#f8f6f2' }}>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'left' }}>Description</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'center', width: 60 }}>Qty</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'right', width: 90 }}>Unit</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'right', width: 90 }}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lineItems.map((li: any, i: number) => (
+              <tr key={i} style={{ borderBottom: '1px solid #ede9e1' }}>
+                <td style={{ padding: '10px 10px', fontSize: 13 }}>{li.description}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'center' }}>{li.quantity}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'right' }}>${Number(li.unit_price).toFixed(2)}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, fontWeight: 600, textAlign: 'right' }}>${(Number(li.quantity) * Number(li.unit_price)).toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <div style={{ borderTop: '1px solid #ede9e1', marginBottom: 20 }} />
+      )}
+
+      {/* Total */}
+      <div style={{ borderTop: '2px solid #1a1714', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <span style={{ fontSize: 15, fontWeight: 700 }}>Total Due</span>
+        <span style={{ fontFamily: 'Georgia,serif', fontSize: 32, fontWeight: 300 }}>${computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+      </div>
+
+      {inv.notes && (
+        <div style={{ marginTop: 20, fontSize: 12, color: '#8c8279', borderLeft: '3px solid #b8922e', paddingLeft: 12 }}>{inv.notes}</div>
+      )}
+
+      <div style={{ marginTop: 28, paddingTop: 16, borderTop: '1px solid #ede9e1', fontSize: 11, color: '#8c8279', textAlign: 'center' }}>
+        CoachOS · Generated {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+      </div>
+    </div>
+  )
+}
+
+function printInvoice(inv: any) {
+  const w = window.open('', '_blank')
+  if (!w) return
+  const lineItems: any[] = inv.line_items || []
+  const computedTotal = lineItems.length > 0 ? calcTotal(lineItems) : Number(inv.amount)
+  const rows = lineItems.map((li: any) =>
+    `<tr><td style="padding:10px;border-bottom:1px solid #ede9e1">${li.description}</td>
+     <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:center">${li.quantity}</td>
+     <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:right">$${Number(li.unit_price).toFixed(2)}</td>
+     <td style="padding:10px;border-bottom:1px solid #ede9e1;font-weight:600;text-align:right">$${(Number(li.quantity)*Number(li.unit_price)).toFixed(2)}</td></tr>`
+  ).join('')
+  const lineTable = lineItems.length > 0 ? `
+    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+      <thead><tr style="background:#f8f6f2">
+        <th style="padding:8px 10px;text-align:left;font-size:11px;color:#8c8279;text-transform:uppercase;letter-spacing:.06em">Description</th>
+        <th style="padding:8px 10px;text-align:center;font-size:11px;color:#8c8279;width:60px">Qty</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Unit</th>
+        <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Total</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>` : '<div style="border-top:1px solid #ede9e1;margin-bottom:20px"></div>'
+  const logoHtml = inv.workspace_logo ? `<img src="${inv.workspace_logo}" style="max-height:44px;max-width:140px;object-fit:contain;display:block;margin-bottom:8px">` : ''
+  w.document.write(`<!doctype html><html><head><title>Invoice #${inv.id}</title>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0}
+    body{font-family:Helvetica,Arial,sans-serif;color:#1a1714;padding:40px;max-width:700px;margin:0 auto}
+    @media print{body{padding:20px}}
+  </style></head><body>
+  <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:2px solid #1a1714;margin-bottom:28px">
+    <div>${logoHtml}<div style="font-family:Georgia,serif;font-size:20px;font-weight:300">CoachOS</div><div style="font-size:11px;color:#8c8279">Coaching Management Platform</div></div>
+    <div style="text-align:right"><div style="font-family:Georgia,serif;font-size:28px;font-weight:300">INVOICE</div><div style="font-size:12px;color:#8c8279">#${inv.id}</div></div>
+  </div>
+  <div style="display:flex;justify-content:space-between;margin-bottom:28px">
+    <div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8c8279;margin-bottom:6px">Billed to</div>
+      <div style="font-size:14px;font-weight:600">${inv.workspace_name}</div>
+      <div style="font-size:13px;color:#8c8279">${inv.owner_email}</div>
+      <div style="font-size:12px;color:#8c8279;margin-top:4px;text-transform:capitalize">${inv.plan} plan</div>
+    </div>
+    <div style="text-align:right">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8c8279;margin-bottom:6px">Details</div>
+      <div style="font-size:13px">Period: ${inv.period_start} – ${inv.period_end}</div>
+      <div style="font-size:13px;color:#8c8279">Issued: ${new Date(inv.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
+    </div>
+  </div>
+  ${lineTable}
+  <div style="border-top:2px solid #1a1714;padding-top:12px;display:flex;justify-content:space-between;align-items:baseline">
+    <span style="font-size:15px;font-weight:700">Total Due</span>
+    <span style="font-family:Georgia,serif;font-size:32px;font-weight:300">$${computedTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+  </div>
+  ${inv.notes ? `<div style="margin-top:20px;font-size:12px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px">${inv.notes}</div>` : ''}
+  <div style="margin-top:28px;padding-top:16px;border-top:1px solid #ede9e1;font-size:11px;color:#8c8279;text-align:center">CoachOS · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+  <script>window.onload=function(){window.print()}<\/script>
+  </body></html>`)
+  w.document.close()
+}
+
+function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
+  invoices: any[]; workspaces: any[]; loading: boolean; onRefresh: () => void
+}) {
+  const [showForm, setShowForm]       = useState(false)
+  const [filterWs, setFilterWs]       = useState('')
+  const [selectedInv, setSelectedInv] = useState<any | null>(null)
+  const [editMode, setEditMode]       = useState(false)
+  const [saving, setSaving]           = useState(false)
+  const [sending, setSending]         = useState<number | null>(null)
+  const [editForm, setEditForm]       = useState<any>({})
+  const [createForm, setCreateForm] = useState({
+    workspace_id: '', plan: 'starter', amount: '29',
+    period_start: '', period_end: '', notes: '', status: 'draft',
+    line_items: [] as any[],
+  })
+  const setC = (k: string, v: any) => setCreateForm(f => ({ ...f, [k]: v }))
+  const setE = (k: string, v: any) => setEditForm((f: any) => ({ ...f, [k]: v }))
+
+  const filtered = filterWs ? invoices.filter((i: any) => i.workspace_id === filterWs) : invoices
+  const totals = {
+    draft:   invoices.filter(i => i.status === 'draft').length,
+    sent:    invoices.filter(i => i.status === 'sent').length,
+    paid:    invoices.filter(i => i.status === 'paid').reduce((s: number, i: any) => s + Number(i.amount), 0),
+    overdue: invoices.filter(i => i.status === 'overdue').length,
+  }
+
+  function openEdit(inv: any) {
+    setEditForm({
+      amount: inv.amount, plan: inv.plan, period_start: inv.period_start,
+      period_end: inv.period_end, notes: inv.notes || '', status: inv.status,
+      line_items: JSON.parse(JSON.stringify(inv.line_items || [])),
+    })
+    setEditMode(true)
+  }
+
+  async function handleCreate() {
+    setSaving(true)
+    const items = createForm.line_items
+    const total = items.length > 0 ? calcTotal(items) : Number(createForm.amount)
+    try {
+      await adminApi.createPlatformInvoice({ ...createForm, amount: String(total), line_items: items })
+      onRefresh(); setShowForm(false)
+      setCreateForm({ workspace_id: '', plan: 'starter', amount: '29', period_start: '', period_end: '', notes: '', status: 'draft', line_items: [] })
+    } catch { } finally { setSaving(false) }
+  }
+
+  async function handleSaveEdit() {
+    if (!selectedInv) return
+    setSaving(true)
+    const items = editForm.line_items || []
+    const total = items.length > 0 ? calcTotal(items) : Number(editForm.amount)
+    try {
+      await adminApi.patchPlatformInvoice(selectedInv.id, { ...editForm, amount: String(total), line_items: items })
+      onRefresh(); setEditMode(false)
+      setSelectedInv({ ...selectedInv, ...editForm, amount: String(total) })
+    } catch { } finally { setSaving(false) }
+  }
+
+  async function handleSend(inv: any) {
+    if (!window.confirm('Send invoice to ' + inv.owner_email + '?')) return
+    setSending(inv.id)
+    try { await adminApi.sendPlatformInvoice(inv.id); onRefresh() }
+    catch { } finally { setSending(null) }
+  }
+
+  async function handleDelete(id: number) {
+    if (!confirm('Delete this invoice?')) return
+    await adminApi.deletePlatformInvoice(id)
+    onRefresh(); if (selectedInv?.id === id) setSelectedInv(null)
+  }
+
+  function LineItemsEditor({ items, onChange }: { items: any[]; onChange: (items: any[]) => void }) {
+    function updateItem(i: number, k: string, v: string) {
+      const next = items.map((li, idx) => idx === i ? { ...li, [k]: v } : li)
+      onChange(next)
+    }
+    function removeItem(i: number) { onChange(items.filter((_, idx) => idx !== i)) }
+    function addItem() { onChange([...items, { description: '', quantity: '1', unit_price: '0' }]) }
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <div className="flabel" style={{ margin: 0 }}>Line Items</div>
+          <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }} onClick={addItem}>+ Add item</button>
+        </div>
+        {items.map((li, i) => (
+          <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+            <input className="finput" style={{ margin: 0, flex: 3 }} placeholder="Description" value={li.description}
+              onChange={e => updateItem(i, 'description', e.target.value)} />
+            <input className="finput" style={{ margin: 0, width: 50 }} placeholder="Qty" type="number" value={li.quantity}
+              onChange={e => updateItem(i, 'quantity', e.target.value)} />
+            <input className="finput" style={{ margin: 0, width: 80 }} placeholder="Price" type="number" value={li.unit_price}
+              onChange={e => updateItem(i, 'unit_price', e.target.value)} />
+            <span style={{ fontSize: 12, color: 'var(--muted)', minWidth: 60, textAlign: 'right' }}>
+              ${(Number(li.quantity || 1) * Number(li.unit_price || 0)).toFixed(2)}
+            </span>
+            <button type="button" onClick={() => removeItem(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 16, lineHeight: 1 }}>×</button>
+          </div>
+        ))}
+        {items.length > 0 && (
+          <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+            Total: ${calcTotal(items).toFixed(2)}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      {/* ── Invoice list ─────────────────────────── */}
+      <div style={{ flex: '0 0 360px' }}>
+        {/* Summary */}
+        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+          {([
+            { label: 'Draft',     value: String(totals.draft),                color: '#8c8279' },
+            { label: 'Sent',      value: String(totals.sent),                 color: '#2d6a9f' },
+            { label: 'Overdue',   value: String(totals.overdue),              color: '#c0392b' },
+            { label: 'Collected', value: '$' + totals.paid.toLocaleString(), color: '#4a7c59' },
+          ] as any[]).map((s: any) => (
+            <div key={s.label} style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: '10px 14px', flex: 1 }}>
+              <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>{s.label}</div>
+              <div style={{ fontSize: 20, fontFamily: 'Cormorant Garamond, serif', fontWeight: 300, color: s.color }}>{s.value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* Toolbar */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+          <select className="fselect" style={{ flex: 1, height: 34, fontSize: 13, margin: 0 }}
+            value={filterWs} onChange={e => setFilterWs(e.target.value)}>
+            <option value="">All workspaces</option>
+            {workspaces.map((ws: any) => <option key={ws.id} value={ws.id}>{ws.name}</option>)}
+          </select>
+          <button className="btn btn-dark btn-sm" onClick={() => setShowForm(v => !v)}>
+            {showForm ? 'Cancel' : '+ New'}
+          </button>
+        </div>
+
+        {/* Create form */}
+        {showForm && (
+          <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: 16, marginBottom: 12 }}>
+            <div className="fgroup">
+              <div className="flabel">Workspace *</div>
+              <select className="fselect" style={{ margin: 0 }} value={createForm.workspace_id}
+                onChange={e => { const ws = workspaces.find((w: any) => w.id === e.target.value); setC('workspace_id', e.target.value); if (ws) setC('plan', ws.plan) }}>
+                <option value="">— select —</option>
+                {workspaces.map((ws: any) => <option key={ws.id} value={ws.id}>{ws.name} ({ws.plan})</option>)}
+              </select>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div className="fgroup" style={{ flex: 1 }}>
+                <div className="flabel">Period start</div>
+                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_start} onChange={e => setC('period_start', e.target.value)} />
+              </div>
+              <div className="fgroup" style={{ flex: 1 }}>
+                <div className="flabel">Period end</div>
+                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_end} onChange={e => setC('period_end', e.target.value)} />
+              </div>
+            </div>
+            <div className="fgroup">
+              <LineItemsEditor items={createForm.line_items} onChange={v => setC('line_items', v)} />
+            </div>
+            {createForm.line_items.length === 0 && (
+              <div className="fgroup">
+                <div className="flabel">Amount ($)</div>
+                <input className="finput" style={{ margin: 0 }} type="number" value={createForm.amount} onChange={e => setC('amount', e.target.value)} />
+              </div>
+            )}
+            <div className="fgroup">
+              <div className="flabel">Notes</div>
+              <input className="finput" style={{ margin: 0 }} value={createForm.notes} onChange={e => setC('notes', e.target.value)} placeholder="Optional…" />
+            </div>
+            <button className="btn btn-dark btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={handleCreate}
+              disabled={saving || !createForm.workspace_id || !createForm.period_start || !createForm.period_end}>
+              {saving ? 'Creating…' : 'Create Invoice'}
+            </button>
+          </div>
+        )}
+
+        {/* Invoice cards */}
+        {loading ? (
+          <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center' }}>Loading…</div>
+        ) : filtered.length === 0 ? (
+          <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center', fontSize: 13 }}>No invoices yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {filtered.map((inv: any) => (
+              <div key={inv.id}
+                onClick={() => { setSelectedInv((p: any) => p?.id === inv.id ? null : inv); setEditMode(false) }}
+                style={{
+                  background: 'var(--white)',
+                  border: '1px solid ' + (selectedInv?.id === inv.id ? 'var(--ink)' : 'var(--border)'),
+                  borderLeft: '4px solid ' + (inv.status === 'paid' ? '#4a7c59' : inv.status === 'overdue' ? '#c0392b' : inv.status === 'sent' ? '#2d6a9f' : '#ede9e1'),
+                  padding: '12px 16px', cursor: 'pointer',
+                }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.workspace_name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{inv.period_start} → {inv.period_end}</div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, fontWeight: 300 }}>${Number(inv.amount).toLocaleString()}</div>
+                    <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── Invoice PDF preview / edit ────────────── */}
+      {selectedInv && (
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Action bar */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            {!editMode ? (
+              <>
+                <button className="btn btn-outline btn-sm" onClick={() => openEdit(selectedInv)}>✏ Edit</button>
+                <button className="btn btn-dark btn-sm" onClick={() => handleSend(selectedInv)} disabled={sending === selectedInv.id}>
+                  {sending === selectedInv.id ? 'Sending…' : '✉ Send to owner'}
+                </button>
+                <button className="btn btn-outline btn-sm" onClick={() => printInvoice(selectedInv)}>🖨 Print / PDF</button>
+                <button className="btn btn-outline btn-sm" style={{ color: '#c0392b', borderColor: '#f5c6c2' }}
+                  onClick={() => handleDelete(selectedInv.id)}>Delete</button>
+                <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setSelectedInv(null)}>✕</button>
+              </>
+            ) : (
+              <>
+                <button className="btn btn-dark btn-sm" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
+                <button className="btn btn-outline btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
+              </>
+            )}
+          </div>
+
+          {editMode ? (
+            /* ── Edit form ── */
+            <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: 20 }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div className="fgroup" style={{ flex: 1 }}>
+                  <div className="flabel">Period start</div>
+                  <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_start} onChange={e => setE('period_start', e.target.value)} />
+                </div>
+                <div className="fgroup" style={{ flex: 1 }}>
+                  <div className="flabel">Period end</div>
+                  <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_end} onChange={e => setE('period_end', e.target.value)} />
+                </div>
+                <div className="fgroup" style={{ flex: 1 }}>
+                  <div className="flabel">Status</div>
+                  <select className="fselect" style={{ margin: 0 }} value={editForm.status} onChange={e => setE('status', e.target.value)}>
+                    {['draft','sent','paid','overdue'].map(s => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="fgroup">
+                <LineItemsEditor items={editForm.line_items || []} onChange={v => setE('line_items', v)} />
+              </div>
+              {(!editForm.line_items || editForm.line_items.length === 0) && (
+                <div className="fgroup">
+                  <div className="flabel">Amount ($)</div>
+                  <input className="finput" style={{ margin: 0 }} type="number" value={editForm.amount} onChange={e => setE('amount', e.target.value)} />
+                </div>
+              )}
+              <div className="fgroup">
+                <div className="flabel">Notes</div>
+                <textarea className="finput" style={{ margin: 0 }} rows={2} value={editForm.notes} onChange={e => setE('notes', e.target.value)} placeholder="Optional…" />
+              </div>
+            </div>
+          ) : (
+            /* ── PDF preview ── */
+            <div style={{ border: '1px solid var(--border)', boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
+              <InvoicePDF inv={selectedInv} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
