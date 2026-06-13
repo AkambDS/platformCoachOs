@@ -263,7 +263,7 @@ export default function AdminWorkspace() {
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 4 }}>
-                Showing latest {(errors as any[]).length} error{(errors as any[]).length !== 1 ? 's' : ''} (most recent first)
+                Showing latest {(errors as any[]).length} error{(errors as any[]).length !== 1 ? 's' : ''} (most recent first, max 10)
               </div>
               {(errors as any[]).map((e: any) => (
                 <div key={e.id} style={{
@@ -329,7 +329,7 @@ export default function AdminWorkspace() {
         {tab === 'audit' && (
           <div>
             <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
-              Last 200 access events — notes, files, goals
+              Last 10 access events — notes, files, goals
             </div>
             {(auditLogs as any[]).length === 0 ? (
               <div style={{ color: 'var(--muted)', fontSize: 13 }}>No access events recorded yet.</div>
@@ -346,25 +346,33 @@ export default function AdminWorkspace() {
                     </tr>
                   </thead>
                   <tbody>
-                    {(auditLogs as any[]).map((log: any, i: number) => (
-                      <tr key={log.id} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--white)' : 'var(--surface)' }}>
-                        <td style={{ padding: '9px 16px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>{timeAgo(log.created_at)}</td>
-                        <td style={{ padding: '9px 16px' }}>{log.user_name || '—'}</td>
-                        <td style={{ padding: '9px 16px' }}>{log.client_name || '—'}</td>
-                        <td style={{ padding: '9px 16px' }}>
-                          <span style={{
-                            padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
-                            background: log.action.includes('deleted') ? '#fde8e8' : log.action.includes('downloaded') || log.action.includes('uploaded') ? '#e8f0ff' : '#f0f0f0',
-                            color: log.action.includes('deleted') ? '#c0392b' : log.action.includes('downloaded') || log.action.includes('uploaded') ? '#2563eb' : 'var(--ink)',
-                          }}>
-                            {log.action.replace(/_/g, ' ')}
-                          </span>
-                        </td>
-                        <td style={{ padding: '9px 16px', color: 'var(--muted)', fontSize: 12 }}>
-                          {log.metadata?.file_name || ''}
-                        </td>
-                      </tr>
-                    ))}
+                    {(auditLogs as any[]).map((log: any, i: number) => {
+                      const meta = log.metadata || {}
+                      const detail = meta.file_name
+                        || meta.note_preview
+                        || (Object.keys(meta).length > 0
+                            ? Object.entries(meta).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')
+                            : '')
+                      return (
+                        <tr key={log.id} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--white)' : 'var(--surface)' }}>
+                          <td style={{ padding: '9px 16px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>{timeAgo(log.created_at)}</td>
+                          <td style={{ padding: '9px 16px' }}>{log.user_name || '—'}</td>
+                          <td style={{ padding: '9px 16px' }}>{log.client_name || '—'}</td>
+                          <td style={{ padding: '9px 16px' }}>
+                            <span style={{
+                              padding: '2px 8px', borderRadius: 10, fontSize: 11, fontWeight: 600,
+                              background: log.action.includes('deleted') ? '#fde8e8' : log.action.includes('downloaded') || log.action.includes('uploaded') ? '#e8f0ff' : '#f0f0f0',
+                              color: log.action.includes('deleted') ? '#c0392b' : log.action.includes('downloaded') || log.action.includes('uploaded') ? '#2563eb' : 'var(--ink)',
+                            }}>
+                              {log.action.replace(/_/g, ' ')}
+                            </span>
+                          </td>
+                          <td style={{ padding: '9px 16px', color: 'var(--muted)', fontSize: 12, maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {detail || '—'}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>

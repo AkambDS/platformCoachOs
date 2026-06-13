@@ -217,6 +217,42 @@ export default function AdminDashboard() {
                   <StatCard label="Errors Logged" value={stats.total_errors} sub={stats.total_errors > 0 ? 'check error logs' : 'all clear'} />
                 </div>
 
+                {stats.audit_logs?.length > 0 && (
+                  <>
+                    <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
+                      Recent activity
+                    </div>
+                    <div style={{
+                      background: 'var(--white)', border: '1px solid var(--border)',
+                      marginBottom: 24, overflow: 'hidden',
+                    }}>
+                      {(stats.audit_logs as any[]).map((log: any, i: number) => (
+                        <div key={log.id} style={{
+                          display: 'flex', alignItems: 'baseline', gap: 12,
+                          padding: '9px 16px',
+                          borderBottom: i < stats.audit_logs.length - 1 ? '1px solid var(--border)' : undefined,
+                        }}>
+                          <span style={{
+                            fontSize: 11, fontFamily: 'monospace', background: 'var(--paper)',
+                            padding: '1px 6px', borderRadius: 3, color: 'var(--ink)',
+                            textTransform: 'uppercase', letterSpacing: '.04em', flexShrink: 0,
+                          }}>{log.action}</span>
+                          <span style={{ fontSize: 13, color: 'var(--ink)', flex: 1, minWidth: 0 }}>
+                            <span style={{ color: 'var(--muted)', textTransform: 'capitalize' }}>{log.table.replace(/_/g, ' ')}</span>
+                            {log.user && log.user !== '—' && (
+                              <> · <span style={{ fontWeight: 500 }}>{log.user}</span></>
+                            )}
+                            {log.workspace_name && (
+                              <> · <span style={{ color: 'var(--muted)', fontSize: 12 }}>{log.workspace_name}</span></>
+                            )}
+                          </span>
+                          <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0 }}>{timeAgo(log.created_at)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                )}
+
                 <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.06em' }}>
                   Recent workspaces
                 </div>
@@ -806,29 +842,75 @@ export default function AdminDashboard() {
 
 
 // ── Platform Invoice System ───────────────────────────────────────────────────
-const PLAN_PRICES: Record<string, number> = { trial: 0, starter: 29, growth: 79, enterprise: 199 }
 const INV_STATUS_COLORS: Record<string, string> = {
   draft: 'pill-grey', sent: 'pill-blue', paid: 'pill-green', overdue: 'pill-red',
 }
+const PAYMENT_METHODS = ['bank_transfer', 'cash', 'card', 'other']
 
 function calcTotal(lineItems: any[]) {
   if (!lineItems?.length) return 0
   return lineItems.reduce((s, li) => s + Number(li.quantity || 1) * Number(li.unit_price || 0), 0)
 }
 
-function InvoicePDF({ inv, logoUrl }: { inv: any; logoUrl?: string }) {
+// Defined at module scope so React never unmounts it mid-keystroke
+function LineItemsEditor({ items, onChange }: { items: any[]; onChange: (items: any[]) => void }) {
+  function updateItem(i: number, k: string, v: string) {
+    onChange(items.map((li, idx) => idx === i ? { ...li, [k]: v } : li))
+  }
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+        <div className="flabel" style={{ margin: 0 }}>Line Items</div>
+        <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }}
+          onClick={() => onChange([...items, { description: '', quantity: '1', unit_price: '0' }])}>
+          + Add item
+        </button>
+      </div>
+      {items.map((li, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+          <input className="finput" style={{ margin: 0, flex: 3 }} placeholder="Description" value={li.description}
+            onChange={e => updateItem(i, 'description', e.target.value)} />
+          <input className="finput" style={{ margin: 0, width: 52 }} placeholder="Qty" type="number" value={li.quantity}
+            onChange={e => updateItem(i, 'quantity', e.target.value)} />
+          <input className="finput" style={{ margin: 0, width: 80 }} placeholder="Price" type="number" value={li.unit_price}
+            onChange={e => updateItem(i, 'unit_price', e.target.value)} />
+          <span style={{ fontSize: 12, color: 'var(--muted)', minWidth: 58, textAlign: 'right' }}>
+            ${(Number(li.quantity || 1) * Number(li.unit_price || 0)).toFixed(2)}
+          </span>
+          <button type="button" onClick={() => onChange(items.filter((_, idx) => idx !== i))}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 16, lineHeight: 1 }}>×</button>
+        </div>
+      ))}
+      {items.length > 0 && (
+        <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
+          Total: ${calcTotal(items).toFixed(2)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InvoicePDF({ inv }: { inv: any }) {
   const lineItems: any[] = inv.line_items || []
   const computedTotal = lineItems.length > 0 ? calcTotal(lineItems) : Number(inv.amount)
+  const logoSrc      = inv.logo_data || inv.workspace_logo || ''
+  const billedName   = inv.billed_to_name  || inv.workspace_name
+  const billedEmail  = inv.billed_to_email || inv.owner_email
+  const billedExtra  = inv.billed_to_extra || ''
+  const showBranding = inv.show_platform_text !== false
   return (
     <div style={{ fontFamily: 'Helvetica,Arial,sans-serif', color: '#1a1714', padding: '32px 28px', background: '#fff', minHeight: 420 }}>
-      {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 28, paddingBottom: 20, borderBottom: '2px solid #1a1714' }}>
         <div>
-          {(logoUrl || inv.workspace_logo) && (
-            <img src={logoUrl || inv.workspace_logo} alt="" style={{ maxHeight: 44, maxWidth: 140, objectFit: 'contain', display: 'block', marginBottom: 8 }} />
+          {logoSrc && (
+            <img src={logoSrc} alt="" style={{ maxHeight: 44, maxWidth: 140, objectFit: 'contain', display: 'block', marginBottom: 8 }} />
           )}
-          <div style={{ fontFamily: 'Georgia,serif', fontSize: 20, fontWeight: 300 }}>CoachOS</div>
-          <div style={{ fontSize: 11, color: '#8c8279' }}>Coaching Management Platform</div>
+          {showBranding && (
+            <>
+              <div style={{ fontFamily: 'Georgia,serif', fontSize: 20, fontWeight: 300 }}>CoachOS</div>
+              <div style={{ fontSize: 11, color: '#8c8279' }}>Coaching Management Platform</div>
+            </>
+          )}
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontFamily: 'Georgia,serif', fontSize: 28, fontWeight: 300, color: '#1a1714' }}>INVOICE</div>
@@ -836,25 +918,27 @@ function InvoicePDF({ inv, logoUrl }: { inv: any; logoUrl?: string }) {
         </div>
       </div>
 
-      {/* Billed to / period */}
       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 28 }}>
         <div>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 6 }}>Billed to</div>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>{inv.workspace_name}</div>
-          <div style={{ fontSize: 13, color: '#8c8279' }}>{inv.owner_email}</div>
-          <div style={{ fontSize: 12, color: '#8c8279', marginTop: 4, textTransform: 'capitalize' }}>{inv.plan} plan</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>{billedName}</div>
+          {billedEmail && <div style={{ fontSize: 13, color: '#8c8279' }}>{billedEmail}</div>}
+          {billedExtra && billedExtra.split('\n').map((line: string, i: number) => (
+            <div key={i} style={{ fontSize: 12, color: '#8c8279', marginTop: i === 0 ? 4 : 1 }}>{line}</div>
+          ))}
         </div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: '#8c8279', marginBottom: 6 }}>Details</div>
           <div style={{ fontSize: 13 }}>Period: {inv.period_start} – {inv.period_end}</div>
           <div style={{ fontSize: 13, color: '#8c8279' }}>Issued: {new Date(inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-          <div style={{ marginTop: 6 }}>
-            <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
-          </div>
+          {inv.status !== 'draft' && (
+            <div style={{ marginTop: 6 }}>
+              <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Line items */}
       {lineItems.length > 0 ? (
         <table style={{ width: '100%', borderCollapse: 'collapse', marginBottom: 20 }}>
           <thead>
@@ -880,7 +964,6 @@ function InvoicePDF({ inv, logoUrl }: { inv: any; logoUrl?: string }) {
         <div style={{ borderTop: '1px solid #ede9e1', marginBottom: 20 }} />
       )}
 
-      {/* Total */}
       <div style={{ borderTop: '2px solid #1a1714', paddingTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
         <span style={{ fontSize: 15, fontWeight: 700 }}>Total Due</span>
         <span style={{ fontFamily: 'Georgia,serif', fontSize: 32, fontWeight: 300 }}>${computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
@@ -902,91 +985,160 @@ function printInvoice(inv: any) {
   if (!w) return
   const lineItems: any[] = inv.line_items || []
   const computedTotal = lineItems.length > 0 ? calcTotal(lineItems) : Number(inv.amount)
+  const logoSrc = inv.logo_data || inv.workspace_logo || ''
   const rows = lineItems.map((li: any) =>
     `<tr><td style="padding:10px;border-bottom:1px solid #ede9e1">${li.description}</td>
      <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:center">${li.quantity}</td>
      <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:right">$${Number(li.unit_price).toFixed(2)}</td>
-     <td style="padding:10px;border-bottom:1px solid #ede9e1;font-weight:600;text-align:right">$${(Number(li.quantity)*Number(li.unit_price)).toFixed(2)}</td></tr>`
+     <td style="padding:10px;border-bottom:1px solid #ede9e1;font-weight:600;text-align:right">$${(Number(li.quantity) * Number(li.unit_price)).toFixed(2)}</td></tr>`
   ).join('')
   const lineTable = lineItems.length > 0 ? `
     <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
       <thead><tr style="background:#f8f6f2">
-        <th style="padding:8px 10px;text-align:left;font-size:11px;color:#8c8279;text-transform:uppercase;letter-spacing:.06em">Description</th>
+        <th style="padding:8px 10px;text-align:left;font-size:11px;color:#8c8279;text-transform:uppercase">Description</th>
         <th style="padding:8px 10px;text-align:center;font-size:11px;color:#8c8279;width:60px">Qty</th>
         <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Unit</th>
         <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Total</th>
-      </tr></thead>
-      <tbody>${rows}</tbody>
+      </tr></thead><tbody>${rows}</tbody>
     </table>` : '<div style="border-top:1px solid #ede9e1;margin-bottom:20px"></div>'
-  const logoHtml = inv.workspace_logo ? `<img src="${inv.workspace_logo}" style="max-height:44px;max-width:140px;object-fit:contain;display:block;margin-bottom:8px">` : ''
+  const showBranding  = inv.show_platform_text !== false
+  const billedName    = inv.billed_to_name  || inv.workspace_name
+  const billedEmail   = inv.billed_to_email || inv.owner_email
+  const billedExtra   = inv.billed_to_extra || ''
+  const logoHtml      = logoSrc ? `<img src="${logoSrc}" style="max-height:44px;max-width:140px;object-fit:contain;display:block;margin-bottom:8px">` : ''
+  const brandingHtml  = showBranding ? `<div style="font-family:Georgia,serif;font-size:20px;font-weight:300">CoachOS</div><div style="font-size:11px;color:#8c8279">Coaching Management Platform</div>` : ''
+  const extraHtml     = billedExtra ? billedExtra.split('\n').map((l: string) => `<div style="font-size:12px;color:#8c8279;margin-top:2px">${l}</div>`).join('') : ''
   w.document.write(`<!doctype html><html><head><title>Invoice #${inv.id}</title>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{font-family:Helvetica,Arial,sans-serif;color:#1a1714;padding:40px;max-width:700px;margin:0 auto}
-    @media print{body{padding:20px}}
-  </style></head><body>
+  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Helvetica,Arial,sans-serif;color:#1a1714;padding:40px;max-width:700px;margin:0 auto}@media print{body{padding:20px}}</style>
+  </head><body>
   <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:2px solid #1a1714;margin-bottom:28px">
-    <div>${logoHtml}<div style="font-family:Georgia,serif;font-size:20px;font-weight:300">CoachOS</div><div style="font-size:11px;color:#8c8279">Coaching Management Platform</div></div>
+    <div>${logoHtml}${brandingHtml}</div>
     <div style="text-align:right"><div style="font-family:Georgia,serif;font-size:28px;font-weight:300">INVOICE</div><div style="font-size:12px;color:#8c8279">#${inv.id}</div></div>
   </div>
   <div style="display:flex;justify-content:space-between;margin-bottom:28px">
     <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8c8279;margin-bottom:6px">Billed to</div>
-      <div style="font-size:14px;font-weight:600">${inv.workspace_name}</div>
-      <div style="font-size:13px;color:#8c8279">${inv.owner_email}</div>
-      <div style="font-size:12px;color:#8c8279;margin-top:4px;text-transform:capitalize">${inv.plan} plan</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Billed to</div>
+      <div style="font-size:14px;font-weight:600">${billedName}</div>
+      ${billedEmail ? `<div style="font-size:13px;color:#8c8279">${billedEmail}</div>` : ''}
+      ${extraHtml}
     </div>
     <div style="text-align:right">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#8c8279;margin-bottom:6px">Details</div>
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Details</div>
       <div style="font-size:13px">Period: ${inv.period_start} – ${inv.period_end}</div>
-      <div style="font-size:13px;color:#8c8279">Issued: ${new Date(inv.created_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'})}</div>
+      <div style="font-size:13px;color:#8c8279">Issued: ${new Date(inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
     </div>
   </div>
   ${lineTable}
   <div style="border-top:2px solid #1a1714;padding-top:12px;display:flex;justify-content:space-between;align-items:baseline">
     <span style="font-size:15px;font-weight:700">Total Due</span>
-    <span style="font-family:Georgia,serif;font-size:32px;font-weight:300">$${computedTotal.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</span>
+    <span style="font-family:Georgia,serif;font-size:32px;font-weight:300">$${computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
   </div>
   ${inv.notes ? `<div style="margin-top:20px;font-size:12px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px">${inv.notes}</div>` : ''}
-  <div style="margin-top:28px;padding-top:16px;border-top:1px solid #ede9e1;font-size:11px;color:#8c8279;text-align:center">CoachOS · Generated ${new Date().toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</div>
+  <div style="margin-top:28px;padding-top:16px;border-top:1px solid #ede9e1;font-size:11px;color:#8c8279;text-align:center">CoachOS · Generated ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
   <script>window.onload=function(){window.print()}<\/script>
   </body></html>`)
   w.document.close()
 }
 
+const BLANK_CREATE = {
+  workspace_id: '', plan: 'starter', amount: '29',
+  period_start: '', period_end: '', notes: '', status: 'draft',
+  line_items: [] as any[], is_recurring: false, recurrence_months: 1,
+  logo_data: '', show_platform_text: true,
+  billed_to_name: '', billed_to_email: '', billed_to_extra: '',
+}
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+function LogoUpload({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+      {value && (
+        <img src={value} alt="logo" style={{ maxHeight: 36, maxWidth: 120, objectFit: 'contain', border: '1px solid var(--border)', padding: 4 }} />
+      )}
+      <label style={{ cursor: 'pointer' }}>
+        <span className="btn btn-outline btn-sm" style={{ fontSize: 11 }}>
+          {value ? 'Change logo' : '+ Upload logo'}
+        </span>
+        <input type="file" accept="image/*" style={{ display: 'none' }}
+          onChange={async e => {
+            const file = e.target.files?.[0]
+            if (!file) return
+            const b64 = await readFileAsBase64(file)
+            onChange(b64)
+            e.target.value = ''
+          }} />
+      </label>
+      {value && (
+        <button type="button" onClick={() => onChange('')}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 12 }}>
+          Remove
+        </button>
+      )}
+    </div>
+  )
+}
+
 function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
   invoices: any[]; workspaces: any[]; loading: boolean; onRefresh: () => void
 }) {
+  const [searchText, setSearchText]     = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
   const [showForm, setShowForm]       = useState(false)
-  const [filterWs, setFilterWs]       = useState('')
   const [selectedInv, setSelectedInv] = useState<any | null>(null)
-  const [editMode, setEditMode]       = useState(false)
+  const [detailTab, setDetailTab]     = useState<'preview' | 'edit' | 'payments'>('preview')
   const [saving, setSaving]           = useState(false)
   const [sending, setSending]         = useState<number | null>(null)
   const [editForm, setEditForm]       = useState<any>({})
-  const [createForm, setCreateForm] = useState({
-    workspace_id: '', plan: 'starter', amount: '29',
-    period_start: '', period_end: '', notes: '', status: 'draft',
-    line_items: [] as any[],
-  })
+  const [createForm, setCreateForm]   = useState({ ...BLANK_CREATE })
+  const [paymentForm, setPaymentForm] = useState({ amount: '', payment_date: new Date().toISOString().slice(0, 10), method: 'bank_transfer', notes: '' })
+  const [savingPayment, setSavingPayment] = useState(false)
+
   const setC = (k: string, v: any) => setCreateForm(f => ({ ...f, [k]: v }))
   const setE = (k: string, v: any) => setEditForm((f: any) => ({ ...f, [k]: v }))
+  const setP = (k: string, v: any) => setPaymentForm(f => ({ ...f, [k]: v }))
 
-  const filtered = filterWs ? invoices.filter((i: any) => i.workspace_id === filterWs) : invoices
+  const filtered = invoices.filter((i: any) => {
+    if (searchText && !i.workspace_name.toLowerCase().includes(searchText.toLowerCase())) return false
+    if (filterStatus && i.status !== filterStatus) return false
+    return true
+  })
+
   const totals = {
     draft:   invoices.filter(i => i.status === 'draft').length,
     sent:    invoices.filter(i => i.status === 'sent').length,
-    paid:    invoices.filter(i => i.status === 'paid').reduce((s: number, i: any) => s + Number(i.amount), 0),
     overdue: invoices.filter(i => i.status === 'overdue').length,
+    paid:    invoices.filter(i => i.status === 'paid').reduce((s: number, i: any) => s + Number(i.amount), 0),
+  }
+
+  function selectInv(inv: any) {
+    setSelectedInv((p: any) => p?.id === inv.id ? null : inv)
+    setDetailTab('preview')
+    setEditForm({})
   }
 
   function openEdit(inv: any) {
     setEditForm({
-      amount: inv.amount, plan: inv.plan, period_start: inv.period_start,
-      period_end: inv.period_end, notes: inv.notes || '', status: inv.status,
+      amount: inv.amount, plan: inv.plan,
+      period_start: inv.period_start, period_end: inv.period_end,
+      notes: inv.notes || '', status: inv.status,
       line_items: JSON.parse(JSON.stringify(inv.line_items || [])),
+      is_recurring: inv.is_recurring || false,
+      recurrence_months: inv.recurrence_months || 1,
+      logo_data: inv.logo_data || '',
+      show_platform_text: inv.show_platform_text !== false,
+      billed_to_name: inv.billed_to_name || '',
+      billed_to_email: inv.billed_to_email || '',
+      billed_to_extra: inv.billed_to_extra || '',
     })
-    setEditMode(true)
+    setDetailTab('edit')
   }
 
   async function handleCreate() {
@@ -994,9 +1146,12 @@ function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
     const items = createForm.line_items
     const total = items.length > 0 ? calcTotal(items) : Number(createForm.amount)
     try {
-      await adminApi.createPlatformInvoice({ ...createForm, amount: String(total), line_items: items })
-      onRefresh(); setShowForm(false)
-      setCreateForm({ workspace_id: '', plan: 'starter', amount: '29', period_start: '', period_end: '', notes: '', status: 'draft', line_items: [] })
+      const res = await adminApi.createPlatformInvoice({ ...createForm, amount: String(total), line_items: items })
+      onRefresh()
+      setShowForm(false)
+      setCreateForm({ ...BLANK_CREATE })
+      setSelectedInv(res.data)
+      setDetailTab('preview')
     } catch { } finally { setSaving(false) }
   }
 
@@ -1006,9 +1161,10 @@ function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
     const items = editForm.line_items || []
     const total = items.length > 0 ? calcTotal(items) : Number(editForm.amount)
     try {
-      await adminApi.patchPlatformInvoice(selectedInv.id, { ...editForm, amount: String(total), line_items: items })
-      onRefresh(); setEditMode(false)
-      setSelectedInv({ ...selectedInv, ...editForm, amount: String(total) })
+      const res = await adminApi.patchPlatformInvoice(selectedInv.id, { ...editForm, amount: String(total), line_items: items })
+      onRefresh()
+      setSelectedInv(res.data)
+      setDetailTab('preview')
     } catch { } finally { setSaving(false) }
   }
 
@@ -1022,214 +1178,494 @@ function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
   async function handleDelete(id: number) {
     if (!confirm('Delete this invoice?')) return
     await adminApi.deletePlatformInvoice(id)
-    onRefresh(); if (selectedInv?.id === id) setSelectedInv(null)
+    onRefresh()
+    if (selectedInv?.id === id) setSelectedInv(null)
   }
 
-  function LineItemsEditor({ items, onChange }: { items: any[]; onChange: (items: any[]) => void }) {
-    function updateItem(i: number, k: string, v: string) {
-      const next = items.map((li, idx) => idx === i ? { ...li, [k]: v } : li)
-      onChange(next)
-    }
-    function removeItem(i: number) { onChange(items.filter((_, idx) => idx !== i)) }
-    function addItem() { onChange([...items, { description: '', quantity: '1', unit_price: '0' }]) }
-    return (
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-          <div className="flabel" style={{ margin: 0 }}>Line Items</div>
-          <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }} onClick={addItem}>+ Add item</button>
-        </div>
-        {items.map((li, i) => (
-          <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-            <input className="finput" style={{ margin: 0, flex: 3 }} placeholder="Description" value={li.description}
-              onChange={e => updateItem(i, 'description', e.target.value)} />
-            <input className="finput" style={{ margin: 0, width: 50 }} placeholder="Qty" type="number" value={li.quantity}
-              onChange={e => updateItem(i, 'quantity', e.target.value)} />
-            <input className="finput" style={{ margin: 0, width: 80 }} placeholder="Price" type="number" value={li.unit_price}
-              onChange={e => updateItem(i, 'unit_price', e.target.value)} />
-            <span style={{ fontSize: 12, color: 'var(--muted)', minWidth: 60, textAlign: 'right' }}>
-              ${(Number(li.quantity || 1) * Number(li.unit_price || 0)).toFixed(2)}
-            </span>
-            <button type="button" onClick={() => removeItem(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 16, lineHeight: 1 }}>×</button>
-          </div>
-        ))}
-        {items.length > 0 && (
-          <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
-            Total: ${calcTotal(items).toFixed(2)}
-          </div>
-        )}
-      </div>
-    )
+  async function handleRecordPayment() {
+    if (!selectedInv || !paymentForm.amount || !paymentForm.payment_date) return
+    setSavingPayment(true)
+    try {
+      const res = await adminApi.createPlatformPayment(selectedInv.id, paymentForm)
+      onRefresh()
+      // update selectedInv payments locally
+      const newPayment = { id: res.data.id, amount: paymentForm.amount, payment_date: paymentForm.payment_date, method: paymentForm.method, notes: paymentForm.notes, created_at: new Date().toISOString() }
+      setSelectedInv((prev: any) => ({
+        ...prev,
+        status: res.data.invoice_status,
+        payments: [...(prev.payments || []), newPayment],
+        paid_total: String(Number(prev.paid_total || 0) + Number(paymentForm.amount)),
+      }))
+      setPaymentForm({ amount: '', payment_date: new Date().toISOString().slice(0, 10), method: 'bank_transfer', notes: '' })
+    } catch { } finally { setSavingPayment(false) }
   }
+
+  async function handleDeletePayment(paymentId: number) {
+    if (!selectedInv) return
+    if (!confirm('Remove this payment?')) return
+    await adminApi.deletePlatformPayment(selectedInv.id, paymentId)
+    onRefresh()
+    setSelectedInv((prev: any) => {
+      const removed = prev.payments.find((p: any) => p.id === paymentId)
+      return {
+        ...prev,
+        payments: prev.payments.filter((p: any) => p.id !== paymentId),
+        paid_total: String(Math.max(0, Number(prev.paid_total || 0) - Number(removed?.amount || 0))),
+      }
+    })
+  }
+
+  const statusTabStyle = (active: boolean) => ({
+    padding: '6px 14px', fontSize: 12, fontWeight: active ? 600 : 400,
+    color: active ? 'var(--ink)' : 'var(--muted)',
+    borderBottom: active ? '2px solid var(--gold)' : '2px solid transparent',
+    cursor: 'pointer', background: 'none', border: 'none',
+    borderBottomStyle: 'solid' as const,
+  })
 
   return (
-    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-      {/* ── Invoice list ─────────────────────────── */}
-      <div style={{ flex: '0 0 360px' }}>
-        {/* Summary */}
-        <div style={{ display: 'flex', gap: 10, marginBottom: 16 }}>
+    <div style={{ display: 'flex', gap: 0, alignItems: 'flex-start', minHeight: 0 }}>
+
+      {/* ── Left: list panel ─────────────────────── */}
+      <div style={{ flex: '0 0 320px', borderRight: '1px solid var(--border)', paddingRight: 20, marginRight: 20 }}>
+        {/* Summary chips */}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
           {([
-            { label: 'Draft',     value: String(totals.draft),                color: '#8c8279' },
-            { label: 'Sent',      value: String(totals.sent),                 color: '#2d6a9f' },
-            { label: 'Overdue',   value: String(totals.overdue),              color: '#c0392b' },
-            { label: 'Collected', value: '$' + totals.paid.toLocaleString(), color: '#4a7c59' },
+            { label: 'Draft',     value: String(totals.draft),               color: '#8c8279', status: 'draft'   },
+            { label: 'Sent',      value: String(totals.sent),                color: '#2d6a9f', status: 'sent'    },
+            { label: 'Overdue',   value: String(totals.overdue),             color: '#c0392b', status: 'overdue' },
+            { label: 'Collected', value: '$' + totals.paid.toLocaleString(), color: '#4a7c59', status: 'paid'    },
           ] as any[]).map((s: any) => (
-            <div key={s.label} style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: '10px 14px', flex: 1 }}>
-              <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>{s.label}</div>
-              <div style={{ fontSize: 20, fontFamily: 'Cormorant Garamond, serif', fontWeight: 300, color: s.color }}>{s.value}</div>
+            <div key={s.label}
+              onClick={() => setFilterStatus(fs => fs === s.status ? '' : s.status)}
+              style={{
+                background: filterStatus === s.status ? '#f8f6f2' : 'var(--white)',
+                border: '1px solid ' + (filterStatus === s.status ? 'var(--ink)' : 'var(--border)'),
+                padding: '7px 8px', flex: 1, cursor: 'pointer',
+              }}>
+              <div style={{ fontSize: 9, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 2 }}>{s.label}</div>
+              <div style={{ fontSize: 16, fontFamily: 'Cormorant Garamond, serif', fontWeight: 300, color: s.color }}>{s.value}</div>
             </div>
           ))}
         </div>
 
-        {/* Toolbar */}
+        {/* Search row */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-          <select className="fselect" style={{ flex: 1, height: 34, fontSize: 13, margin: 0 }}
-            value={filterWs} onChange={e => setFilterWs(e.target.value)}>
-            <option value="">All workspaces</option>
-            {workspaces.map((ws: any) => <option key={ws.id} value={ws.id}>{ws.name}</option>)}
-          </select>
-          <button className="btn btn-dark btn-sm" onClick={() => setShowForm(v => !v)}>
-            {showForm ? 'Cancel' : '+ New'}
+          <div style={{ flex: 1, position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontSize: 13, pointerEvents: 'none' }}>⌕</span>
+            <input
+              className="finput"
+              style={{ margin: 0, width: '100%', paddingLeft: 28 }}
+              placeholder="Search workspace…"
+              value={searchText}
+              onChange={e => setSearchText(e.target.value)}
+            />
+          </div>
+          <button
+            className={showForm ? 'btn btn-outline btn-sm' : 'btn btn-dark btn-sm'}
+            style={{ whiteSpace: 'nowrap' }}
+            onClick={() => {
+              const next = !showForm
+              setShowForm(next)
+              if (next) {
+                setSelectedInv(null)
+                const match = workspaces.find((w: any) =>
+                  searchText && w.name.toLowerCase().includes(searchText.toLowerCase())
+                )
+                if (match) { setC('workspace_id', match.id); setC('plan', match.plan) }
+                else { setC('workspace_id', ''); setC('plan', 'starter') }
+              }
+            }}>
+            {showForm ? '✕ Cancel' : '+ New'}
           </button>
         </div>
 
-        {/* Create form */}
-        {showForm && (
-          <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: 16, marginBottom: 12 }}>
-            <div className="fgroup">
-              <div className="flabel">Workspace *</div>
-              <select className="fselect" style={{ margin: 0 }} value={createForm.workspace_id}
-                onChange={e => { const ws = workspaces.find((w: any) => w.id === e.target.value); setC('workspace_id', e.target.value); if (ws) setC('plan', ws.plan) }}>
-                <option value="">— select —</option>
-                {workspaces.map((ws: any) => <option key={ws.id} value={ws.id}>{ws.name} ({ws.plan})</option>)}
-              </select>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div className="fgroup" style={{ flex: 1 }}>
-                <div className="flabel">Period start</div>
-                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_start} onChange={e => setC('period_start', e.target.value)} />
-              </div>
-              <div className="fgroup" style={{ flex: 1 }}>
-                <div className="flabel">Period end</div>
-                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_end} onChange={e => setC('period_end', e.target.value)} />
-              </div>
-            </div>
-            <div className="fgroup">
-              <LineItemsEditor items={createForm.line_items} onChange={v => setC('line_items', v)} />
-            </div>
-            {createForm.line_items.length === 0 && (
-              <div className="fgroup">
-                <div className="flabel">Amount ($)</div>
-                <input className="finput" style={{ margin: 0 }} type="number" value={createForm.amount} onChange={e => setC('amount', e.target.value)} />
-              </div>
-            )}
-            <div className="fgroup">
-              <div className="flabel">Notes</div>
-              <input className="finput" style={{ margin: 0 }} value={createForm.notes} onChange={e => setC('notes', e.target.value)} placeholder="Optional…" />
-            </div>
-            <button className="btn btn-dark btn-sm" style={{ width: '100%', justifyContent: 'center' }} onClick={handleCreate}
-              disabled={saving || !createForm.workspace_id || !createForm.period_start || !createForm.period_end}>
-              {saving ? 'Creating…' : 'Create Invoice'}
-            </button>
-          </div>
-        )}
-
         {/* Invoice cards */}
         {loading ? (
-          <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center' }}>Loading…</div>
+          <div style={{ color: 'var(--muted)', padding: 32, textAlign: 'center' }}>Loading…</div>
         ) : filtered.length === 0 ? (
-          <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center', fontSize: 13 }}>No invoices yet.</div>
+          <div style={{ color: 'var(--muted)', padding: 32, textAlign: 'center', fontSize: 13 }}>No invoices found.</div>
         ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {filtered.map((inv: any) => (
-              <div key={inv.id}
-                onClick={() => { setSelectedInv((p: any) => p?.id === inv.id ? null : inv); setEditMode(false) }}
-                style={{
-                  background: 'var(--white)',
-                  border: '1px solid ' + (selectedInv?.id === inv.id ? 'var(--ink)' : 'var(--border)'),
-                  borderLeft: '4px solid ' + (inv.status === 'paid' ? '#4a7c59' : inv.status === 'overdue' ? '#c0392b' : inv.status === 'sent' ? '#2d6a9f' : '#ede9e1'),
-                  padding: '12px 16px', cursor: 'pointer',
-                }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.workspace_name}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{inv.period_start} → {inv.period_end}</div>
-                  </div>
-                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, fontWeight: 300 }}>${Number(inv.amount).toLocaleString()}</div>
-                    <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {filtered.map((inv: any) => {
+              const paidAmt     = Number(inv.paid_total || 0)
+              const totalAmt    = Number(inv.amount)
+              const outstanding = Math.max(0, totalAmt - paidAmt)
+              const isActive    = selectedInv?.id === inv.id && !showForm
+              return (
+                <div key={inv.id}
+                  onClick={() => { selectInv(inv); setShowForm(false) }}
+                  style={{
+                    background: 'var(--white)',
+                    border: '1px solid ' + (isActive ? 'var(--ink)' : 'var(--border)'),
+                    borderLeft: '4px solid ' + (inv.status === 'paid' ? '#4a7c59' : inv.status === 'overdue' ? '#c0392b' : inv.status === 'sent' ? '#2d6a9f' : '#ccc'),
+                    padding: '10px 12px', cursor: 'pointer',
+                  }}>
+                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontWeight: 600, fontSize: 13, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{inv.workspace_name}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{inv.period_start} → {inv.period_end}</div>
+                      {inv.is_recurring && (
+                        <div style={{ fontSize: 10, color: '#2d6a9f', marginTop: 2 }}>↻ every {inv.recurrence_months}mo</div>
+                      )}
+                    </div>
+                    <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                      <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 300 }}>${totalAmt.toLocaleString()}</div>
+                      {paidAmt > 0 && paidAmt < totalAmt && (
+                        <div style={{ fontSize: 10, color: '#b8922e' }}>${outstanding.toLocaleString()} out</div>
+                      )}
+                      <span className={'pill ' + (INV_STATUS_COLORS[inv.status] || 'pill-grey')} style={{ fontSize: 10 }}>{inv.status}</span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
 
-      {/* ── Invoice PDF preview / edit ────────────── */}
-      {selectedInv && (
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {/* Action bar */}
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-            {!editMode ? (
-              <>
-                <button className="btn btn-outline btn-sm" onClick={() => openEdit(selectedInv)}>✏ Edit</button>
-                <button className="btn btn-dark btn-sm" onClick={() => handleSend(selectedInv)} disabled={sending === selectedInv.id}>
-                  {sending === selectedInv.id ? 'Sending…' : '✉ Send to owner'}
-                </button>
-                <button className="btn btn-outline btn-sm" onClick={() => printInvoice(selectedInv)}>🖨 Print / PDF</button>
-                <button className="btn btn-outline btn-sm" style={{ color: '#c0392b', borderColor: '#f5c6c2' }}
-                  onClick={() => handleDelete(selectedInv.id)}>Delete</button>
-                <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setSelectedInv(null)}>✕</button>
-              </>
-            ) : (
-              <>
-                <button className="btn btn-dark btn-sm" onClick={handleSaveEdit} disabled={saving}>{saving ? 'Saving…' : 'Save changes'}</button>
-                <button className="btn btn-outline btn-sm" onClick={() => setEditMode(false)}>Cancel</button>
-              </>
-            )}
-          </div>
+      {/* ── Right panel: create form or invoice detail ── */}
+      <div style={{ flex: 1, minWidth: 0 }}>
 
-          {editMode ? (
-            /* ── Edit form ── */
-            <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: 20 }}>
-              <div style={{ display: 'flex', gap: 12 }}>
-                <div className="fgroup" style={{ flex: 1 }}>
-                  <div className="flabel">Period start</div>
-                  <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_start} onChange={e => setE('period_start', e.target.value)} />
-                </div>
-                <div className="fgroup" style={{ flex: 1 }}>
-                  <div className="flabel">Period end</div>
-                  <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_end} onChange={e => setE('period_end', e.target.value)} />
-                </div>
-                <div className="fgroup" style={{ flex: 1 }}>
-                  <div className="flabel">Status</div>
-                  <select className="fselect" style={{ margin: 0 }} value={editForm.status} onChange={e => setE('status', e.target.value)}>
-                    {['draft','sent','paid','overdue'].map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
+        {/* CREATE FORM */}
+        {showForm && (
+          <div style={{ background: 'var(--white)', border: '1px solid var(--border)', padding: 24 }}>
+            <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300, marginBottom: 20 }}>New Invoice</div>
+
+            <div className="fgroup">
+              <div className="flabel">Workspace *</div>
+              <select className="fselect" style={{ margin: 0 }} value={createForm.workspace_id}
+                onChange={e => {
+                  const ws = workspaces.find((w: any) => w.id === e.target.value)
+                  setC('workspace_id', e.target.value)
+                  if (ws) setC('plan', ws.plan)
+                }}>
+                <option value="">— select workspace —</option>
+                {workspaces.map((ws: any) => (
+                  <option key={ws.id} value={ws.id}>{ws.name} · {ws.plan}</option>
+                ))}
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', gap: 12 }}>
+              <div className="fgroup" style={{ flex: 1 }}>
+                <div className="flabel">Period start *</div>
+                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_start}
+                  onChange={e => setC('period_start', e.target.value)} />
               </div>
+              <div className="fgroup" style={{ flex: 1 }}>
+                <div className="flabel">Period end *</div>
+                <input className="finput" style={{ margin: 0 }} type="date" value={createForm.period_end}
+                  onChange={e => setC('period_end', e.target.value)} />
+              </div>
+            </div>
+
+            <div className="fgroup">
+              <LineItemsEditor items={createForm.line_items} onChange={v => setC('line_items', v)} />
+            </div>
+
+            {createForm.line_items.length === 0 && (
               <div className="fgroup">
-                <LineItemsEditor items={editForm.line_items || []} onChange={v => setE('line_items', v)} />
+                <div className="flabel">Amount ($)</div>
+                <input className="finput" style={{ margin: 0 }} type="number" value={createForm.amount}
+                  onChange={e => setC('amount', e.target.value)} />
               </div>
-              {(!editForm.line_items || editForm.line_items.length === 0) && (
-                <div className="fgroup">
-                  <div className="flabel">Amount ($)</div>
-                  <input className="finput" style={{ margin: 0 }} type="number" value={editForm.amount} onChange={e => setE('amount', e.target.value)} />
+            )}
+
+            <div className="fgroup">
+              <div className="flabel">Notes</div>
+              <input className="finput" style={{ margin: 0 }} value={createForm.notes}
+                onChange={e => setC('notes', e.target.value)} placeholder="Optional…" />
+            </div>
+
+            <div className="fgroup">
+              <div className="flabel">Invoice Logo</div>
+              <LogoUpload value={createForm.logo_data} onChange={v => setC('logo_data', v)} />
+            </div>
+
+            {/* Billed To overrides */}
+            <div style={{ background: '#f8f6f2', border: '1px solid var(--border)', padding: '10px 12px', marginBottom: 10 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 8 }}>Billed To (optional overrides)</div>
+              <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
+                <div style={{ flex: 1 }}>
+                  <div className="flabel" style={{ marginBottom: 3 }}>Name</div>
+                  <input className="finput" style={{ margin: 0 }} placeholder="Company name (defaults to workspace)"
+                    value={createForm.billed_to_name} onChange={e => setC('billed_to_name', e.target.value)} />
                 </div>
+                <div style={{ flex: 1 }}>
+                  <div className="flabel" style={{ marginBottom: 3 }}>Email</div>
+                  <input className="finput" style={{ margin: 0 }} placeholder="email (defaults to owner)"
+                    value={createForm.billed_to_email} onChange={e => setC('billed_to_email', e.target.value)} />
+                </div>
+              </div>
+              <div className="flabel" style={{ marginBottom: 3 }}>Address / extra lines</div>
+              <textarea className="finput" style={{ margin: 0 }} rows={2} placeholder={'123 Main St\nCity, State'}
+                value={createForm.billed_to_extra} onChange={e => setC('billed_to_extra', e.target.value)} />
+            </div>
+
+            <div style={{ marginBottom: 12 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={createForm.show_platform_text}
+                  onChange={e => setC('show_platform_text', e.target.checked)} />
+                Show "CoachOS · Coaching Management Platform" text
+              </label>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 20 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="checkbox" checked={createForm.is_recurring}
+                  onChange={e => setC('is_recurring', e.target.checked)} />
+                Recurring invoice
+              </label>
+              {createForm.is_recurring && (
+                <select className="fselect" style={{ margin: 0 }} value={createForm.recurrence_months}
+                  onChange={e => setC('recurrence_months', Number(e.target.value))}>
+                  {[1, 2, 3, 6, 12].map(m => <option key={m} value={m}>Every {m} month{m > 1 ? 's' : ''}</option>)}
+                </select>
               )}
-              <div className="fgroup">
-                <div className="flabel">Notes</div>
-                <textarea className="finput" style={{ margin: 0 }} rows={2} value={editForm.notes} onChange={e => setE('notes', e.target.value)} placeholder="Optional…" />
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-dark btn-sm"
+                onClick={handleCreate}
+                disabled={saving || !createForm.workspace_id || !createForm.period_start || !createForm.period_end}>
+                {saving ? 'Creating…' : 'Create Invoice'}
+              </button>
+              <button className="btn btn-outline btn-sm"
+                onClick={() => { setShowForm(false); setCreateForm({ ...BLANK_CREATE }) }}>
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* INVOICE DETAIL */}
+        {!showForm && selectedInv && (
+          <>
+            {/* Action bar */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', background: 'var(--white)', border: '1px solid var(--border)', borderBottom: 'none', padding: '10px 14px' }}>
+              <button className="btn btn-outline btn-sm" onClick={() => openEdit(selectedInv)}>✏ Edit</button>
+              <button className="btn btn-dark btn-sm" onClick={() => handleSend(selectedInv)} disabled={sending === selectedInv.id}>
+                {sending === selectedInv.id ? 'Sending…' : '✉ Send to owner'}
+              </button>
+              <button className="btn btn-outline btn-sm" onClick={() => printInvoice(selectedInv)}>🖨 Print / PDF</button>
+              <button className="btn btn-outline btn-sm" style={{ color: '#c0392b', borderColor: '#f5c6c2' }}
+                onClick={() => handleDelete(selectedInv.id)}>Delete</button>
+              <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setSelectedInv(null)}>✕</button>
+            </div>
+
+            {/* Sub-tabs */}
+            <div style={{ display: 'flex', background: 'var(--white)', borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)', borderBottom: '1px solid var(--border)' }}>
+              {(['preview', 'edit', 'payments'] as const).map(t => (
+                <button key={t} style={statusTabStyle(detailTab === t)} onClick={() => {
+                  if (t === 'edit') openEdit(selectedInv)
+                  else setDetailTab(t)
+                }}>
+                  {t === 'preview' ? 'Preview' : t === 'edit' ? '✏ Edit' : `Payments (${(selectedInv.payments || []).length})`}
+                </button>
+              ))}
+              {selectedInv.is_recurring && (
+                <span style={{ marginLeft: 'auto', padding: '6px 14px', fontSize: 11, color: '#2d6a9f', alignSelf: 'center' }}>
+                  ↻ Recurring · every {selectedInv.recurrence_months}mo
+                </span>
+              )}
+            </div>
+
+            {/* Preview */}
+            {detailTab === 'preview' && (
+              <div style={{ border: '1px solid var(--border)', borderTop: 'none', boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
+                <InvoicePDF inv={selectedInv} />
               </div>
-            </div>
-          ) : (
-            /* ── PDF preview ── */
-            <div style={{ border: '1px solid var(--border)', boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
-              <InvoicePDF inv={selectedInv} />
-            </div>
-          )}
-        </div>
-      )}
+            )}
+
+            {/* Edit */}
+            {detailTab === 'edit' && (
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: 'none', padding: 20 }}>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <div className="fgroup" style={{ flex: 1, minWidth: 140 }}>
+                    <div className="flabel">Period start</div>
+                    <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_start}
+                      onChange={e => setE('period_start', e.target.value)} />
+                  </div>
+                  <div className="fgroup" style={{ flex: 1, minWidth: 140 }}>
+                    <div className="flabel">Period end</div>
+                    <input className="finput" style={{ margin: 0 }} type="date" value={editForm.period_end}
+                      onChange={e => setE('period_end', e.target.value)} />
+                  </div>
+                  <div className="fgroup" style={{ flex: 1, minWidth: 120 }}>
+                    <div className="flabel">Status</div>
+                    <select className="fselect" style={{ margin: 0 }} value={editForm.status}
+                      onChange={e => setE('status', e.target.value)}>
+                      {['draft', 'sent', 'paid', 'overdue'].map(s => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div className="fgroup">
+                  <LineItemsEditor items={editForm.line_items || []} onChange={v => setE('line_items', v)} />
+                </div>
+                {(!editForm.line_items || editForm.line_items.length === 0) && (
+                  <div className="fgroup">
+                    <div className="flabel">Amount ($)</div>
+                    <input className="finput" style={{ margin: 0 }} type="number" value={editForm.amount}
+                      onChange={e => setE('amount', e.target.value)} />
+                  </div>
+                )}
+                <div className="fgroup">
+                  <div className="flabel">Notes</div>
+                  <textarea className="finput" style={{ margin: 0 }} rows={2} value={editForm.notes}
+                    onChange={e => setE('notes', e.target.value)} placeholder="Optional…" />
+                </div>
+                <div className="fgroup">
+                  <div className="flabel">Invoice Logo</div>
+                  <LogoUpload value={editForm.logo_data || ''} onChange={v => setE('logo_data', v)} />
+                </div>
+
+                {/* Billed To overrides */}
+                <div style={{ background: '#f8f6f2', border: '1px solid var(--border)', borderRadius: 2, padding: '12px 14px', marginBottom: 14 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>Billed To</div>
+                  <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <div className="flabel" style={{ marginBottom: 3 }}>Name</div>
+                      <input className="finput" style={{ margin: 0 }} placeholder={selectedInv?.workspace_name || 'Company name'}
+                        value={editForm.billed_to_name || ''}
+                        onChange={e => setE('billed_to_name', e.target.value)} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div className="flabel" style={{ marginBottom: 3 }}>Email</div>
+                      <input className="finput" style={{ margin: 0 }} placeholder={selectedInv?.owner_email || 'email@example.com'}
+                        value={editForm.billed_to_email || ''}
+                        onChange={e => setE('billed_to_email', e.target.value)} />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="flabel" style={{ marginBottom: 3 }}>Address / extra lines</div>
+                    <textarea className="finput" style={{ margin: 0 }} rows={2}
+                      placeholder={'123 Main St\nCity, State 00000'}
+                      value={editForm.billed_to_extra || ''}
+                      onChange={e => setE('billed_to_extra', e.target.value)} />
+                  </div>
+                </div>
+
+                {/* Branding toggle */}
+                <div style={{ marginBottom: 14 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={editForm.show_platform_text !== false}
+                      onChange={e => setE('show_platform_text', e.target.checked)} />
+                    Show "CoachOS · Coaching Management Platform" text on invoice
+                  </label>
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                    <input type="checkbox" checked={!!editForm.is_recurring}
+                      onChange={e => setE('is_recurring', e.target.checked)} />
+                    Recurring
+                  </label>
+                  {editForm.is_recurring && (
+                    <select className="fselect" style={{ margin: 0 }} value={editForm.recurrence_months}
+                      onChange={e => setE('recurrence_months', Number(e.target.value))}>
+                      {[1, 2, 3, 6, 12].map(m => <option key={m} value={m}>Every {m} month{m > 1 ? 's' : ''}</option>)}
+                    </select>
+                  )}
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button className="btn btn-dark btn-sm" onClick={handleSaveEdit} disabled={saving}>
+                    {saving ? 'Saving…' : 'Save changes'}
+                  </button>
+                  <button className="btn btn-outline btn-sm" onClick={() => setDetailTab('preview')}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            {/* Payments */}
+            {detailTab === 'payments' && (
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderTop: 'none', padding: 20 }}>
+                {(() => {
+                  const total       = Number(selectedInv.amount)
+                  const paidTotal   = Number(selectedInv.paid_total || 0)
+                  const outstanding = Math.max(0, total - paidTotal)
+                  return (
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 20 }}>
+                      {[
+                        { label: 'Invoice Total', val: total,       color: 'var(--ink)' },
+                        { label: 'Paid',          val: paidTotal,   color: '#4a7c59'    },
+                        { label: 'Outstanding',   val: outstanding, color: outstanding > 0 ? '#c0392b' : '#4a7c59' },
+                      ].map(r => (
+                        <div key={r.label} style={{ flex: 1, background: 'var(--paper)', border: '1px solid var(--border)', padding: '10px 14px' }}>
+                          <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 3 }}>{r.label}</div>
+                          <div style={{ fontSize: 20, fontFamily: 'Cormorant Garamond, serif', fontWeight: 300, color: r.color }}>
+                            ${r.val.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )
+                })()}
+                <div style={{ background: '#f8f6f2', border: '1px solid var(--border)', padding: 14, marginBottom: 20 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', marginBottom: 10 }}>Record Payment</div>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <div style={{ flex: '0 0 100px' }}>
+                      <div className="flabel" style={{ marginBottom: 4 }}>Amount ($)</div>
+                      <input className="finput" style={{ margin: 0 }} type="number" placeholder="0.00"
+                        value={paymentForm.amount} onChange={e => setP('amount', e.target.value)} />
+                    </div>
+                    <div style={{ flex: '0 0 150px' }}>
+                      <div className="flabel" style={{ marginBottom: 4 }}>Date</div>
+                      <input className="finput" style={{ margin: 0 }} type="date"
+                        value={paymentForm.payment_date} onChange={e => setP('payment_date', e.target.value)} />
+                    </div>
+                    <div style={{ flex: '0 0 130px' }}>
+                      <div className="flabel" style={{ marginBottom: 4 }}>Method</div>
+                      <select className="fselect" style={{ margin: 0 }} value={paymentForm.method}
+                        onChange={e => setP('method', e.target.value)}>
+                        {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m.replace('_', ' ')}</option>)}
+                      </select>
+                    </div>
+                    <div style={{ flex: 1, minWidth: 100 }}>
+                      <div className="flabel" style={{ marginBottom: 4 }}>Notes</div>
+                      <input className="finput" style={{ margin: 0 }} placeholder="Optional"
+                        value={paymentForm.notes} onChange={e => setP('notes', e.target.value)} />
+                    </div>
+                    <button className="btn btn-dark btn-sm"
+                      disabled={savingPayment || !paymentForm.amount || !paymentForm.payment_date}
+                      onClick={handleRecordPayment}>
+                      {savingPayment ? 'Recording…' : 'Record'}
+                    </button>
+                  </div>
+                </div>
+                {(selectedInv.payments || []).length === 0 ? (
+                  <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', padding: '20px 0' }}>No payments recorded yet.</div>
+                ) : (
+                  <table className="tbl">
+                    <thead><tr><th>Date</th><th>Amount</th><th>Method</th><th>Notes</th><th></th></tr></thead>
+                    <tbody>
+                      {[...(selectedInv.payments || [])].sort((a: any, b: any) => b.payment_date.localeCompare(a.payment_date)).map((p: any) => (
+                        <tr key={p.id}>
+                          <td style={{ fontSize: 13 }}>{p.payment_date}</td>
+                          <td style={{ fontSize: 13, fontWeight: 600, color: '#4a7c59' }}>${Number(p.amount).toFixed(2)}</td>
+                          <td style={{ fontSize: 12, color: 'var(--muted)', textTransform: 'capitalize' }}>{p.method.replace('_', ' ')}</td>
+                          <td style={{ fontSize: 12, color: 'var(--muted)' }}>{p.notes || '—'}</td>
+                          <td>
+                            <button onClick={() => handleDeletePayment(p.id)}
+                              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, lineHeight: 1 }}>×</button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {/* Empty state */}
+        {!showForm && !selectedInv && (
+          <div style={{ color: 'var(--muted)', fontSize: 13, padding: '60px 20px', textAlign: 'center' }}>
+            Select an invoice to preview, or click <strong>+ New</strong> to create one.
+          </div>
+        )}
+      </div>
     </div>
   )
 }
