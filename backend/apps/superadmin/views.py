@@ -8,6 +8,7 @@ from django.utils import timezone
 from datetime import timedelta
 
 from apps.accounts.models import Workspace, User, WorkspaceInvitation, WorkspaceRegistrationToken, AuditLog, ErrorLog
+from .models import PlatformInvoice
 from apps.pipeline.models import PipelineStageConfig
 from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig
 from apps.activities.models import Activity
@@ -960,3 +961,179 @@ def admin_banner_detail(request, pk):
         banner.is_active = bool(request.data["is_active"])
     banner.save()
     return Response(_banner_data(banner))
+
+
+# ── Platform Invoices (CoachOS billing to workspace owners) ───────────────────
+
+def _platform_invoice_data(inv):
+    from django.conf import settings as dj_settings
+    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
+    logo_url = f"{backend_base}/api/settings/logo/{inv.workspace_id}/" if inv.workspace.logo_data else ""
+    return {
+        "id":             inv.id,
+        "workspace_id":   str(inv.workspace_id),
+        "workspace_name": inv.workspace.name,
+        "workspace_logo": logo_url,
+        "owner_email":    User.objects.filter(workspace=inv.workspace, role="business_owner").values_list("email", flat=True).first() or "",
+        "amount":         str(inv.amount),
+        "plan":           inv.plan,
+        "period_start":   inv.period_start.isoformat(),
+        "period_end":     inv.period_end.isoformat(),
+        "notes":          inv.notes,
+        "line_items":     inv.line_items or [],
+        "status":         inv.status,
+        "created_at":     inv.created_at.isoformat(),
+    }
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoices(request):
+    """GET /api/superadmin/platform-invoices/ — list all platform invoices.
+       POST — create a new platform invoice."""
+    if request.method == "POST":
+        ws_id = request.data.get("workspace_id")
+        try:
+            ws = Workspace.objects.get(pk=ws_id)
+        except Workspace.DoesNotExist:
+            return Response({"detail": "Workspace not found."}, status=404)
+        from datetime import date as _date
+        def _parse_date(val):
+            if not val:
+                return None
+            return val if isinstance(val, _date) else _date.fromisoformat(str(val))
+
+        inv = PlatformInvoice.objects.create(
+            workspace    = ws,
+            amount       = request.data.get("amount", 0),
+            plan         = request.data.get("plan", ws.plan),
+            period_start = _parse_date(request.data.get("period_start")),
+            period_end   = _parse_date(request.data.get("period_end")),
+            notes        = request.data.get("notes", ""),
+            status       = request.data.get("status", "draft"),
+            line_items   = request.data.get("line_items", []),
+        )
+        return Response(_platform_invoice_data(inv), status=201)
+
+    workspace_id = request.query_params.get("workspace_id")
+    qs = PlatformInvoice.objects.select_related("workspace").all()
+    if workspace_id:
+        qs = qs.filter(workspace_id=workspace_id)
+    return Response([_platform_invoice_data(i) for i in qs])
+
+
+@api_view(["GET", "PATCH", "DELETE"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoice_detail(request, pk):
+    """GET/PATCH/DELETE /api/superadmin/platform-invoices/{pk}/"""
+    try:
+        inv = PlatformInvoice.objects.select_related("workspace").get(pk=pk)
+    except PlatformInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        inv.delete()
+        return Response(status=204)
+
+    if request.method == "PATCH":
+        for field in ("amount", "plan", "period_start", "period_end", "notes", "status", "line_items"):
+            if field in request.data:
+                setattr(inv, field, request.data[field])
+        inv.save()
+
+    return Response(_platform_invoice_data(inv))
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoice_send(request, pk):
+    """POST /api/superadmin/platform-invoices/{pk}/send/ — email invoice to workspace owner."""
+    try:
+        inv = PlatformInvoice.objects.select_related("workspace").get(pk=pk)
+    except PlatformInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    owner_email = User.objects.filter(workspace=inv.workspace, role="business_owner").values_list("email", flat=True).first()
+    if not owner_email:
+        return Response({"detail": "No business owner found for this workspace."}, status=400)
+
+    from django.core.mail import EmailMultiAlternatives
+    from django.conf import settings as dj_settings
+
+    subject  = f"CoachOS Invoice #{inv.id} — {inv.workspace.name}"
+    period   = f"{inv.period_start.strftime('%b %d, %Y')} – {inv.period_end.strftime('%b %d, %Y')}"
+
+    from django.conf import settings as dj_settings
+    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
+    logo_url = f"{backend_base}/api/settings/logo/{inv.workspace_id}/" if inv.workspace.logo_data else ""
+
+    line_items = inv.line_items or []
+    items_html = ""
+    if line_items:
+        rows = "".join(
+            f"<tr>"
+            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px'>{li.get('description','')}</td>"
+            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:center'>{li.get('quantity',1)}</td>"
+            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:right'>${float(li.get('unit_price',0)):.2f}</td>"
+            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;font-weight:600;text-align:right'>${float(li.get('quantity',1))*float(li.get('unit_price',0)):.2f}</td>"
+            f"</tr>"
+            for li in line_items
+        )
+        items_html = f"""
+        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;margin:24px 0 8px">Services</div>
+        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
+          <thead><tr>
+            <th style="font-size:11px;color:#8c8279;text-align:left;padding-bottom:8px;border-bottom:1px solid #ede9e1">Description</th>
+            <th style="font-size:11px;color:#8c8279;text-align:center;padding-bottom:8px;border-bottom:1px solid #ede9e1">Qty</th>
+            <th style="font-size:11px;color:#8c8279;text-align:right;padding-bottom:8px;border-bottom:1px solid #ede9e1">Unit price</th>
+            <th style="font-size:11px;color:#8c8279;text-align:right;padding-bottom:8px;border-bottom:1px solid #ede9e1">Total</th>
+          </tr></thead>
+          <tbody>{rows}</tbody>
+        </table>"""
+
+    logo_html = f'<img src="{logo_url}" style="max-height:40px;max-width:140px;object-fit:contain;margin-bottom:8px;" /><br>' if logo_url else ""
+
+    html = f"""
+    <div style="font-family:Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1a1714;">
+      {logo_html}
+      <div style="font-family:Georgia,serif;font-size:24px;font-weight:300;margin-bottom:2px;">CoachOS</div>
+      <div style="font-size:12px;color:#8c8279;margin-bottom:24px;">Coaching Management Platform</div>
+      <div style="display:flex;justify-content:space-between;margin-bottom:24px;">
+        <div>
+          <div style="font-size:11px;color:#8c8279;text-transform:uppercase;letter-spacing:.06em">Invoice #</div>
+          <div style="font-size:20px;font-family:Georgia,serif;font-weight:300">{inv.id}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:11px;color:#8c8279">Issued: {inv.created_at.strftime('%b %d, %Y')}</div>
+          <div style="font-size:11px;color:#8c8279">Period: {period}</div>
+        </div>
+      </div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
+        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279;">Billed to</td>
+            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;font-weight:600;text-align:right;">{inv.workspace.name}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279;">Plan</td>
+            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:right;text-transform:capitalize;">{inv.plan}</td></tr>
+      </table>
+      {items_html}
+      <table style="width:100%;border-collapse:collapse;margin-top:8px;">
+        <tr><td style="padding:12px 0;font-size:16px;font-weight:700;border-top:2px solid #1a1714">Total Due</td>
+            <td style="padding:12px 0;font-size:26px;font-weight:300;text-align:right;font-family:Georgia,serif;border-top:2px solid #1a1714">${inv.amount}</td></tr>
+      </table>
+      {f'<p style="font-size:13px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px;margin-top:20px;">{inv.notes}</p>' if inv.notes else ''}
+      <p style="font-size:12px;color:#8c8279;margin-top:32px;padding-top:16px;border-top:1px solid #ede9e1">Questions? Reply to this email or contact your CoachOS administrator.</p>
+    </div>
+    """
+    plain_items = "\n".join(f"  - {li.get('description','')} x{li.get('quantity',1)} @ ${li.get('unit_price',0)}" for li in line_items)
+    plain = f"CoachOS Invoice #{inv.id}\nWorkspace: {inv.workspace.name}\nPlan: {inv.plan}\nPeriod: {period}\n{plain_items}\nTotal: ${inv.amount}\n{('Notes: ' + inv.notes) if inv.notes else ''}"
+
+    msg = EmailMultiAlternatives(
+        subject=subject, body=plain,
+        from_email=dj_settings.DEFAULT_FROM_EMAIL,
+        to=[owner_email],
+    )
+    msg.attach_alternative(html, "text/html")
+    msg.send()
+
+    inv.status = "sent"
+    inv.save(update_fields=["status"])
+    return Response({"detail": f"Invoice sent to {owner_email}.", "status": "sent"})

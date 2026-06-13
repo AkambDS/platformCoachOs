@@ -205,19 +205,28 @@ def register(request):
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-    # Workspaces created via invite token start inactive — superadmin must activate.
-    user = serializer.save(is_active=not bool(reg_token))
+    # Workspaces created via invite token start active — owner can log in immediately.
+    user = serializer.save(is_active=True)
     if reg_token:
         reg_token.used = True
         reg_token.used_by = user.workspace
         reg_token.save(update_fields=["used", "used_by"])
-        return Response({
-            "pending": True,
-            "detail": (
-                "Your workspace has been created and is pending activation. "
-                "Our team will review and activate it shortly — you'll then be able to log in."
-            ),
-        }, status=status.HTTP_201_CREATED)
+
+    # Issue JWT and set auth cookies so the owner is logged in immediately.
+    from rest_framework_simplejwt.tokens import RefreshToken
+    refresh = RefreshToken.for_user(user)
+    refresh["workspace_id"] = str(user.workspace_id)
+    refresh["role"]         = user.role
+    refresh["full_name"]    = user.full_name
+
+    response = Response({
+        "user":      UserSerializer(user).data,
+        "workspace": WorkspaceSerializer(user.workspace).data,
+    }, status=status.HTTP_201_CREATED)
+    _set_auth_cookies(response, str(refresh.access_token), str(refresh))
+
+    if reg_token:
+        return response
 
     # Open registration (REGISTRATION_OPEN=True) — log in immediately.
     from rest_framework_simplejwt.tokens import RefreshToken
