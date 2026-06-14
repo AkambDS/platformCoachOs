@@ -847,45 +847,98 @@ const INV_STATUS_COLORS: Record<string, string> = {
 }
 const PAYMENT_METHODS = ['bank_transfer', 'cash', 'card', 'other']
 
+function lineItemTotal(li: any): number {
+  const qty  = Number(li.quantity || 1)
+  const rate = Number(li.rate || li.unit_price || 0)
+  if (li.line_type === 'fixed') return qty * rate
+  if (li.hours !== undefined || li.rate !== undefined) return qty * Number(li.hours || 0) * rate
+  return qty * rate  // legacy quantity×unit_price
+}
+
 function calcTotal(lineItems: any[]) {
   if (!lineItems?.length) return 0
-  return lineItems.reduce((s, li) => s + Number(li.quantity || 1) * Number(li.unit_price || 0), 0)
+  return lineItems.reduce((s, li) => s + lineItemTotal(li), 0)
 }
+
+const BLANK_HOURLY = { description: '', quantity: '1', hours: '', rate: '', line_type: 'hourly' }
+const BLANK_FIXED  = { description: '', quantity: '1', rate: '', line_type: 'fixed' }
 
 // Defined at module scope so React never unmounts it mid-keystroke
 function LineItemsEditor({ items, onChange }: { items: any[]; onChange: (items: any[]) => void }) {
-  function updateItem(i: number, k: string, v: string) {
+  function update(i: number, k: string, v: string) {
     onChange(items.map((li, idx) => idx === i ? { ...li, [k]: v } : li))
+  }
+  function toggleType(i: number) {
+    const li = items[i]
+    const next = li.line_type === 'fixed' ? 'hourly' : 'fixed'
+    onChange(items.map((x, idx) => idx === i ? { ...x, line_type: next } : x))
   }
   return (
     <div>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-        <div className="flabel" style={{ margin: 0 }}>Line Items</div>
-        <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }}
-          onClick={() => onChange([...items, { description: '', quantity: '1', unit_price: '0' }])}>
-          + Add item
-        </button>
-      </div>
-      {items.map((li, i) => (
-        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
-          <input className="finput" style={{ margin: 0, flex: 3 }} placeholder="Description" value={li.description}
-            onChange={e => updateItem(i, 'description', e.target.value)} />
-          <input className="finput" style={{ margin: 0, width: 52 }} placeholder="Qty" type="number" value={li.quantity}
-            onChange={e => updateItem(i, 'quantity', e.target.value)} />
-          <input className="finput" style={{ margin: 0, width: 80 }} placeholder="Price" type="number" value={li.unit_price}
-            onChange={e => updateItem(i, 'unit_price', e.target.value)} />
-          <span style={{ fontSize: 12, color: 'var(--muted)', minWidth: 58, textAlign: 'right' }}>
-            ${(Number(li.quantity || 1) * Number(li.unit_price || 0)).toFixed(2)}
-          </span>
-          <button type="button" onClick={() => onChange(items.filter((_, idx) => idx !== i))}
-            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 16, lineHeight: 1 }}>×</button>
-        </div>
-      ))}
       {items.length > 0 && (
-        <div style={{ textAlign: 'right', fontSize: 13, fontWeight: 600, marginTop: 6, paddingTop: 6, borderTop: '1px solid var(--border)' }}>
-          Total: ${calcTotal(items).toFixed(2)}
+        <div style={{ display: 'flex', gap: 6, marginBottom: 4, alignItems: 'center' }}>
+          <div style={{ width: 52, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Type</div>
+          <div style={{ flex: 2, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em' }}>Description</div>
+          <div style={{ width: 70, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', textAlign: 'center' }}>Qty</div>
+          <div style={{ width: 60, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', textAlign: 'center' }}>Hours</div>
+          <div style={{ width: 72, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', textAlign: 'center' }}>Rate</div>
+          <div style={{ minWidth: 64, fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.05em', textAlign: 'right' }}>Total</div>
+          <div style={{ width: 20 }} />
         </div>
       )}
+      {items.map((li, i) => {
+        const isFixed = li.line_type === 'fixed'
+        const total   = isFixed
+          ? Number(li.quantity || 1) * Number(li.rate || 0)
+          : Number(li.quantity || 1) * Number(li.hours || 0) * Number(li.rate || 0)
+        return (
+          <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'center' }}>
+            {/* Type toggle */}
+            <button type="button"
+              onClick={() => toggleType(i)}
+              style={{
+                width: 52, fontSize: 10, fontWeight: 600, cursor: 'pointer', padding: '3px 6px',
+                borderRadius: 3, border: '1px solid var(--border)',
+                background: isFixed ? '#e8f5e9' : '#e3f0fb',
+                color: isFixed ? '#2d6a4f' : '#1a5276',
+              }}>
+              {isFixed ? '$ Fixed' : '$/hr'}
+            </button>
+            <input className="finput" style={{ margin: 0, flex: 2 }} placeholder="Description"
+              value={li.description || ''} onChange={e => update(i, 'description', e.target.value)} />
+            <input className="finput" style={{ margin: 0, width: 70 }} placeholder="1" type="number" min="1"
+              value={li.quantity || ''} onChange={e => update(i, 'quantity', e.target.value)} />
+            {/* Hours — hidden for fixed */}
+            {isFixed
+              ? <div style={{ width: 60, textAlign: 'center', fontSize: 12, color: 'var(--muted)' }}>—</div>
+              : <input className="finput" style={{ margin: 0, width: 60 }} placeholder="0" type="number" min="0"
+                  value={li.hours || ''} onChange={e => update(i, 'hours', e.target.value)} />
+            }
+            <input className="finput" style={{ margin: 0, width: 72 }} placeholder="0.00" type="number" min="0" step="0.01"
+              value={li.rate || ''} onChange={e => update(i, 'rate', e.target.value)} />
+            <span style={{ fontSize: 12, color: 'var(--ink)', minWidth: 64, textAlign: 'right', fontWeight: 600 }}>
+              ${total.toFixed(2)}
+            </span>
+            <button type="button" onClick={() => onChange(items.filter((_, idx) => idx !== i))}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#c0392b', fontSize: 16, lineHeight: 1, width: 20 }}>×</button>
+          </div>
+        )
+      })}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 8 }}>
+        <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }}
+          onClick={() => onChange([...items, { ...BLANK_HOURLY }])}>
+          + Hourly item
+        </button>
+        <button type="button" className="btn btn-outline btn-sm" style={{ fontSize: 11 }}
+          onClick={() => onChange([...items, { ...BLANK_FIXED }])}>
+          + Fixed item
+        </button>
+        {items.length > 0 && (
+          <span style={{ marginLeft: 'auto', fontSize: 13, fontWeight: 600 }}>
+            Total: ${calcTotal(items).toFixed(2)}
+          </span>
+        )}
+      </div>
     </div>
   )
 }
@@ -944,8 +997,9 @@ function InvoicePDF({ inv }: { inv: any }) {
           <thead>
             <tr style={{ background: '#f8f6f2' }}>
               <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'left' }}>Description</th>
-              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'center', width: 60 }}>Qty</th>
-              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'right', width: 90 }}>Unit</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'center', width: 50 }}>Qty</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'center', width: 65 }}>Hours</th>
+              <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'right', width: 80 }}>Rate</th>
               <th style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.06em', color: '#8c8279', padding: '8px 10px', textAlign: 'right', width: 90 }}>Total</th>
             </tr>
           </thead>
@@ -953,9 +1007,10 @@ function InvoicePDF({ inv }: { inv: any }) {
             {lineItems.map((li: any, i: number) => (
               <tr key={i} style={{ borderBottom: '1px solid #ede9e1' }}>
                 <td style={{ padding: '10px 10px', fontSize: 13 }}>{li.description}</td>
-                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'center' }}>{li.quantity}</td>
-                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'right' }}>${Number(li.unit_price).toFixed(2)}</td>
-                <td style={{ padding: '10px 10px', fontSize: 13, fontWeight: 600, textAlign: 'right' }}>${(Number(li.quantity) * Number(li.unit_price)).toFixed(2)}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'center' }}>{li.quantity || 1}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'center', color: li.line_type === 'fixed' ? '#8c8279' : undefined }}>{li.line_type === 'fixed' ? '—' : (li.hours || 0)}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, textAlign: 'right' }}>${Number(li.rate || li.unit_price || 0).toFixed(2)}</td>
+                <td style={{ padding: '10px 10px', fontSize: 13, fontWeight: 600, textAlign: 'right' }}>${lineItemTotal(li).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
@@ -974,70 +1029,20 @@ function InvoicePDF({ inv }: { inv: any }) {
       )}
 
       <div style={{ marginTop: 28, paddingTop: 16, borderTop: '1px solid #ede9e1', fontSize: 11, color: '#8c8279', textAlign: 'center' }}>
-        CoachOS · Generated {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+        Rass Consulting · Generated {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
       </div>
     </div>
   )
 }
 
-function printInvoice(inv: any) {
-  const w = window.open('', '_blank')
-  if (!w) return
-  const lineItems: any[] = inv.line_items || []
-  const computedTotal = lineItems.length > 0 ? calcTotal(lineItems) : Number(inv.amount)
-  const logoSrc = inv.logo_data || inv.workspace_logo || ''
-  const rows = lineItems.map((li: any) =>
-    `<tr><td style="padding:10px;border-bottom:1px solid #ede9e1">${li.description}</td>
-     <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:center">${li.quantity}</td>
-     <td style="padding:10px;border-bottom:1px solid #ede9e1;text-align:right">$${Number(li.unit_price).toFixed(2)}</td>
-     <td style="padding:10px;border-bottom:1px solid #ede9e1;font-weight:600;text-align:right">$${(Number(li.quantity) * Number(li.unit_price)).toFixed(2)}</td></tr>`
-  ).join('')
-  const lineTable = lineItems.length > 0 ? `
-    <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
-      <thead><tr style="background:#f8f6f2">
-        <th style="padding:8px 10px;text-align:left;font-size:11px;color:#8c8279;text-transform:uppercase">Description</th>
-        <th style="padding:8px 10px;text-align:center;font-size:11px;color:#8c8279;width:60px">Qty</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Unit</th>
-        <th style="padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px">Total</th>
-      </tr></thead><tbody>${rows}</tbody>
-    </table>` : '<div style="border-top:1px solid #ede9e1;margin-bottom:20px"></div>'
-  const showBranding  = inv.show_platform_text !== false
-  const billedName    = inv.billed_to_name  || inv.workspace_name
-  const billedEmail   = inv.billed_to_email || inv.owner_email
-  const billedExtra   = inv.billed_to_extra || ''
-  const logoHtml      = logoSrc ? `<img src="${logoSrc}" style="max-height:44px;max-width:140px;object-fit:contain;display:block;margin-bottom:8px">` : ''
-  const brandingHtml  = showBranding ? `<div style="font-family:Georgia,serif;font-size:20px;font-weight:300">CoachOS</div><div style="font-size:11px;color:#8c8279">Coaching Management Platform</div>` : ''
-  const extraHtml     = billedExtra ? billedExtra.split('\n').map((l: string) => `<div style="font-size:12px;color:#8c8279;margin-top:2px">${l}</div>`).join('') : ''
-  w.document.write(`<!doctype html><html><head><title>Invoice #${inv.id}</title>
-  <style>*{box-sizing:border-box;margin:0;padding:0}body{font-family:Helvetica,Arial,sans-serif;color:#1a1714;padding:40px;max-width:700px;margin:0 auto}@media print{body{padding:20px}}</style>
-  </head><body>
-  <div style="display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:20px;border-bottom:2px solid #1a1714;margin-bottom:28px">
-    <div>${logoHtml}${brandingHtml}</div>
-    <div style="text-align:right"><div style="font-family:Georgia,serif;font-size:28px;font-weight:300">INVOICE</div><div style="font-size:12px;color:#8c8279">#${inv.id}</div></div>
-  </div>
-  <div style="display:flex;justify-content:space-between;margin-bottom:28px">
-    <div>
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Billed to</div>
-      <div style="font-size:14px;font-weight:600">${billedName}</div>
-      ${billedEmail ? `<div style="font-size:13px;color:#8c8279">${billedEmail}</div>` : ''}
-      ${extraHtml}
-    </div>
-    <div style="text-align:right">
-      <div style="font-size:10px;font-weight:700;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Details</div>
-      <div style="font-size:13px">Period: ${inv.period_start} – ${inv.period_end}</div>
-      <div style="font-size:13px;color:#8c8279">Issued: ${new Date(inv.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</div>
-    </div>
-  </div>
-  ${lineTable}
-  <div style="border-top:2px solid #1a1714;padding-top:12px;display:flex;justify-content:space-between;align-items:baseline">
-    <span style="font-size:15px;font-weight:700">Total Due</span>
-    <span style="font-family:Georgia,serif;font-size:32px;font-weight:300">$${computedTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-  </div>
-  ${inv.notes ? `<div style="margin-top:20px;font-size:12px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px">${inv.notes}</div>` : ''}
-  <div style="margin-top:28px;padding-top:16px;border-top:1px solid #ede9e1;font-size:11px;color:#8c8279;text-align:center">CoachOS · Generated ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
-  <script>window.onload=function(){window.print()}<\/script>
-  </body></html>`)
-  w.document.close()
+async function downloadInvoicePdf(inv: any) {
+  try {
+    const res = await adminApi.downloadPlatformInvoicePdf(inv.id)
+    const url = URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' }))
+    const a   = document.createElement('a')
+    a.href = url; a.download = `invoice-${inv.id}.pdf`; a.click()
+    URL.revokeObjectURL(url)
+  } catch { alert('Failed to generate PDF') }
 }
 
 const BLANK_CREATE = {
@@ -1448,7 +1453,7 @@ function InvoicesTab({ invoices, workspaces, loading, onRefresh }: {
               <button className="btn btn-dark btn-sm" onClick={() => handleSend(selectedInv)} disabled={sending === selectedInv.id}>
                 {sending === selectedInv.id ? 'Sending…' : '✉ Send to owner'}
               </button>
-              <button className="btn btn-outline btn-sm" onClick={() => printInvoice(selectedInv)}>🖨 Print / PDF</button>
+              <button className="btn btn-outline btn-sm" onClick={() => downloadInvoicePdf(selectedInv)}>⬇ Download PDF</button>
               <button className="btn btn-outline btn-sm" style={{ color: '#c0392b', borderColor: '#f5c6c2' }}
                 onClick={() => handleDelete(selectedInv.id)}>Delete</button>
               <button className="btn btn-ghost btn-sm" style={{ marginLeft: 'auto' }} onClick={() => setSelectedInv(null)}>✕</button>

@@ -188,6 +188,7 @@ export const adminApi = {
   patchPlatformInvoice:          (id: number, d: any)      => api.patch(`/api/superadmin/platform-invoices/${id}/`, d),
   deletePlatformInvoice:         (id: number)              => api.delete(`/api/superadmin/platform-invoices/${id}/`),
   sendPlatformInvoice:           (id: number)              => api.post(`/api/superadmin/platform-invoices/${id}/send/`),
+  downloadPlatformInvoicePdf:    (id: number)              => api.get(`/api/superadmin/platform-invoices/${id}/pdf/`, { responseType: 'blob' }),
   listPlatformPayments:          (invId: number)           => api.get(`/api/superadmin/platform-invoices/${invId}/payments/`),
   createPlatformPayment:         (invId: number, d: any)   => api.post(`/api/superadmin/platform-invoices/${invId}/payments/`, d),
   deletePlatformPayment:         (invId: number, pid: number) => api.delete(`/api/superadmin/platform-invoices/${invId}/payments/${pid}/`),

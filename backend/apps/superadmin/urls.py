@@ -29,6 +29,7 @@ urlpatterns = [
     path("platform-invoices/",                                           views.platform_invoices),
     path("platform-invoices/<int:pk>/",                                  views.platform_invoice_detail),
     path("platform-invoices/<int:pk>/send/",                             views.platform_invoice_send),
+    path("platform-invoices/<int:pk>/pdf/",                              views.platform_invoice_pdf),
     path("platform-invoices/<int:pk>/payments/",                         views.platform_invoice_payments),
     path("platform-invoices/<int:pk>/payments/<int:payment_pk>/",        views.platform_invoice_payment_detail),
 ]

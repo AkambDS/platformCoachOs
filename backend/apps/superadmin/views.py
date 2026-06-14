@@ -1094,10 +1094,131 @@ def platform_invoice_detail(request, pk):
     return Response(_platform_invoice_data(inv))
 
 
+def _li_total(li):
+    qty  = float(li.get('quantity', 1) or 1)
+    rate = float(li.get('rate') or li.get('unit_price') or 0)
+    if li.get('line_type') == 'fixed':
+        return qty * rate
+    hours = float(li.get('hours') or 0)
+    if 'hours' in li or 'rate' in li:
+        return qty * hours * rate
+    return qty * rate
+
+
+def _invoice_html(inv):
+    """Shared A4-ready HTML for WeasyPrint PDF and print window."""
+    from django.conf import settings as dj_settings
+    from datetime import date as _date
+
+    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
+    logo_src     = inv.logo_data or (f"{backend_base}/api/settings/logo/{inv.workspace_id}/" if inv.workspace.logo_data else "")
+    owner_email  = User.objects.filter(workspace=inv.workspace, role="business_owner").values_list("email", flat=True).first() or ""
+    billed_name  = inv.billed_to_name  or inv.workspace.name
+    billed_email = inv.billed_to_email or owner_email
+    billed_extra = inv.billed_to_extra or ""
+
+    logo_html     = f'<img src="{logo_src}" style="max-height:44px;max-width:140px;object-fit:contain;display:block;margin-bottom:8px">' if logo_src else ""
+    branding_html = '<div style="font-family:Georgia,serif;font-size:20px;font-weight:300">CoachOS</div><div style="font-size:11px;color:#8c8279">Coaching Management Platform</div>' if inv.show_platform_text else ""
+    extra_html    = "".join(f'<div style="font-size:12px;color:#8c8279;margin-top:2px">{ln}</div>' for ln in billed_extra.split('\n')) if billed_extra else ""
+    email_html    = f'<div style="font-size:13px;color:#8c8279">{billed_email}</div>' if billed_email else ""
+
+    period  = f"{inv.period_start.strftime('%Y-%m-%d')} – {inv.period_end.strftime('%Y-%m-%d')}"
+    issued  = inv.created_at.strftime('%b %d, %Y')
+    line_items = inv.line_items or []
+
+    if line_items:
+        rows = ""
+        for li in line_items:
+            is_fixed   = li.get('line_type') == 'fixed'
+            hours_cell = "—" if is_fixed else str(li.get('hours') or 0)
+            hours_color = "color:#8c8279;" if is_fixed else ""
+            rate_val   = float(li.get('rate') or li.get('unit_price') or 0)
+            total      = _li_total(li)
+            rows += (
+                f"<tr>"
+                f"<td style='padding:10px;border-bottom:1px solid #ede9e1;font-size:13px'>{li.get('description','')}</td>"
+                f"<td style='padding:10px;border-bottom:1px solid #ede9e1;text-align:center;font-size:13px'>{li.get('quantity',1)}</td>"
+                f"<td style='padding:10px;border-bottom:1px solid #ede9e1;text-align:center;font-size:13px;{hours_color}'>{hours_cell}</td>"
+                f"<td style='padding:10px;border-bottom:1px solid #ede9e1;text-align:right;font-size:13px'>${rate_val:.2f}</td>"
+                f"<td style='padding:10px;border-bottom:1px solid #ede9e1;font-weight:600;text-align:right;font-size:13px'>${total:.2f}</td>"
+                f"</tr>"
+            )
+        items_section = (
+            f"<table style='width:100%;border-collapse:collapse;margin-bottom:20px'>"
+            f"<thead><tr style='background:#f8f6f2'>"
+            f"<th style='padding:8px 10px;text-align:left;font-size:11px;color:#8c8279;text-transform:uppercase'>Description</th>"
+            f"<th style='padding:8px 10px;text-align:center;font-size:11px;color:#8c8279;width:50px'>Qty</th>"
+            f"<th style='padding:8px 10px;text-align:center;font-size:11px;color:#8c8279;width:65px'>Hours</th>"
+            f"<th style='padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:80px'>Rate</th>"
+            f"<th style='padding:8px 10px;text-align:right;font-size:11px;color:#8c8279;width:90px'>Total</th>"
+            f"</tr></thead><tbody>{rows}</tbody></table>"
+        )
+        total_amount = sum(_li_total(li) for li in line_items)
+    else:
+        items_section = "<div style='border-top:1px solid #ede9e1;margin-bottom:20px'></div>"
+        total_amount  = float(inv.amount)
+
+    notes_html = f'<div style="margin-top:20px;font-size:12px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px">{inv.notes}</div>' if inv.notes else ""
+    generated  = _date.today().strftime('%B %d, %Y')
+
+    return f"""<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  *{{box-sizing:border-box;margin:0;padding:0}}
+  body{{font-family:Helvetica,Arial,sans-serif;color:#1a1714;padding:28px;max-width:760px;margin:0 auto}}
+  @page{{margin:15mm}}
+  @media print{{body{{padding:0}}}}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:28px;padding-bottom:20px;border-bottom:2px solid #1a1714">
+  <div>{logo_html}{branding_html}</div>
+  <div style="text-align:right">
+    <div style="font-family:Georgia,serif;font-size:28px;font-weight:300">INVOICE</div>
+    <div style="font-size:12px;color:#8c8279;margin-top:4px">#{inv.id}</div>
+  </div>
+</div>
+<div style="display:flex;justify-content:space-between;margin-bottom:28px">
+  <div>
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Billed to</div>
+    <div style="font-size:14px;font-weight:600">{billed_name}</div>
+    {email_html}{extra_html}
+  </div>
+  <div style="text-align:right">
+    <div style="font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;margin-bottom:6px">Details</div>
+    <div style="font-size:13px">Period: {period}</div>
+    <div style="font-size:13px;color:#8c8279">Issued: {issued}</div>
+  </div>
+</div>
+{items_section}
+<div style="border-top:2px solid #1a1714;padding-top:12px;display:flex;justify-content:space-between;align-items:baseline">
+  <span style="font-size:15px;font-weight:700">Total Due</span>
+  <span style="font-family:Georgia,serif;font-size:32px;font-weight:300">${total_amount:,.2f}</span>
+</div>
+{notes_html}
+<div style="margin-top:28px;padding-top:16px;border-top:1px solid #ede9e1;font-size:11px;color:#8c8279;text-align:center">
+  Rass Consulting · Generated {generated}
+</div>
+</body></html>"""
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def platform_invoice_pdf(request, pk):
+    """GET /api/superadmin/platform-invoices/{pk}/pdf/ — download as PDF."""
+    try:
+        inv = PlatformInvoice.objects.select_related("workspace").get(pk=pk)
+    except PlatformInvoice.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    from weasyprint import HTML as WeasyprintHTML
+    from django.http import HttpResponse
+    pdf = WeasyprintHTML(string=_invoice_html(inv)).write_pdf()
+    response = HttpResponse(pdf, content_type="application/pdf")
+    response["Content-Disposition"] = f'attachment; filename="invoice-{inv.id}.pdf"'
+    return response
+
+
 @api_view(["POST"])
 @permission_classes([IsPlatformAdmin])
 def platform_invoice_send(request, pk):
-    """POST /api/superadmin/platform-invoices/{pk}/send/ — email invoice to workspace owner."""
+    """POST /api/superadmin/platform-invoices/{pk}/send/ — email invoice with PDF attachment."""
     try:
         inv = PlatformInvoice.objects.select_related("workspace").get(pk=pk)
     except PlatformInvoice.DoesNotExist:
@@ -1109,72 +1230,36 @@ def platform_invoice_send(request, pk):
 
     from django.core.mail import EmailMultiAlternatives
     from django.conf import settings as dj_settings
+    from weasyprint import HTML as WeasyprintHTML
 
-    subject  = f"CoachOS Invoice #{inv.id} — {inv.workspace.name}"
-    period   = f"{inv.period_start.strftime('%b %d, %Y')} – {inv.period_end.strftime('%b %d, %Y')}"
+    subject = f"Invoice #{inv.id} — {inv.workspace.name}"
+    period  = f"{inv.period_start.strftime('%b %d, %Y')} – {inv.period_end.strftime('%b %d, %Y')}"
+    billed_name = inv.billed_to_name or inv.workspace.name
 
-    from django.conf import settings as dj_settings
-    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
-    logo_url = f"{backend_base}/api/settings/logo/{inv.workspace_id}/" if inv.workspace.logo_data else ""
+    # Simple plain text body
+    plain = (
+        f"Invoice #{inv.id}\nBilled to: {billed_name}\n"
+        f"Period: {period}\nTotal: ${inv.amount}\n\n"
+        f"Please find the invoice attached as a PDF.\n"
+        f"{'Notes: ' + inv.notes if inv.notes else ''}"
+    )
 
-    line_items = inv.line_items or []
-    items_html = ""
-    if line_items:
-        rows = "".join(
-            f"<tr>"
-            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px'>{li.get('description','')}</td>"
-            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:center'>{li.get('quantity',1)}</td>"
-            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:right'>${float(li.get('unit_price',0)):.2f}</td>"
-            f"<td style='padding:8px 0;border-bottom:1px solid #ede9e1;font-size:13px;font-weight:600;text-align:right'>${float(li.get('quantity',1))*float(li.get('unit_price',0)):.2f}</td>"
-            f"</tr>"
-            for li in line_items
-        )
-        items_html = f"""
-        <div style="font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;margin:24px 0 8px">Services</div>
-        <table style="width:100%;border-collapse:collapse;margin-bottom:24px;">
-          <thead><tr>
-            <th style="font-size:11px;color:#8c8279;text-align:left;padding-bottom:8px;border-bottom:1px solid #ede9e1">Description</th>
-            <th style="font-size:11px;color:#8c8279;text-align:center;padding-bottom:8px;border-bottom:1px solid #ede9e1">Qty</th>
-            <th style="font-size:11px;color:#8c8279;text-align:right;padding-bottom:8px;border-bottom:1px solid #ede9e1">Unit price</th>
-            <th style="font-size:11px;color:#8c8279;text-align:right;padding-bottom:8px;border-bottom:1px solid #ede9e1">Total</th>
-          </tr></thead>
-          <tbody>{rows}</tbody>
-        </table>"""
-
-    logo_html = f'<img src="{logo_url}" style="max-height:40px;max-width:140px;object-fit:contain;margin-bottom:8px;" /><br>' if logo_url else ""
-
+    # Brief HTML email body (invoice detail is in the PDF attachment)
     html = f"""
-    <div style="font-family:Helvetica,Arial,sans-serif;max-width:600px;margin:0 auto;padding:32px 24px;color:#1a1714;">
-      {logo_html}
-      <div style="font-family:Georgia,serif;font-size:24px;font-weight:300;margin-bottom:2px;">CoachOS</div>
-      <div style="font-size:12px;color:#8c8279;margin-bottom:24px;">Coaching Management Platform</div>
-      <div style="display:flex;justify-content:space-between;margin-bottom:24px;">
-        <div>
-          <div style="font-size:11px;color:#8c8279;text-transform:uppercase;letter-spacing:.06em">Invoice #</div>
-          <div style="font-size:20px;font-family:Georgia,serif;font-weight:300">{inv.id}</div>
-        </div>
-        <div style="text-align:right">
-          <div style="font-size:11px;color:#8c8279">Issued: {inv.created_at.strftime('%b %d, %Y')}</div>
-          <div style="font-size:11px;color:#8c8279">Period: {period}</div>
-        </div>
-      </div>
-      <table style="width:100%;border-collapse:collapse;margin-bottom:16px;">
-        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279;">Billed to</td>
-            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;font-weight:600;text-align:right;">{inv.workspace.name}</td></tr>
-        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279;">Plan</td>
-            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:right;text-transform:capitalize;">{inv.plan}</td></tr>
+    <div style="font-family:Helvetica,Arial,sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#1a1714;">
+      <div style="font-family:Georgia,serif;font-size:22px;font-weight:300;margin-bottom:4px">Invoice #{inv.id}</div>
+      <div style="font-size:12px;color:#8c8279;margin-bottom:24px">Rass Consulting</div>
+      <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279">Billed to</td>
+            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;font-weight:600;text-align:right">{billed_name}</td></tr>
+        <tr><td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;color:#8c8279">Period</td>
+            <td style="padding:10px 0;border-bottom:1px solid #ede9e1;font-size:13px;text-align:right">{period}</td></tr>
+        <tr><td style="padding:12px 0;font-size:15px;font-weight:700;border-top:2px solid #1a1714">Total Due</td>
+            <td style="padding:12px 0;font-size:22px;font-weight:300;text-align:right;font-family:Georgia,serif;border-top:2px solid #1a1714">${inv.amount}</td></tr>
       </table>
-      {items_html}
-      <table style="width:100%;border-collapse:collapse;margin-top:8px;">
-        <tr><td style="padding:12px 0;font-size:16px;font-weight:700;border-top:2px solid #1a1714">Total Due</td>
-            <td style="padding:12px 0;font-size:26px;font-weight:300;text-align:right;font-family:Georgia,serif;border-top:2px solid #1a1714">${inv.amount}</td></tr>
-      </table>
-      {f'<p style="font-size:13px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px;margin-top:20px;">{inv.notes}</p>' if inv.notes else ''}
-      <p style="font-size:12px;color:#8c8279;margin-top:32px;padding-top:16px;border-top:1px solid #ede9e1">Questions? Reply to this email or contact your CoachOS administrator.</p>
-    </div>
-    """
-    plain_items = "\n".join(f"  - {li.get('description','')} x{li.get('quantity',1)} @ ${li.get('unit_price',0)}" for li in line_items)
-    plain = f"CoachOS Invoice #{inv.id}\nWorkspace: {inv.workspace.name}\nPlan: {inv.plan}\nPeriod: {period}\n{plain_items}\nTotal: ${inv.amount}\n{('Notes: ' + inv.notes) if inv.notes else ''}"
+      {f'<p style="font-size:13px;color:#8c8279;border-left:3px solid #b8922e;padding-left:12px;margin-bottom:20px">{inv.notes}</p>' if inv.notes else ''}
+      <p style="font-size:12px;color:#8c8279">The full invoice is attached as a PDF. Questions? Reply to this email.</p>
+    </div>"""
 
     msg = EmailMultiAlternatives(
         subject=subject, body=plain,
@@ -1182,8 +1267,15 @@ def platform_invoice_send(request, pk):
         to=[owner_email],
     )
     msg.attach_alternative(html, "text/html")
-    msg.send()
 
+    # Attach PDF
+    try:
+        pdf_bytes = WeasyprintHTML(string=_invoice_html(inv)).write_pdf()
+        msg.attach(f"invoice-{inv.id}.pdf", pdf_bytes, "application/pdf")
+    except Exception:
+        pass  # send without PDF rather than failing entirely
+
+    msg.send()
     inv.status = "sent"
     inv.save(update_fields=["status"])
     return Response({"detail": f"Invoice sent to {owner_email}.", "status": "sent"})
