@@ -43,26 +43,24 @@ def _apply_tmpl(text: str, **vars) -> str:
         return text
 
 
-def _workspace_from_email(workspace) -> str:
-    """Return 'Workspace Name <sender@domain>' for the workspace.
+# Maps a workspace owner's email address to the SES-verified sending domain for that workspace.
+# Any workspace whose owner is not listed here defaults to rass-consulting.com.
+_OWNER_SENDING_DOMAIN: dict[str, str] = {
+    "laura.lmtconsulting@gmail.com": "lauratreonze.com",
+}
+_DEFAULT_SENDING_DOMAIN = "rass-consulting.com"
 
-    If the business owner's email domain is in ALLOWED_FROM_EMAIL_DOMAINS, sends
-    from noreply@<that-domain> so SES uses the workspace's verified domain.
-    Otherwise falls back to the platform DEFAULT_FROM_EMAIL address.
-    """
-    allowed = getattr(settings, "ALLOWED_FROM_EMAIL_DOMAINS", set())
+
+def _workspace_from_email(workspace) -> str:
+    """Return 'Workspace Name <noreply@domain>' using the SES-verified domain for this workspace."""
     name = workspace.name.replace('"', "'") if workspace.name else ""
-    if allowed:
-        owner_email, _ = _owner_info(workspace)
-        if owner_email and "@" in owner_email:
-            domain = owner_email.split("@", 1)[1].lower()
-            if domain in allowed:
-                addr = f"noreply@{domain}"
-                return f"{name} <{addr}>" if name else addr
-    default = settings.DEFAULT_FROM_EMAIL
-    m = re.search(r'<(.+?)>', default)
-    addr = m.group(1) if m else default
-    return f"{name} <{addr}>" if name else default
+    owner_email, _ = _owner_info(workspace)
+    domain = _OWNER_SENDING_DOMAIN.get(
+        owner_email.lower() if owner_email else "",
+        _DEFAULT_SENDING_DOMAIN,
+    )
+    addr = f"noreply@{domain}"
+    return f"{name} <{addr}>" if name else addr
 
 
 # ── ICS builder ────────────────────────────────────────────────────────────────
