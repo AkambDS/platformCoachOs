@@ -44,11 +44,24 @@ def _apply_tmpl(text: str, **vars) -> str:
 
 
 def _workspace_from_email(workspace) -> str:
-    """Build a 'Display Name <addr>' from email using the workspace name as the display name."""
+    """Return 'Workspace Name <sender@domain>' for the workspace.
+
+    If the business owner's email domain is in ALLOWED_FROM_EMAIL_DOMAINS, sends
+    from noreply@<that-domain> so SES uses the workspace's verified domain.
+    Otherwise falls back to the platform DEFAULT_FROM_EMAIL address.
+    """
+    allowed = getattr(settings, "ALLOWED_FROM_EMAIL_DOMAINS", set())
+    name = workspace.name.replace('"', "'") if workspace.name else ""
+    if allowed:
+        owner_email, _ = _owner_info(workspace)
+        if owner_email and "@" in owner_email:
+            domain = owner_email.split("@", 1)[1].lower()
+            if domain in allowed:
+                addr = f"noreply@{domain}"
+                return f"{name} <{addr}>" if name else addr
     default = settings.DEFAULT_FROM_EMAIL
     m = re.search(r'<(.+?)>', default)
     addr = m.group(1) if m else default
-    name = workspace.name.replace('"', "'") if workspace.name else ""
     return f"{name} <{addr}>" if name else default
 
 
@@ -159,7 +172,7 @@ def send_invite_email(invitation_id: str):
         msg = EmailMultiAlternatives(
             subject=f"You're invited to join {workspace.name} on CoachOS",
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=[invite.email],
         )
         msg.attach_alternative(html, "text/html")
@@ -216,7 +229,7 @@ def send_activity_confirmation_email(activity_id: str):
         custom_from      = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
+        from_email_addr  = custom_from or _workspace_from_email(workspace)
 
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
@@ -271,7 +284,7 @@ def send_activity_confirmation_email(activity_id: str):
             coach_msg = EmailMultiAlternatives(
                 subject=coach_subject,
                 body=coach_plain,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email=_workspace_from_email(workspace),
                 to=[coach_email],
             )
             coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
@@ -330,7 +343,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         custom_from      = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr  = custom_from or settings.DEFAULT_FROM_EMAIL
+        from_email_addr  = custom_from or _workspace_from_email(workspace)
 
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
@@ -380,7 +393,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             coach_msg = EmailMultiAlternatives(
                 subject=coach_subject,
                 body=coach_plain,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email=_workspace_from_email(workspace),
                 to=[coach_email],
             )
             coach_msg.send()
@@ -437,7 +450,7 @@ def send_activity_reschedule_email(activity_id: str):
         msg = EmailMultiAlternatives(
             subject=f"Updated: {activity.title} with {coach_name}",
             body=plain,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
@@ -464,7 +477,7 @@ def send_activity_reschedule_email(activity_id: str):
             coach_msg = EmailMultiAlternatives(
                 subject=coach_subject,
                 body=coach_plain,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email=_workspace_from_email(workspace),
                 to=[coach_email],
             )
             coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
@@ -533,7 +546,7 @@ def send_activity_cancellation_email(activity_id: str):
             coach_msg = EmailMultiAlternatives(
                 subject=f"Session cancelled: {activity.title} with {client.full_name}",
                 body=coach_plain,
-                from_email=settings.DEFAULT_FROM_EMAIL,
+                from_email=_workspace_from_email(workspace),
                 to=[notify_email],
             )
             coach_msg.attach("cancel.ics", ics_bytes, "text/calendar")
@@ -671,14 +684,14 @@ def send_payment_receipt_email(invoice_id: str):
 def send_payment_failed_email(invoice_id: str):
     from apps.invoicing.models import Invoice
     try:
-        invoice = Invoice.objects.select_related("client", "coach").get(id=invoice_id)
+        invoice = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
         msg = EmailMessage(
             subject=f"Payment failed — Invoice #{invoice.number}",
             body=(
                 f"Payment failed for invoice #{invoice.number} (${invoice.total}) "
                 f"for {invoice.client.full_name}."
             ),
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(invoice.workspace),
             to=[invoice.coach.email],
         )
         msg.send()
@@ -728,7 +741,7 @@ def send_feedback_submitted_email(ticket_id: str):
 </div></body></html>"""
 
         msg = EmailMultiAlternatives(subject=subject, body=plain,
-                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[owner_email])
+                                     from_email=_workspace_from_email(workspace), to=[owner_email])
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Feedback submitted email sent for ticket {ticket_id}")
@@ -766,7 +779,7 @@ def send_feedback_comment_email(ticket_id: str, comment_id: str):
 </div></body></html>"""
 
         msg = EmailMultiAlternatives(subject=subject, body=plain,
-                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient.email])
+                                     from_email=_workspace_from_email(ticket.workspace), to=[recipient.email])
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Feedback comment email sent for ticket {ticket_id}")
@@ -809,7 +822,7 @@ def send_feedback_status_email(ticket_id: str):
 </div></body></html>"""
 
         msg = EmailMultiAlternatives(subject=subject, body=plain,
-                                     from_email=settings.DEFAULT_FROM_EMAIL, to=[recipient.email])
+                                     from_email=_workspace_from_email(ticket.workspace), to=[recipient.email])
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Feedback status email sent for ticket {ticket_id}")
@@ -879,7 +892,7 @@ def send_pipeline_alert(deal_id: str):
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=recipients,
         )
         msg.attach_alternative(html_body, "text/html")
@@ -913,7 +926,7 @@ def send_client_confirmation_notice(activity_id: str):
         )
         EmailMultiAlternatives(
             subject=subject, body=body,
-            from_email=settings.DEFAULT_FROM_EMAIL, to=[coach.email],
+            from_email=_workspace_from_email(workspace), to=[coach.email],
         ).send()
         logger.info(f"Client confirmation notice sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
@@ -946,7 +959,7 @@ def send_client_cancellation_notice(activity_id: str):
         msg = EmailMultiAlternatives(
             subject=subject,
             body=body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
+            from_email=_workspace_from_email(workspace),
             to=[coach.email],
         )
         msg.send()
@@ -1060,7 +1073,7 @@ def send_portal_invite_email(client_id: str):
         custom_from   = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
-        from_email_addr = custom_from or settings.DEFAULT_FROM_EMAIL
+        from_email_addr = custom_from or _workspace_from_email(workspace)
 
         custom_html = tmpl.get("custom_html", "").strip()
         if custom_html:
