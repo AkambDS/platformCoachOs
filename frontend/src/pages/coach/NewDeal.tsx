@@ -207,7 +207,7 @@ export default function NewDeal() {
 
       {/* ── Header ── */}
       <div style={{
-        background: 'var(--white)', borderBottom: '1px solid var(--border)',
+        background: '#f7f4ef', borderBottom: '1px solid var(--border)',
         padding: '22px 36px 20px', position: 'sticky', top: 0, zIndex: 10,
       }}>
         <button

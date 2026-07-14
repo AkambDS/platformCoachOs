@@ -2181,7 +2181,7 @@ export default function Settings() {
     <AppShell>
       <PageHeader title="Settings" subtitle="Manage your workspace, profile, and team" />
 
-      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)', padding: '0 36px', display: 'flex' }}>
+      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)', padding: '0 36px', display: 'flex' }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             display: 'flex', alignItems: 'center', gap: 6,

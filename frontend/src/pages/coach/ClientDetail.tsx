@@ -1197,9 +1197,9 @@ export default function ClientDetail() {
       ...invList.map(inv => ({ ...inv, _type: 'invoice', _date: inv.issue_date || inv.created_at })),
     ]
     return items
-      .filter(i => i._date)
+      .filter(i => i._date && !(i._type === 'activity' && i.activity_type === 'call'))
       .sort((a, b) => new Date(b._date).getTime() - new Date(a._date).getTime())
-      .slice(0, 8)
+      .slice(0, 6)
   }, [actList, invList])
 
   if (isLoading) return <AppShell><div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div></AppShell>
@@ -1210,7 +1210,7 @@ export default function ClientDetail() {
   return (
     <AppShell>
       {/* Profile Header */}
-      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)' }}>
+      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)' }}>
         <div style={{ padding: '22px 36px 0' }}>
           <button onClick={() => navigate('/clients')} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 12, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5, fontFamily: "'DM Sans', sans-serif" }}>
             ← Clients
@@ -1305,13 +1305,10 @@ export default function ClientDetail() {
 
         {/* ── Overview ── */}
         {tab === 'Overview' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 300px', gap: 20, alignItems: 'start' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
 
-            {/* ── Left column — Client Details + Invoices ── */}
-            <div>
-
-              {/* CLIENT DETAILS */}
-              <div className="card" style={{ marginBottom: 16 }}>
+              {/* CLIENT DETAILS — row 1, col 1 */}
+              <div className="card" style={{ gridColumn: 1, gridRow: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Client Details</span>
                   {!editMode ? (
@@ -1493,8 +1490,61 @@ export default function ClientDetail() {
                 )}
               </div>
 
-              {/* INVOICES */}
-              <div className="card">
+              {/* ENGAGEMENT HISTORY — row 1, col 2 */}
+              <div className="card" style={{ gridColumn: 2, gridRow: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Engagement History</span>
+                  <button onClick={() => setTab('Activities')}
+                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
+                    View all →
+                  </button>
+                </div>
+                <div>
+                  {timeline.length === 0 ? (
+                    <div style={{ fontSize: 13, color: 'var(--muted)', padding: '16px 20px' }}>
+                      No history yet.{' '}
+                      <button onClick={() => setShowActivity(true)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0 }}>
+                        Schedule a session →
+                      </button>
+                    </div>
+                  ) : timeline.map((item: any, idx: number) => {
+                    const dotColor = item._type === 'invoice' ? '#3a6ea8' : actDotColor(item.status)
+                    const statusLabel = item.status || ''
+                    const statusColor: Record<string, string> = {
+                      completed: '#2d6a4a', scheduled: '#b8922e', missed: '#c0392b',
+                      cancelled: '#8c8279', paid: '#2d6a4a', sent: '#2d6a9f', overdue: '#c0392b', draft: '#8c8279',
+                    }
+                    const sc = statusColor[statusLabel] || '#8c8279'
+                    const label = item._type === 'activity'
+                      ? (item.activity_type || 'Session').charAt(0).toUpperCase() + (item.activity_type || 'session').slice(1)
+                      : `Invoice ${item.number}`
+                    const sub = item._type === 'activity'
+                      ? fmtDatetime(item.start_at)
+                      : `${item.total ? `$${parseFloat(item.total).toLocaleString()}` : '—'} · ${fmtDate(item.issue_date || item.created_at)}`
+                    return (
+                      <div key={`${item._type}-${item.id}`} style={{
+                        display: 'flex', alignItems: 'center', gap: 10,
+                        padding: '9px 20px',
+                        borderBottom: idx < timeline.length - 1 ? '1px solid #f3f0eb' : 'none',
+                      }}>
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                            <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+                            <span style={{ fontSize: 9.5, fontWeight: 700, color: sc, background: sc + '15', border: `1px solid ${sc}28`, borderRadius: 10, padding: '1px 6px', textTransform: 'uppercase', letterSpacing: '.04em', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                              {statusLabel}
+                            </span>
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{sub}</div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+
+              {/* INVOICES — row 2, col 1 */}
+              <div className="card" style={{ gridColumn: 1, gridRow: 2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Invoices</span>
                   <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices')}>+ New</button>
@@ -1523,62 +1573,15 @@ export default function ClientDetail() {
                   </table>
                 )}
               </div>
-            </div>
 
-            {/* ── Right sidebar — Engagement + Goals + Pipeline ── */}
-            <div>
-
-              {/* ENGAGEMENT HISTORY */}
-              <div className="card" style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Engagement History</span>
-                  <button onClick={() => setTab('Activities')}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
-                    View all →
-                  </button>
-                </div>
-                <div style={{ padding: '8px 20px 12px' }}>
-                  {timeline.length === 0 ? (
-                    <div style={{ fontSize: 13, color: 'var(--muted)', padding: '12px 0' }}>
-                      No history yet.{' '}
-                      <button onClick={() => setShowActivity(true)} style={{ background: 'none', border: 'none', color: 'var(--gold)', cursor: 'pointer', fontSize: 13, fontFamily: "'DM Sans', sans-serif", padding: 0 }}>
-                        Schedule a session →
-                      </button>
-                    </div>
-                  ) : timeline.map((item: any) => (
-                    <div key={`${item._type}-${item.id}`} style={{ display: 'flex', gap: 14, alignItems: 'flex-start', padding: '10px 0' }}>
-                      <div style={{ width: 9, height: 9, borderRadius: '50%', flexShrink: 0, marginTop: 3, background: item._type === 'invoice' ? '#3a6ea8' : actDotColor(item.status) }} />
-                      <div style={{ flex: 1 }}>
-                        {item._type === 'activity' ? (
-                          <>
-                            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
-                              <strong>{item.activity_type ? item.activity_type.charAt(0).toUpperCase() + item.activity_type.slice(1) : 'Session'}</strong>
-                              {' — '}{item.title}
-                            </div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{fmtDatetime(item.start_at)}</div>
-                          </>
-                        ) : (
-                          <>
-                            <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4 }}>
-                              <strong>Invoice {item.number}</strong>{' sent — '}{item.total ? `$${parseFloat(item.total).toLocaleString()}` : ''} · {item.status}
-                            </div>
-                            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>{fmtDate(item.issue_date || item.created_at)}</div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* PIPELINE DEAL */}
+              {/* PIPELINE DEAL — row 2, col 2 */}
               {deal && (() => {
                 const stageConfig = stageMap[deal.stage]
                 const stageLabel  = stageConfig?.label || (deal.stage || '').replace(/_/g, ' ')
                 const stageColor  = stageConfig?.color || '#1B3A6B'
                 const dealValue   = deal.deal_value ? parseFloat(deal.deal_value) : null
                 return (
-                  <div className="card">
+                  <div className="card" style={{ gridColumn: 2, gridRow: 2 }}>
                     <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Pipeline Deal</span>
                     </div>
@@ -1598,7 +1601,6 @@ export default function ClientDetail() {
                 )
               })()}
 
-            </div>
           </div>
         )}
 

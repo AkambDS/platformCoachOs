@@ -85,7 +85,7 @@ export default function NewClient() {
   return (
     <AppShell>
       {/* Page header */}
-      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)', padding: '22px 36px 20px' }}>
+      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)', padding: '22px 36px 20px' }}>
         <button
           onClick={() => navigate('/clients')}
           style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: 12, marginBottom: 14, display: 'flex', alignItems: 'center', gap: 5, fontFamily: "'DM Sans', sans-serif" }}

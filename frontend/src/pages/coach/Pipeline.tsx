@@ -519,7 +519,7 @@ export default function Pipeline() {
       {/* Header */}
       <div style={{
         display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start',
-        padding: '24px 32px 20px', borderBottom: '1px solid var(--border)', background: 'var(--paper)',
+        padding: '24px 32px 20px', borderBottom: '1px solid var(--border)', background: '#f7f4ef',
       }}>
         <div>
           <h1 style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, margin: 0, color: 'var(--ink)' }}>

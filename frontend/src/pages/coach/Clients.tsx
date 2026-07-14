@@ -121,7 +121,7 @@ export default function Clients() {
   return (
     <AppShell>
       {/* Header */}
-      <div style={{ background: 'var(--white)', borderBottom: '1px solid var(--border)', padding: '22px 36px 20px' }}>
+      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)', padding: '22px 36px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300, marginBottom: 4 }}>Clients</div>

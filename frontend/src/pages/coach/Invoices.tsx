@@ -285,7 +285,7 @@ export default function Invoices() {
   return (
     <AppShell>
       {/* ── Header ── */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '24px 32px 20px', borderBottom: '1px solid var(--border)', background: 'var(--paper)' }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '24px 32px 20px', borderBottom: '1px solid var(--border)', background: '#f7f4ef' }}>
         <div>
           <h1 style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: 'var(--ink)' }}>Invoices</h1>
           <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 2 }}>

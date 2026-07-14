@@ -203,7 +203,7 @@ export default function AdminDashboard() {
 
   return (
     <AdminShell>
-      <div style={{ padding: '28px 32px', minHeight: '100vh' }}>
+      <div style={{ padding: '28px 32px' }}>
         {/* ── Overview tab ─────────────────────────────────── */}
         {tab === 'overview' && (
           <>

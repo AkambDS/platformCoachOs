@@ -30,7 +30,7 @@
 }
 
 body {
-  font-family: 'Inter', 'DM Sans', sans-serif;
+  font-family: 'DM Sans', sans-serif;
   background: var(--paper);
   color: var(--ink);
   min-height: 100vh;
@@ -56,7 +56,7 @@ body {
 
 /* ── Sidebar ── */
 .sidebar {
-  background: var(--ink);
+  background: linear-gradient(180deg, #3a2e26 0%, #2a2019 45%, #201812 100%);
   display: flex;
   flex-direction: column;
   position: fixed;
@@ -85,7 +85,7 @@ body {
   text-transform: uppercase;
   color: rgba(255,255,255,.52);
   margin-bottom: 2px;
-  font-family: 'Inter', 'DM Sans', sans-serif;
+  font-family: 'DM Sans', sans-serif;
 }
 .nav-item {
   display: flex;
@@ -100,7 +100,7 @@ body {
   transition: all .15s;
   position: relative;
   text-decoration: none;
-  font-family: 'Inter', 'DM Sans', sans-serif;
+  font-family: 'DM Sans', sans-serif;
 }
 .nav-item:hover { color: #ffffff; background: rgba(255,255,255,.09); }
 .nav-item.active { color: #ffffff; background: rgba(201,168,76,.16); }
@@ -129,9 +129,68 @@ body {
 .sidebar-user-name { font-size: 13px; color: var(--paper); font-weight: 600; letter-spacing: -.01em; }
 .sidebar-user-role { font-size: 11px; color: rgba(248,245,240,.60); margin-top: 1px; }
 
+/* ── Admin Portal Theme (Navy Blue Ombre) ───────────────────────────────── */
+.admin-sidebar {
+  background: linear-gradient(180deg, #3a2e26 0%, #2a2019 45%, #201812 100%);
+  border-right: 1px solid rgba(212,176,106,.15);
+}
+.admin-sidebar .sidebar-logo {
+  border-bottom: 1px solid rgba(212,176,106,.15);
+  padding: 22px 22px 18px;
+}
+.admin-sidebar .sidebar-logo-text {
+  color: #f7f4ef;
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 22px;
+  font-weight: 400;
+  letter-spacing: .04em;
+}
+.admin-sidebar .sidebar-logo-text span { color: #d4a93a; }
+.admin-sidebar .nav-label {
+  color: rgba(212,176,106,.7);
+  letter-spacing: .12em;
+  font-size: 9.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 14px 22px 5px;
+}
+.admin-sidebar .nav-item {
+  color: #d8cfc4;
+  font-size: 13.5px;
+  font-weight: 500;
+  padding: 10px 22px;
+  gap: 11px;
+}
+.admin-sidebar .nav-item:hover {
+  color: #f7f4ef;
+  background: rgba(255,255,255,.09);
+}
+.admin-sidebar .nav-item.active {
+  color: #f7f4ef;
+  background: rgba(255,255,255,.1);
+  font-weight: 600;
+}
+.admin-sidebar .nav-item.active::before {
+  background: #d4a93a;
+  width: 3px;
+  border-radius: 0 2px 2px 0;
+}
+.admin-sidebar .nav-icon { opacity: .85; }
+.admin-sidebar .nav-item.active .nav-icon,
+.admin-sidebar .nav-item:hover .nav-icon { opacity: 1; }
+.admin-sidebar .sidebar-bottom { border-top: 1px solid rgba(212,176,106,.15); padding: 14px 22px; }
+.admin-sidebar .avatar {
+  background: rgba(255,255,255,.1);
+  color: #f7f4ef;
+  border: 1.5px solid rgba(212,169,58,.4);
+  font-weight: 700;
+}
+.admin-sidebar .sidebar-user-name { color: #f7f4ef; font-size: 13px; font-weight: 600; }
+.admin-sidebar .sidebar-user-role { color: rgba(212,176,106,.75); font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; }
+
 /* ── Page Header ── */
 .page-header {
-  background: var(--white);
+  background: #f7f4ef;
   padding: 22px 36px;
   border-bottom: 1px solid var(--border);
   display: flex; align-items: center; justify-content: space-between;
@@ -419,14 +478,14 @@ body {
 .auth-split {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 480px 1fr;
+  grid-template-columns: 400px 1fr;
 }
 @media (max-width: 768px) {
   .auth-split { grid-template-columns: 1fr; }
   .auth-brand { display: none; }
 }
 .auth-brand {
-  background: var(--ink);
+  background: linear-gradient(180deg, #3a2e26 0%, #2a2019 45%, #201812 100%);
   padding: 52px 52px;
   display: flex;
   flex-direction: column;
@@ -436,10 +495,10 @@ body {
 .auth-brand::before {
   content: '';
   position: absolute;
-  top: -120px; right: -120px;
-  width: 600px; height: 600px;
+  top: -100px; right: -100px;
+  width: 580px; height: 580px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(201,168,76,.16) 0%, transparent 65%);
+  background: radial-gradient(circle, rgba(212,176,106,.18) 0%, transparent 65%);
   pointer-events: none;
 }
 .auth-brand::after {
@@ -448,7 +507,7 @@ body {
   bottom: -80px; left: -80px;
   width: 420px; height: 420px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(201,168,76,.08) 0%, transparent 65%);
+  background: radial-gradient(circle, rgba(212,176,106,.08) 0%, transparent 65%);
   pointer-events: none;
 }
 .auth-brand-logo {
@@ -514,7 +573,7 @@ body {
   justify-content: center;
   padding: 48px 40px;
 }
-.auth-form-card { width: 100%; max-width: 420px; }
+.auth-form-card { width: 100%; max-width: 400px; }
 .auth-form-datetime {
   font-size: 11.5px;
   color: var(--muted);
@@ -569,7 +628,7 @@ body {
 .auth-btn {
   width: 100%;
   padding: 13px;
-  background: var(--ink);
+  background: #3a2e26;
   color: var(--paper);
   border: none;
   font-family: 'DM Sans', sans-serif;
@@ -592,7 +651,7 @@ body {
   height: 2px;
   background: var(--gold);
 }
-.auth-btn:hover { background: var(--ink-soft); box-shadow: var(--shadow-md); }
+.auth-btn:hover { background: #2a2019; box-shadow: var(--shadow-md); }
 .auth-btn:disabled { opacity: .6; cursor: not-allowed; box-shadow: none; }
 .auth-error {
   background: #fdf0eb;
