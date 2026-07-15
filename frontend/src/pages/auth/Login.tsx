@@ -32,10 +32,10 @@ export default function Login() {
     <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
       {banner?.is_active && (
         <div style={{
-          background: '#7a4e1e', color: '#fff',
+          background: '#0d1829', color: '#fff',
           padding: '14px 24px', fontSize: 13, lineHeight: 1.6,
           textAlign: 'center', letterSpacing: '.01em',
-          borderBottom: '1px solid #5c3813',
+          borderBottom: '2px solid #d4b06a',
         }}>
           <strong style={{ marginRight: 8 }}>Scheduled Maintenance Notice:</strong>
           {banner.message}

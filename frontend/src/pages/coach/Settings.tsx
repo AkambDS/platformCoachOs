@@ -1512,8 +1512,64 @@ function generateSampleHtml(key: string): string {
     : [headerRow('Session', '{session_title}'), headerRow('When', '{session_time}'), headerRow('Coach', '{coach_name}')]
 
   const intro = isInvoice
-    ? `Hi {client_name}, please find your invoice from {workspace_name} below.`
+    ? `Hi {client_name}, your session with {coach_name} has been confirmed.`
     : `Hi {client_name}, your session with {coach_name} has been confirmed.`
+
+  if (isInvoice) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+
+      <!-- Header -->
+      <tr>
+        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
+        </td>
+      </tr>
+      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+
+      <!-- Body -->
+      <tr>
+        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
+          <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
+            {workspace_name} sent you an invoice.
+          </h1>
+          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
+            You've received an invoice for <strong>\${amount}</strong> with payment due on <strong>{due_date}</strong>.
+          </p>
+          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
+            {view_instructions}
+          </p>
+          {pay_button}
+          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
+            Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
+          </p>
+          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
+          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
+          Sent by {workspace_name} &middot; Invoice #{invoice_number}
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -1527,33 +1583,25 @@ function generateSampleHtml(key: string): string {
   <tr><td style="padding:32px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
 
-      <!-- HEADER: replace text below with an <img> tag for your logo -->
+      <!-- HEADER -->
       <tr>
         <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
           <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;font-weight:400;letter-spacing:.04em;">{workspace_name}</span>
         </td>
       </tr>
-      <!-- Gold accent bar -->
       <tr><td style="height:3px;background:#b8922e;"></td></tr>
 
       <!-- BODY -->
       <tr>
         <td style="background:#ffffff;padding:40px;border-radius:0 0 8px 8px;">
-
-          <!-- Greeting -->
           <p style="margin:0 0 24px;font-size:15px;color:#6e6560;line-height:1.7;">${intro}</p>
-
-          <!-- Detail table -->
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
                  style="border-top:2px solid #1a2f4e;margin-bottom:28px;">
             ${rows.join('\n            ')}
           </table>
-
-          <!-- Custom message — edit this section freely -->
           <p style="margin:0 0 16px;font-size:13px;color:#6e6560;line-height:1.7;">
             If you have any questions, please reply to this email.
           </p>
-
           <p style="margin:24px 0 0;font-family:Georgia,serif;font-size:15px;color:#9e9890;">
             &mdash; {workspace_name}
           </p>
@@ -1614,7 +1662,7 @@ const EMAIL_TEMPLATE_DEFS = [
     label: 'Invoice',
     hint: 'Sent when an invoice is delivered to a client.',
     defaultSubject: 'Invoice #{invoice_number} from {workspace_name}',
-    vars: ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+    vars: ['{workspace_name}', '{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{owner_email}', '{pay_button}', '{view_instructions}'],
   },
   {
     key: 'portal_invite',

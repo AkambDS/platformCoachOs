@@ -823,7 +823,55 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
                     <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
                       <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>Start with a sample template pre-filled with all placeholders:</div>
                       <button onClick={() => {
-                        const html = `<!DOCTYPE html>\n<html lang="en">\n<head><meta charset="utf-8"><title>{workspace_name}</title></head>\n<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">\n<table role="presentation" width="100%" cellpadding="0" cellspacing="0">\n  <tr><td style="padding:32px 16px;">\n    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">\n      <tr><td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">\n        <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>\n      </td></tr>\n      <tr><td style="height:3px;background:#b8922e;"></td></tr>\n      <tr><td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">\n        <p style="margin:0 0 8px;font-size:11px;color:#b8922e;text-transform:uppercase;letter-spacing:.14em;font-weight:600;">Invoice</p>\n        <h1 style="margin:0 0 24px;font-family:Georgia,serif;font-size:28px;font-weight:400;color:#16130f;">Invoice #{invoice_number}</h1>\n        <p style="margin:0 0 28px;font-size:15px;color:#6e6560;">Hi {client_name}, please find your invoice below.</p>\n        <p style="margin:24px 0 0;font-family:Georgia,serif;font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>\n      </td></tr>\n      <tr><td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">Sent by {workspace_name}</td></tr>\n    </table>\n  </td></tr>\n</table>\n</body></html>`
+                        const html = `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{workspace_name}</title></head>
+<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:32px 16px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+
+      <!-- Header -->
+      <tr>
+        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
+        </td>
+      </tr>
+      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+
+      <!-- Body -->
+      <tr>
+        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
+          <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
+            {workspace_name} sent you an invoice.
+          </h1>
+          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
+            You've received an invoice for <strong>\${amount}</strong> with payment due on <strong>{due_date}</strong>.
+          </p>
+          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
+            {view_instructions}
+          </p>
+          {pay_button}
+          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
+            Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
+          </p>
+          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
+          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
+          Sent by {workspace_name} &middot; Invoice #{invoice_number}
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`
                         const blob = new Blob([html], { type: 'text/html' })
                         const url = URL.createObjectURL(blob)
                         const a = document.createElement('a'); a.href = url; a.download = 'invoice-sample.html'; a.click()
@@ -833,7 +881,7 @@ function EmailEditModal({ onClose }: { onClose: () => void }) {
                       </button>
                       <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
                         Edit the file, then upload it back or paste it above.
-                        Placeholders: {['{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{workspace_name}'].map(v => (
+                        Placeholders: {['{workspace_name}', '{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{owner_email}', '{pay_button}', '{view_instructions}'].map(v => (
                           <code key={v} style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3, fontFamily: 'monospace', marginRight: 3 }}>{v}</code>
                         ))}
                       </div>
