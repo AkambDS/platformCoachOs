@@ -251,8 +251,10 @@ function CatalogDescInput({ value, onChange, onSelectCatalog, catalog }: {
 
 // ── Send preview modal ────────────────────────────────────────────────────────
 
-function SendPreviewModal({ client, onClose, onConfirm, sending }: {
+function SendPreviewModal({ client, amount, dueDate, onClose, onConfirm, sending }: {
   client: any
+  amount: string
+  dueDate: string
   onClose: () => void
   onConfirm: () => void
   sending: boolean
@@ -262,7 +264,15 @@ function SendPreviewModal({ client, onClose, onConfirm, sending }: {
 
   useEffect(() => {
     setLoading(true)
-    api.get('/api/settings/email-preview/', { params: { type: 'invoice', _t: Date.now() } })
+    const params: Record<string, string> = { type: 'invoice', _t: String(Date.now()) }
+    if (amount) params.amount = amount
+    if (dueDate) {
+      try {
+        params.due_date = new Date(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      } catch { params.due_date = dueDate }
+    }
+    if (client?.first_name) params.client_name = `${client.first_name} ${client.last_name || ''}`.trim()
+    api.get('/api/settings/email-preview/', { params })
       .then(r => setHtml(r.data.html || ''))
       .catch(() => setHtml(''))
       .finally(() => setLoading(false))
@@ -869,9 +879,10 @@ export default function NewInvoice() {
           {/* Delivery card */}
           <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
             <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 12 }}>DELIVERY</div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
                 'PDF attached to email',
+                'Email template from Settings',
                 'Manual payment also supported',
               ].map(line => (
                 <div key={line} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink)' }}>
@@ -880,17 +891,6 @@ export default function NewInvoice() {
                 </div>
               ))}
             </div>
-            <button
-              className="btn btn-dark"
-              onClick={() => { if (validate()) setShowSendPreview(true) }}
-              disabled={saving || !form.client}
-              style={{
-                width: '100%', textAlign: 'center', letterSpacing: '.06em',
-                fontSize: 12, fontWeight: 600, opacity: form.client ? 1 : 0.5,
-              }}
-            >
-              SEND TO {clientFirstName.toUpperCase()} →
-            </button>
           </div>
 
           {/* PDF Preview card */}
@@ -915,6 +915,8 @@ export default function NewInvoice() {
       {showSendPreview && (
         <SendPreviewModal
           client={selectedClient}
+          amount={total.toFixed(2)}
+          dueDate={form.due_date}
           sending={saving}
           onClose={() => setShowSendPreview(false)}
           onConfirm={() => { setShowSendPreview(false); handleSend() }}

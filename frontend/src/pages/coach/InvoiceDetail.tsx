@@ -922,6 +922,7 @@ export default function InvoiceDetail() {
   const [showPayment,    setShowPayment]    = useState(false)
   const [showRefund,     setShowRefund]     = useState(false)
   const [showEmailEdit,  setShowEmailEdit]  = useState(false)
+  const [showSendReview, setShowSendReview] = useState(false)
   const [sending,        setSending]        = useState(false)
   const [payLink,        setPayLink]        = useState('')
   const [savingLink,     setSavingLink]     = useState(false)
@@ -943,6 +944,7 @@ export default function InvoiceDetail() {
       await invoicesApi.send(id!)
       qc.invalidateQueries({ queryKey: ['invoice', id] })
       qc.invalidateQueries({ queryKey: ['invoices'] })
+      setShowSendReview(false)
       showToast('Invoice sent to client')
     } catch { showToast('Failed to send', 'error') }
     finally { setSending(false) }
@@ -1069,8 +1071,15 @@ ${el.innerHTML}
                 <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 24, fontWeight: 400 }}>{inv.number}</span>
                 <StatusBadge status={inv.status} />
               </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 1 }}>
-                {inv.client_name}{inv.client_company ? ` · ${inv.client_company}` : ''}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 2 }}>
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  {inv.client_name}{inv.client_company ? ` · ${inv.client_company}` : ''}
+                </span>
+                {inv.sent_at && (
+                  <span style={{ fontSize: 11, color: '#22c55e', fontWeight: 500, display: 'flex', alignItems: 'center', gap: 3 }}>
+                    ✓ Sent {fmtDate(inv.sent_at)}
+                  </span>
+                )}
               </div>
             </div>
           </div>
@@ -1084,9 +1093,9 @@ ${el.innerHTML}
               </button>
             )}
             {canSend && (
-              <button className="btn btn-dark" onClick={handleSend} disabled={sending}
+              <button className="btn btn-dark" onClick={() => setShowSendReview(true)}
                 style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.05em' }}>
-                {sending ? 'SENDING…' : `SEND TO ${(inv.client_name || '').split(' ')[0].toUpperCase()} →`}
+                SEND INVOICE →
               </button>
             )}
           </div>
@@ -1135,15 +1144,6 @@ ${el.innerHTML}
               background: '#fff', color: 'var(--ink)', fontSize: 11, fontWeight: 600,
               cursor: 'pointer', letterSpacing: '.04em',
             }}>↓ Download PDF</button>
-            {canSend && (
-              <button onClick={handleSend} disabled={sending} style={{
-                padding: '7px 16px', borderRadius: 6, border: 'none',
-                background: '#1a2f4e', color: '#fff', fontSize: 11, fontWeight: 600,
-                cursor: 'pointer', letterSpacing: '.04em',
-              }}>
-                {sending ? 'Sending…' : `✉ Send to ${(inv.client_name || '').split(' ')[0]}`}
-              </button>
-            )}
             {canRemind && (
               <button onClick={handleRemind} style={{
                 padding: '7px 16px', borderRadius: 6, border: `1px solid ${isOverdue ? '#e67e22' : 'var(--border)'}`,
@@ -1151,12 +1151,6 @@ ${el.innerHTML}
                 fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.04em',
               }}>Send Reminder</button>
             )}
-            <button onClick={() => setShowEmailEdit(true)} style={{
-              marginLeft: 'auto', padding: '7px 14px', borderRadius: 6,
-              border: '1px solid var(--border)', background: '#fff',
-              color: 'var(--muted)', fontSize: 11, fontWeight: 600,
-              cursor: 'pointer', letterSpacing: '.04em',
-            }}>✎ Edit Email Template</button>
           </div>
           <div id="invoice-print-area" style={{ flex: 1, overflowY: 'auto', padding: '32px 40px' }}>
             <InvoiceDoc inv={inv} workspace={workspace} />
@@ -1324,6 +1318,39 @@ ${el.innerHTML}
       {showEmailEdit && (
         <EmailEditModal onClose={() => setShowEmailEdit(false)} />
       )}
+
+      {showSendReview && (
+        <Modal
+          title="Review before sending"
+          size="lg"
+          onClose={() => setShowSendReview(false)}
+          footer={
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setShowSendReview(false)} style={{ letterSpacing: '.06em' }}>CANCEL</button>
+              <button className="btn btn-dark btn-sm" onClick={handleSend} disabled={sending} style={{ letterSpacing: '.06em' }}>
+                {sending ? 'SENDING…' : 'CONFIRM & SEND →'}
+              </button>
+            </div>
+          }
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            <div style={{ padding: '10px 14px', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
+              <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', color: 'var(--muted)', marginRight: 10 }}>TO</span>
+              <strong>{inv.client_name}</strong>
+              {inv.client_email && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {inv.client_email}</span>}
+            </div>
+            <div style={{ height: 440, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: '#eeebe5' }}>
+              <iframe
+                srcDoc={inv.email_html || ''}
+                title="Email preview"
+                sandbox="allow-same-origin"
+                style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
+              />
+            </div>
+          </div>
+        </Modal>
+      )}
+
       {toastEl}
     </AppShell>
   )

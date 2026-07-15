@@ -98,12 +98,12 @@ function WorkspaceTab() {
             {/* Logo preview */}
             <div style={{
               width: 80, height: 56, border: '1px solid var(--border)', borderRadius: 6,
-              background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              background: '#ffffff', display: 'flex', alignItems: 'center', justifyContent: 'center',
               overflow: 'hidden', flexShrink: 0,
             }}>
               {logoData
                 ? <img src={logoData} alt="Logo" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: '#f7f4ef', letterSpacing: '.04em' }}>
+                : <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: '#1a1714', letterSpacing: '.04em' }}>
                     {form.name?.charAt(0) || '?'}
                   </span>
               }
@@ -1523,25 +1523,27 @@ function generateSampleHtml(key: string): string {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{workspace_name}</title>
 </head>
-<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#f0ede8;font-family:{body_font_css};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
   <tr><td style="padding:32px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
 
       <!-- Header -->
       <tr>
-        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
           <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
         </td>
       </tr>
-      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
 
       <!-- Body -->
       <tr>
         <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
-          <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
+          <h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
             {workspace_name} sent you an invoice.
           </h1>
+
           <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
             You've received an invoice for <strong>\${amount}</strong> with payment due on <strong>{due_date}</strong>.
           </p>
@@ -1550,7 +1552,7 @@ function generateSampleHtml(key: string): string {
           </p>
           {pay_button}
           <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
-            Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
+            Please email us at <a href="mailto:{owner_email}" style="color:{accent_color};">{owner_email}</a> with any questions.
           </p>
           <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
           <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
@@ -1578,7 +1580,7 @@ function generateSampleHtml(key: string): string {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{workspace_name}</title>
 </head>
-<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+<body style="margin:0;padding:0;background:#f0ede8;font-family:{body_font_css};">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
   <tr><td style="padding:32px 16px;">
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
@@ -1673,17 +1675,317 @@ const EMAIL_TEMPLATE_DEFS = [
   },
 ]
 
+const DEFAULT_HTML_TEMPLATES: Record<string, string> = {
+  invoice: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+
+      <!-- Header -->
+      <tr>
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
+          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
+        </td>
+      </tr>
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
+
+      <!-- Body -->
+      <tr>
+        <td style="background:#fff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
+          <h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
+            {workspace_name} sent you an invoice.
+          </h1>
+          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
+            You've received an invoice for <strong style="color:{value_color};">\${amount}</strong> with payment due on <strong style="color:{value_color};">{due_date}</strong>.
+          </p>
+          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
+            {view_instructions}
+          </p>
+          {pay_button}
+          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
+            Please email us at <a href="mailto:{owner_email}" style="color:{accent_color};">{owner_email}</a> with any questions.
+          </p>
+          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
+          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
+        </td>
+      </tr>
+
+      <!-- Footer -->
+      <tr>
+        <td style="padding:28px 0 0;text-align:center;font-size:11px;color:#b5afa6;">
+          Sent by {workspace_name} &middot; Invoice #{invoice_number}
+        </td>
+      </tr>
+
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+
+  confirmation: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+      <!-- Header -->
+      <tr>
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
+          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
+        </td>
+      </tr>
+      <!-- Accent bar -->
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
+      <!-- Body -->
+      <tr>
+        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};font-weight:600;">Session Confirmed</p>
+          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Your session is confirmed</h1>
+          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
+            Hi {client_name}, your session with {coach_name} has been scheduled. We look forward to seeing you.
+          </p>
+          <!-- Session details -->
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:{value_color};">{session_time}</strong></td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
+            </tr>
+          </table>
+          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
+            Need to reschedule or have questions? Contact {coach_name} directly.
+          </p>
+          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
+        </td>
+      </tr>
+      <!-- Footer -->
+      <tr>
+        <td style="padding:28px 0 0;text-align:center;">
+          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+
+  reminder_24h: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+      <!-- Header -->
+      <tr>
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
+          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
+        </td>
+      </tr>
+      <!-- Accent bar -->
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
+      <!-- Body -->
+      <tr>
+        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};font-weight:600;">Reminder &middot; 24 hours away</p>
+          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Session reminder</h1>
+          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
+            Hi {client_name}, this is a friendly reminder about your upcoming session with {coach_name}.
+          </p>
+          <!-- Session details -->
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:{accent_color};">{session_time}</strong></td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
+            </tr>
+          </table>
+          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
+            Need to reschedule? Please contact {coach_name} as soon as possible.
+          </p>
+          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
+        </td>
+      </tr>
+      <!-- Footer -->
+      <tr>
+        <td style="padding:28px 0 0;text-align:center;">
+          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+
+  reminder_1h: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+      <!-- Header -->
+      <tr>
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
+          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
+        </td>
+      </tr>
+      <!-- Accent bar -->
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
+      <!-- Body -->
+      <tr>
+        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#c0392b;font-weight:600;">Upcoming in 1 hour</p>
+          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Session reminder</h1>
+          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
+            Hi {client_name}, this is a friendly reminder that your session with {coach_name} starts in 1 hour.
+          </p>
+          <!-- Session details -->
+          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:#c0392b;">{session_time}</strong></td>
+            </tr>
+            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
+            <tr>
+              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
+              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
+            </tr>
+          </table>
+          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
+            Need to reschedule? Please contact {coach_name} as soon as possible.
+          </p>
+          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
+        </td>
+      </tr>
+      <!-- Footer -->
+      <tr>
+        <td style="padding:28px 0 0;text-align:center;">
+          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+
+  portal_invite: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+      <!-- Header -->
+      <tr>
+        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
+          {logo_img}
+          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
+        </td>
+      </tr>
+      <!-- Accent bar -->
+      <tr><td style="height:3px;background:{accent_color};"></td></tr>
+      <!-- Body -->
+      <tr>
+        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
+          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#4a7c59;font-weight:600;">Portal Access</p>
+          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Your portal is ready</h1>
+          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
+            Hi {client_name}, {workspace_name} has set up a private portal for you where you can view your sessions, goals, and shared resources.
+          </p>
+          <!-- CTA button -->
+          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 32px;">
+            <tr>
+              <td style="background:#4a7c59;border-radius:4px;">
+                <a href="{portal_url}" style="display:inline-block;padding:14px 40px;font-family:{body_font_css};font-size:13px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:.1em;text-transform:uppercase;">
+                  Access Your Portal
+                </a>
+              </td>
+            </tr>
+          </table>
+          <p style="margin:0;font-size:14px;color:#6e6560;line-height:1.7;">
+            If you have any questions, reply to this email or contact {workspace_name}.
+          </p>
+          <p style="margin:24px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
+        </td>
+      </tr>
+      <!-- Footer -->
+      <tr>
+        <td style="padding:28px 0 0;text-align:center;">
+          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+</table>
+</body>
+</html>`,
+}
+
 function EmailTemplatesTab() {
   const { workspace, user, rehydrate } = useAuthStore()
   const { show } = useToast()
 
   const [activeKey, setActiveKey] = useState('confirmation')
-  const [leftTab, setLeftTab]     = useState<'content' | 'style' | 'custom'>('content')
-  const [saving, setSaving]       = useState(false)
+  const [leftTab, setLeftTab]     = useState<'template' | 'custom'>('template')
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
-  const [htmlMode, setHtmlMode] = useState<'upload' | 'paste'>('upload')
-  const [pasteBuffer, setPasteBuffer] = useState('')
 
   const saved = (workspace as any)?.email_templates || {}
   const initField = (key: string) => ({
@@ -1692,8 +1994,10 @@ function EmailTemplatesTab() {
     intro:          saved[key]?.intro          || '',
     closing:        saved[key]?.closing        || '',
     custom_html:    saved[key]?.custom_html    || '',
+    disable_style:  saved[key]?.disable_style  ?? true,
     header_bg:      saved[key]?.style?.header_bg      || '',
     accent_color:   saved[key]?.style?.accent_color   || '',
+    show_logo:      saved[key]?.show_logo      ?? true,
     header_tagline: saved[key]?.style?.header_tagline !== undefined
                       ? saved[key].style.header_tagline
                       : 'Coaching Platform',
@@ -1701,74 +2005,147 @@ function EmailTemplatesTab() {
     heading_font:   saved[key]?.style?.heading_font || '',
     value_color:    saved[key]?.style?.value_color  || '#1a1714',
   })
-  const [fields, setFields]         = useState(initField(activeKey))
-  const [htmlUploading, setHtmlUploading] = useState(false)
+  const [fields, setFields] = useState(initField(activeKey))
   const logoData = (workspace as any)?.logo_data || ''
 
   const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
 
-  const renderPreview = async (key: string, f: ReturnType<typeof initField>) => {
-    if (f.custom_html) { setPreviewHtml(f.custom_html); return }
+  const buildPreviewParams = (key: string, f: ReturnType<typeof initField>) => {
+    const params: Record<string, string> = {
+      type: key, intro: f.intro, closing: f.closing, _t: String(Date.now()),
+      header_tagline: f.header_tagline, skip_custom_html: '1',
+    }
+    if (f.header_bg)    params.header_bg    = f.header_bg
+    if (f.accent_color) params.accent_color = f.accent_color
+    if (f.body_font)    params.body_font    = f.body_font
+    if (f.heading_font) params.heading_font = f.heading_font
+    if (f.value_color)  params.value_color  = f.value_color
+    if (!f.show_logo)   params.hide_logo    = '1'
+    return params
+  }
+
+  // Must be defined before renderPreview so the guard can call it
+  const applyCustomHtmlPreview = (f: ReturnType<typeof initField>) => {
+    const bf = f.body_font || ''
+    const hf = f.heading_font || ''
+    const vars: Record<string, string> = {
+      intro: f.intro || '(Your opening paragraph goes here)',
+      closing: f.closing || '(Your closing paragraph goes here)',
+      intro_para: f.intro.trim() ? `<p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">${f.intro}</p>` : '',
+      closing_para: f.closing.trim() ? `<p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">${f.closing}</p>` : '',
+      header_bg: f.disable_style ? '#1a2f4e' : (f.header_bg || '#1a2f4e'),
+      accent_color: f.disable_style ? '#b8922e' : (f.accent_color || '#b8922e'),
+      value_color: f.disable_style ? '#1a1714' : (f.value_color || '#1a1714'),
+      body_font_css: f.disable_style ? "'Helvetica Neue',Helvetica,Arial,sans-serif" : (bf || "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+      heading_font_css: f.disable_style ? "Georgia,'Times New Roman',serif" : (hf || "Georgia,'Times New Roman',serif"),
+      client_name: 'Jane Smith',
+      workspace_name: (workspace as any)?.name || 'Your Workspace',
+      invoice_number: 'INV-0042',
+      amount: '150.00',
+      due_date: 'June 30, 2026',
+      owner_email: '',
+      owner_name: (workspace as any)?.name || '',
+      payment_link: '',
+      pay_button: '',
+      view_instructions: 'See attached file for invoice details.',
+      session_title: 'Strategy Session',
+      session_time: 'Wednesday, July 15 at 10:00 AM EDT',
+      coach_name: 'Sarah Johnson',
+      time_label: '24 hours',
+      portal_url: '#',
+      logo_img: (f.show_logo && logoData)
+        ? `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#ffffff;padding:8px 14px;border-radius:5px;"><img src="${logoData}" alt="${(workspace as any)?.name || ''}" style="max-height:40px;max-width:160px;object-fit:contain;display:block;" /></td></tr></table>`
+        : '',
+    }
+    const html = f.custom_html.replace(/\{(\w+)\}/g, (_: string, k: string) => vars[k] ?? `{${k}}`)
+    setPreviewHtml(html)
+  }
+
+  // tab param: 'template' always uses standard template (API); 'custom' uses custom HTML if set
+  const renderPreview = async (key: string, f: ReturnType<typeof initField>, tab: 'template' | 'custom' = leftTab) => {
+    if (tab === 'custom' && f.custom_html.trim()) { applyCustomHtmlPreview(f); return }
     setPreviewLoading(true)
     try {
-      const params: Record<string, string> = {
-        type: key, intro: f.intro, closing: f.closing, _t: String(Date.now()),
-        header_tagline: f.header_tagline,
-      }
-      if (f.header_bg)    params.header_bg    = f.header_bg
-      if (f.accent_color) params.accent_color = f.accent_color
-      if (f.body_font)    params.body_font    = f.body_font
-      if (f.heading_font) params.heading_font = f.heading_font
-      if (f.value_color)  params.value_color  = f.value_color
-      const { data } = await api.get('/api/settings/email-preview/', { params })
+      const { data } = await api.get('/api/settings/email-preview/', { params: buildPreviewParams(key, f) })
       setPreviewHtml(data.html)
     } catch { setPreviewHtml('') }
     finally { setPreviewLoading(false) }
   }
 
-  const switchTab = (key: string) => {
+  const loadDefaultTemplate = async () => {
+    const staticTmpl = DEFAULT_HTML_TEMPLATES[activeKey]
+    if (staticTmpl) {
+      // Use the built-in default template for this type — keeps placeholders intact for editing
+      setFields(f => ({ ...f, custom_html: staticTmpl, disable_style: true }))
+      applyCustomHtmlPreview({ ...fields, custom_html: staticTmpl, disable_style: true })
+      return
+    }
+    // Fallback: fetch rendered HTML from API for types without a static default
+    setPreviewLoading(true)
+    try {
+      const { data } = await api.get('/api/settings/email-preview/', { params: buildPreviewParams(activeKey, fields) })
+      setFields(f => ({ ...f, custom_html: data.html }))
+      setPreviewHtml(data.html)
+    } catch { /* ignore */ }
+    finally { setPreviewLoading(false) }
+  }
+
+  const switchKey = (key: string) => {
     const f = initField(key)
     setActiveKey(key)
     setFields(f)
-    renderPreview(key, f)
+    renderPreview(key, f, leftTab)
   }
 
   const handleHtmlUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setHtmlUploading(true)
     try {
       const text = await file.text()
-      setFields(f => { const nf = { ...f, custom_html: text }; setPreviewHtml(text); return nf })
-    } finally { setHtmlUploading(false); e.target.value = '' }
+      setFields(f => ({ ...f, custom_html: text }))
+    } finally { e.target.value = '' }
   }
 
   // Initial preview on mount
   useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-refresh preview 700ms after user stops typing or changing style fields
+  // Auto-refresh preview after user stops typing, or when switching tabs
   useEffect(() => {
-    if (fields.custom_html) return
-    const t = setTimeout(() => renderPreview(activeKey, fields), 700)
+    const delay = (leftTab === 'custom' && fields.custom_html.trim()) ? 300 : 700
+    const t = setTimeout(() => renderPreview(activeKey, fields, leftTab), delay)
     return () => clearTimeout(t)
-  }, [fields.intro, fields.closing, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [fields.intro, fields.closing, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color, fields.custom_html, fields.disable_style, fields.show_logo, leftTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSave = async () => {
-    setSaving(true)
+  // Auto-save 1.5 s after user stops making changes (skip on initial mount)
+  const isFirstRender = useState(true)
+  useEffect(() => {
+    if (isFirstRender[0]) { isFirstRender[1](false); return }
+    setSaveStatus('saving')
+    const t = setTimeout(() => handleSave(fields, activeKey), 1500)
+    return () => clearTimeout(t)
+  }, [fields.subject, fields.from_email, fields.intro, fields.closing, fields.custom_html, fields.disable_style, fields.show_logo, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSave = async (f = fields, key = activeKey) => {
+    setSaveStatus('saving')
     try {
-      const { header_bg, accent_color, header_tagline, body_font, heading_font, value_color, from_email, ...rest } = fields
+      const { header_bg, accent_color, header_tagline, body_font, heading_font, value_color, from_email, custom_html, disable_style, show_logo, ...rest } = f
       const templateToSave = {
         ...rest,
         from_email,
+        custom_html,
+        disable_style,
+        show_logo,
         style: { header_bg, accent_color, header_tagline, body_font, heading_font, value_color },
       }
-      const newEmailTemplates = { ...saved, [activeKey]: templateToSave }
+      const newEmailTemplates = { ...saved, [key]: templateToSave }
       const { data } = await settingsApi.updateWorkspace({ email_templates: newEmailTemplates })
       if (user) rehydrate(user, { ...workspace, ...data, email_templates: newEmailTemplates })
-      show('Template saved')
-      await renderPreview(activeKey, fields)
-    } catch { show('Failed to save', 'error') }
-    finally { setSaving(false) }
+      setSaveStatus('saved')
+      setTimeout(() => setSaveStatus('idle'), 2000)
+    } catch {
+      show('Failed to save', 'error')
+      setSaveStatus('idle')
+    }
   }
 
   const colorRow = (label: string, key: 'header_bg' | 'accent_color' | 'value_color', defaultVal: string) => (
@@ -1786,13 +2163,26 @@ function EmailTemplatesTab() {
     </div>
   )
 
+  const logoPreviewBg = fields.header_bg || '#1a2f4e'
+  const placeholderChips = (vars: string[]) => (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+      {vars.map(v => (
+        <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
+          background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
+          padding: '2px 7px', fontSize: 10, fontFamily: 'monospace',
+          cursor: 'pointer', userSelect: 'all',
+        }} title="Click to copy">{v}</span>
+      ))}
+    </div>
+  )
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 0, height: 'calc(100vh - 180px)', minHeight: 560 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)', minHeight: 560 }}>
 
       {/* Template type pills */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexShrink: 0 }}>
         {EMAIL_TEMPLATE_DEFS.map(d => (
-          <button key={d.key} onClick={() => switchTab(d.key)} style={{
+          <button key={d.key} onClick={() => switchKey(d.key)} style={{
             padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 500,
             border: '1px solid var(--border)', cursor: 'pointer',
             background: activeKey === d.key ? 'var(--ink)' : 'var(--white)',
@@ -1804,204 +2194,238 @@ function EmailTemplatesTab() {
       {/* Split layout */}
       <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
 
-        {/* Left — edit fields */}
+        {/* Left panel */}
         <div style={{
-          width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 0,
-          background: 'var(--white)', border: '1px solid var(--border)',
-          borderRadius: 8, padding: '20px 20px 16px', overflow: 'auto',
+          width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column',
+          background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
         }}>
-          {/* ── Tab bar ── */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: 16, flexShrink: 0, gap: 0 }}>
-            {(['content', 'style', 'custom'] as const).map(t => (
-              <button key={t} onClick={() => setLeftTab(t)} style={{
-                flex: 1, padding: '9px 4px', border: 'none', cursor: 'pointer',
+          {/* Tab bar */}
+          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+            {(['template', 'custom'] as const).map(t => (
+              <button key={t} onClick={() => { setLeftTab(t); renderPreview(activeKey, fields, t) }} style={{
+                flex: 1, padding: '10px 4px', border: 'none', cursor: 'pointer',
                 background: leftTab === t ? 'var(--white)' : 'var(--paper)',
                 borderBottom: leftTab === t ? '2px solid var(--ink)' : '2px solid transparent',
                 fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
                 color: leftTab === t ? 'var(--ink)' : 'var(--muted)',
+                position: 'relative',
               }}>
-                {t === 'content' ? 'Content' : t === 'style' ? 'Style' : 'Custom HTML'}
+                {t === 'template' ? 'Template' : 'Custom HTML'}
+                {t === 'custom' && fields.custom_html.trim() && (
+                  <span style={{
+                    marginLeft: 5, fontSize: 9, background: '#f59e0b', color: '#fff',
+                    borderRadius: 8, padding: '1px 5px', fontWeight: 700, letterSpacing: 0,
+                  }}>ON</span>
+                )}
               </button>
             ))}
           </div>
 
-          {/* ── CONTENT tab ── */}
-          {leftTab === 'content' && (
-            <>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, lineHeight: 1.5 }}>{def.hint}</div>
-              <div className="fgroup">
-                <label className="flabel">Subject line</label>
-                <input className="finput" placeholder={`Default: ${def.defaultSubject}`}
-                  value={fields.subject}
-                  onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
-              </div>
-              <div className="fgroup">
-                <label className="flabel">From email <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
-                <input className="finput" type="email" placeholder="Default sender"
-                  value={fields.from_email}
-                  onChange={e => setFields(f => ({ ...f, from_email: e.target.value }))} />
-                <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be an address @rass-consulting.com or @lauratreonze.com.</div>
-              </div>
-              <div className="fgroup">
-                <label className="flabel">Opening paragraph</label>
-                <textarea className="finput" rows={3} placeholder="Leave blank for default"
-                  value={fields.intro} style={{ resize: 'vertical' }}
-                  onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
-              </div>
-              <div className="fgroup">
-                <label className="flabel">Closing paragraph</label>
-                <textarea className="finput" rows={3} placeholder="Leave blank for default"
-                  value={fields.closing} style={{ resize: 'vertical' }}
-                  onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
-              </div>
-              <div style={{ marginBottom: 10 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 6 }}>Available placeholders</div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                  {def.vars.map(v => (
-                    <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
-                      background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
-                      padding: '2px 7px', fontSize: 10, fontFamily: 'monospace',
-                      cursor: 'pointer', userSelect: 'all',
-                    }} title="Click to copy">{v}</span>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
+          {/* Tab content — scrollable */}
+          <div style={{ flex: 1, overflow: 'auto' }}>
 
-          {/* ── STYLE tab ── */}
-          {leftTab === 'style' && (
-            <>
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 }}>Header</div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 10 }}>
-                  <div style={{ width: 40, height: 28, borderRadius: 4, border: '1px solid var(--border)', background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-                    {logoData
-                      ? <img src={logoData} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                      : <span style={{ fontFamily: 'serif', fontSize: 10, color: '#f7f4ef' }}>{(workspace as any)?.name?.charAt(0) || '?'}</span>
-                    }
+            {/* ── TEMPLATE TAB ── */}
+            {leftTab === 'template' && (
+              <div style={{ padding: '16px 20px' }}>
+                {fields.custom_html.trim() && (
+                  <div style={{
+                    background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 6,
+                    padding: '8px 12px', marginBottom: 14, fontSize: 11, color: '#92400e', lineHeight: 1.5,
+                  }}>
+                    <strong>Custom HTML is active.</strong> These values are injected as{' '}
+                    <code style={{ fontSize: 10, background: '#fef3c7', padding: '0 3px', borderRadius: 2 }}>{'{intro}'}</code>,{' '}
+                    <code style={{ fontSize: 10, background: '#fef3c7', padding: '0 3px', borderRadius: 2 }}>{'{header_bg}'}</code> etc. into your HTML.
                   </div>
-                  <div style={{ fontSize: 11, color: 'var(--muted)', flex: 1 }}>
-                    {logoData ? 'Logo uploaded' : 'No logo'} · <span style={{ color: '#2d6a9f', cursor: 'pointer' }}>Change in Workspace tab</span>
-                  </div>
-                </div>
-                <label style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 8 }}>
-                  <input type="checkbox" checked={fields.header_tagline === ''}
-                    onChange={e => setFields(f => ({ ...f, header_tagline: e.target.checked ? '' : 'Coaching Platform' }))}
-                    style={{ width: 13, height: 13, accentColor: 'var(--gold)' }} />
-                  Show logo only — hide tagline text
-                </label>
-                {fields.header_tagline !== '' && (
-                  <input className="finput" placeholder="Coaching Platform"
-                    value={fields.header_tagline}
-                    onChange={e => setFields(f => ({ ...f, header_tagline: e.target.value }))}
-                    style={{ margin: 0 }} />
                 )}
-              </div>
-              {colorRow('Header background', 'header_bg', '#1a2f4e')}
-              {colorRow('Accent / highlight', 'accent_color', '#b8922e')}
-              {colorRow('Detail values (amount, date, "When")', 'value_color', '#1a1714')}
-              <div style={{ marginBottom: 12 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Body font</label>
-                <select className="fselect" style={{ margin: 0 }} value={fields.body_font}
-                  onChange={e => setFields(f => ({ ...f, body_font: e.target.value }))}>
-                  <option value="">Default</option>
-                  {BODY_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Heading font</label>
-                <select className="fselect" style={{ margin: 0 }} value={fields.heading_font}
-                  onChange={e => setFields(f => ({ ...f, heading_font: e.target.value }))}>
-                  <option value="">Default</option>
-                  {HEADING_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
-                </select>
-              </div>
-            </>
-          )}
 
-          {/* ── CUSTOM HTML tab ── */}
-          {leftTab === 'custom' && (
-            <>
-              {fields.custom_html ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  <div style={{ fontSize: 11, color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '8px 12px' }}>
-                    ✓ Custom template active — overrides Content tab
-                  </div>
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)' }}>
-                      {htmlUploading ? 'Reading…' : '↑ Replace file'}
-                      <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                    </label>
-                    <button onClick={() => { setPasteBuffer(fields.custom_html); setHtmlMode('paste'); setFields(f => ({ ...f, custom_html: '' })); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
-                      style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
-                      ✎ Edit
-                    </button>
-                    <button onClick={() => { setFields(f => ({ ...f, custom_html: '' })); setPasteBuffer(''); renderPreview(activeKey, { ...fields, custom_html: '' }) }}
-                      style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: '#b91c1c', cursor: 'pointer' }}>
-                      ✕ Remove
-                    </button>
-                  </div>
-                  <button onClick={() => { const b = new Blob([fields.custom_html], { type: 'text/html' }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = `${activeKey}-template.html`; a.click(); URL.revokeObjectURL(u) }}
-                    style={{ fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
-                    ↓ Download current template
-                  </button>
+                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>Content</div>
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>{def.hint}</div>
+                <div className="fgroup">
+                  <label className="flabel">Subject line</label>
+                  <input className="finput" placeholder={`Default: ${def.defaultSubject}`}
+                    value={fields.subject} onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
                 </div>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                    <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', color: 'var(--muted)', background: 'var(--paper)' }}>
-                      {htmlUploading ? 'Reading…' : '↑ Upload .html file'}
-                      <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                    </label>
-                    <button onClick={() => { setHtmlMode('paste'); setPasteBuffer('') }}
-                      style={{ flex: 1, fontSize: 11, padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', background: 'var(--paper)', color: 'var(--muted)', cursor: 'pointer' }}>
-                      ✎ Paste HTML
-                    </button>
-                  </div>
-                  {htmlMode === 'paste' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                      <textarea rows={8} placeholder="Paste your HTML here…" value={pasteBuffer}
-                        onChange={e => { setPasteBuffer(e.target.value); if (e.target.value) setPreviewHtml(e.target.value) }}
-                        style={{ width: '100%', resize: 'vertical', fontSize: 11, fontFamily: 'monospace', padding: '8px', border: '1px solid var(--border)', borderRadius: 6, background: '#fafafa', lineHeight: 1.5 }} />
-                      <button disabled={!pasteBuffer.trim()}
-                        onClick={() => { setFields(f => ({ ...f, custom_html: pasteBuffer.trim() })); setPreviewHtml(pasteBuffer.trim()) }}
-                        style={{ fontSize: 11, padding: '7px 0', borderRadius: 6, border: 'none', cursor: pasteBuffer.trim() ? 'pointer' : 'not-allowed', background: pasteBuffer.trim() ? 'var(--ink)' : 'var(--border)', color: '#fff', fontWeight: 600 }}>
-                        Apply Template
-                      </button>
-                    </div>
-                  )}
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>Start with a sample template pre-filled with all placeholders:</div>
-                    <button onClick={() => {
-                      const html = generateSampleHtml(activeKey)
-                      const blob = new Blob([html], { type: 'text/html' })
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement('a'); a.href = url; a.download = `${activeKey}-sample.html`; a.click()
-                      URL.revokeObjectURL(url)
-                    }} style={{ width: '100%', padding: '8px 0', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid #2d6a9f', background: '#f0f4ff', color: '#2d6a9f', cursor: 'pointer', letterSpacing: '.04em' }}>
-                      ↓ Download Sample Template
-                    </button>
-                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
-                      Edit the file, then upload it back or paste it above.
-                      Placeholders: {def.vars.map(v => <code key={v} style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3, fontFamily: 'monospace', marginRight: 3 }}>{v}</code>)}
-                    </div>
-                  </div>
-                </>
-              )}
-            </>
-          )}
+                <div className="fgroup">
+                  <label className="flabel">From email <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
+                  <input className="finput" type="email" placeholder="Default sender"
+                    value={fields.from_email} onChange={e => setFields(f => ({ ...f, from_email: e.target.value }))} />
+                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be @rass-consulting.com or @lauratreonze.com.</div>
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Opening paragraph</label>
+                  <textarea className="finput" rows={3} placeholder="Leave blank for default"
+                    value={fields.intro} style={{ resize: 'vertical' }}
+                    onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Closing paragraph</label>
+                  <textarea className="finput" rows={3} placeholder="Leave blank for default"
+                    value={fields.closing} style={{ resize: 'vertical' }}
+                    onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
+                </div>
+                <div style={{ marginBottom: 18 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 5 }}>Placeholders (click to copy)</div>
+                  {placeholderChips(def.vars)}
+                </div>
 
-          <div style={{ borderTop: '1px solid var(--border)', marginTop: 16, paddingTop: 14 }}>
-            <button className="btn-primary" style={{ width: '100%' }} disabled={saving} onClick={handleSave}>
-              {saving ? 'Saving…' : 'Save'}
-            </button>
+                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginBottom: 0 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>Style</div>
+
+                  {/* Logo row */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8 }}>
+                    <div style={{
+                      width: 44, height: 30, borderRadius: 4, border: '1px solid var(--border)',
+                      background: logoPreviewBg,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0,
+                    }}>
+                      {logoData
+                        ? <img src={logoData} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+                        : <span style={{ fontFamily: 'serif', fontSize: 10, color: '#f7f4ef' }}>{(workspace as any)?.name?.charAt(0) || '?'}</span>
+                      }
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', flex: 1 }}>
+                      {logoData ? 'Logo uploaded' : 'No logo'} · <span style={{ color: '#2d6a9f', cursor: 'pointer' }}>Change in Workspace tab</span>
+                    </div>
+                  </div>
+
+                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 10 }}>
+                    <input type="checkbox" checked={fields.show_logo}
+                      onChange={e => setFields(f => ({ ...f, show_logo: e.target.checked }))}
+                      style={{ width: 13, height: 13, accentColor: 'var(--gold)' }} />
+                    Show logo in header
+                  </label>
+                  {colorRow('Header background', 'header_bg', '#1a2f4e')}
+                  {colorRow('Accent / highlight', 'accent_color', '#b8922e')}
+                  {colorRow('Detail values (amount, date)', 'value_color', '#1a1714')}
+                  <div style={{ marginBottom: 10 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Body font</label>
+                    <select className="fselect" style={{ margin: 0 }} value={fields.body_font}
+                      onChange={e => setFields(f => ({ ...f, body_font: e.target.value }))}>
+                      <option value="">Default</option>
+                      {BODY_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
+                    </select>
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Heading font</label>
+                    <select className="fselect" style={{ margin: 0 }} value={fields.heading_font}
+                      onChange={e => setFields(f => ({ ...f, heading_font: e.target.value }))}>
+                      <option value="">Default</option>
+                      {HEADING_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ── CUSTOM HTML TAB ── */}
+            {leftTab === 'custom' && (
+              <div style={{ padding: '16px 20px' }}>
+                {fields.custom_html.trim() ? (
+                  <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#166534' }}>
+                    <strong>Active</strong> — your custom HTML is being used for all emails of this type.
+                  </div>
+                ) : (
+                  <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: 'var(--muted)' }}>
+                    Not active — standard template (Template tab) is used.
+                  </div>
+                )}
+
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={fields.disable_style}
+                    onChange={e => setFields(f => ({ ...f, disable_style: e.target.checked }))}
+                    style={{ marginTop: 2, width: 13, height: 13, accentColor: 'var(--gold)', flexShrink: 0 }} />
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>Disable style injection</div>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, marginTop: 2 }}>
+                      Checked: style placeholders use built-in default colors. Uncheck to apply Template tab colors &amp; fonts (
+                      <code style={{ fontSize: 10, background: '#f0f4ff', padding: '0 3px', borderRadius: 2 }}>{'{header_bg}'}</code>,{' '}
+                      <code style={{ fontSize: 10, background: '#f0f4ff', padding: '0 3px', borderRadius: 2 }}>{'{accent_color}'}</code>{' '}
+                      etc.) into your HTML.
+                    </div>
+                  </div>
+                </label>
+
+                <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>
+                  Write your own HTML to fully control the email layout.
+                  Use <code style={{ fontSize: 11, background: '#f0f4ff', padding: '1px 4px', borderRadius: 3 }}>{'{intro}'}</code>, <code style={{ fontSize: 11, background: '#f0f4ff', padding: '1px 4px', borderRadius: 3 }}>{'{header_bg}'}</code> etc. to pull values from the Template tab.
+                </div>
+
+                {!fields.custom_html.trim() && (
+                  <button onClick={loadDefaultTemplate} disabled={previewLoading} style={{
+                    width: '100%', padding: '8px 12px', marginBottom: 10,
+                    background: '#f0f7ff', border: '1px solid #b0cce4', borderRadius: 6,
+                    fontSize: 12, color: '#2d6a9f', cursor: 'pointer', fontWeight: 500,
+                  }}>
+                    {previewLoading ? 'Loading…' : '↓ Start from default template'}
+                  </button>
+                )}
+
+                <textarea
+                  className="finput"
+                  rows={12}
+                  placeholder={'<!DOCTYPE html>\n<html>...</html>'}
+                  value={fields.custom_html}
+                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 11, margin: '0 0 8px' }}
+                  onChange={e => setFields(f => ({ ...f, custom_html: e.target.value }))}
+                  spellCheck={false}
+                />
+
+                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
+                  <label style={{
+                    fontSize: 11, color: '#2d6a9f', cursor: 'pointer', padding: '5px 10px',
+                    border: '1px solid #b0cce4', borderRadius: 5, background: '#f0f7ff', display: 'inline-block',
+                  }}>
+                    Upload .html file
+                    <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
+                  </label>
+                  <button onClick={() => {
+                    const tmpl = DEFAULT_HTML_TEMPLATES[activeKey]
+                    if (!tmpl) return
+                    const blob = new Blob([tmpl], { type: 'text/html' })
+                    const a = document.createElement('a')
+                    a.href = URL.createObjectURL(blob)
+                    a.download = `${activeKey}-sample.html`
+                    a.click()
+                    URL.revokeObjectURL(a.href)
+                  }} style={{
+                    fontSize: 11, color: '#2d6a9f', background: '#f0f7ff', border: '1px solid #b0cce4',
+                    borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                  }}>↓ Download Sample</button>
+                  {fields.custom_html.trim() && (
+                    <>
+                      <button onClick={loadDefaultTemplate} disabled={previewLoading} style={{
+                        fontSize: 11, color: '#2d6a9f', background: '#f0f7ff', border: '1px solid #b0cce4',
+                        borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                      }}>Reset to default</button>
+                      <button onClick={() => setFields(f => ({ ...f, custom_html: '', disable_style: false }))} style={{
+                        fontSize: 11, color: '#dc2626', background: 'none', border: '1px solid #fca5a5',
+                        borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
+                      }}>Clear — use standard template</button>
+                    </>
+                  )}
+                </div>
+
+                <div style={{ marginBottom: 8 }}>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 5 }}>All placeholders (click to copy)</div>
+                  {placeholderChips([...def.vars, '{intro}', '{closing}', '{header_bg}', '{accent_color}', '{logo_img}'])}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Auto-save status */}
+          <div style={{ padding: '10px 20px', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--white)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 44 }}>
+            {saveStatus === 'saving' && (
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>Saving…</span>
+            )}
+            {saveStatus === 'saved' && (
+              <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>✓ Saved</span>
+            )}
           </div>
         </div>
 
-        {/* Right — email preview */}
+        {/* Right — live email preview */}
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          {/* Subject bar */}
           <div style={{
             background: 'var(--white)', border: '1px solid var(--border)', borderRadius: '8px 8px 0 0',
             borderBottom: 'none', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8,
@@ -2010,27 +2434,19 @@ function EmailTemplatesTab() {
             <span style={{ fontSize: 13, color: fields.subject ? 'var(--ink)' : 'var(--muted)', fontStyle: fields.subject ? 'normal' : 'italic' }}>
               {fields.subject || def.defaultSubject}
             </span>
-            {!fields.subject && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 4, background: '#f5f3ef', borderRadius: 4, padding: '1px 6px' }}>default</span>
+            {!fields.subject && <span style={{ fontSize: 10, color: 'var(--muted)', background: '#f5f3ef', borderRadius: 4, padding: '1px 6px' }}>default</span>}
+            {fields.custom_html.trim() && (
+              <span style={{ marginLeft: 'auto', fontSize: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #f59e0b', borderRadius: 4, padding: '2px 7px', flexShrink: 0 }}>Custom HTML</span>
             )}
           </div>
-          <div style={{
-            flex: 1, border: '1px solid var(--border)', borderRadius: '0 0 8px 8px',
-            overflow: 'hidden', background: '#f5f3ef', position: 'relative',
-          }}>
+          <div style={{ flex: 1, border: '1px solid var(--border)', borderRadius: '0 0 8px 8px', overflow: 'hidden', background: '#f5f3ef', position: 'relative' }}>
             {previewLoading && (
-              <div style={{
-                position: 'absolute', inset: 0, display: 'flex', alignItems: 'center',
-                justifyContent: 'center', background: 'rgba(255,255,255,0.7)', zIndex: 1,
-                fontSize: 13, color: 'var(--muted)',
-              }}>Loading preview…</div>
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.7)', zIndex: 1, fontSize: 13, color: 'var(--muted)' }}>
+                Loading preview…
+              </div>
             )}
-            <iframe
-              srcDoc={previewHtml}
-              title="Email preview"
-              sandbox="allow-same-origin"
-              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }}
-            />
+            <iframe srcDoc={previewHtml} title="Email preview" sandbox="allow-same-origin"
+              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} />
           </div>
         </div>
       </div>
@@ -2229,7 +2645,7 @@ export default function Settings() {
     <AppShell>
       <PageHeader title="Settings" subtitle="Manage your workspace, profile, and team" />
 
-      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)', padding: '0 36px', display: 'flex' }}>
+      <div style={{ background: '#f7f4ef', borderBottom: '1px solid var(--border)', padding: '0 36px', display: 'flex', position: 'sticky', top: 0, zIndex: 10 }}>
         {TABS.map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
             display: 'flex', alignItems: 'center', gap: 6,
