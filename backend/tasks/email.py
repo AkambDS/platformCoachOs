@@ -35,12 +35,67 @@ def _owner_info(workspace) -> tuple:
     return "", ""
 
 
+class _PartialFormatMap(dict):
+    """Returns {key} literally for any key not in the dict, enabling partial substitution."""
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
 def _apply_tmpl(text: str, **vars) -> str:
-    """Substitute {variable} placeholders in a template string. Returns text unchanged on error."""
+    """Substitute {variable} placeholders. Unknown keys are left as-is rather than failing."""
+    if not text:
+        return ""
     try:
-        return text.format(**vars) if text else ""
+        return text.format_map(_PartialFormatMap(vars))
     except (KeyError, ValueError):
         return text
+
+
+# Default invoice email HTML template — used when the workspace has no custom_html saved.
+# All {placeholders} are substituted via _apply_tmpl before sending.
+_DEFAULT_INVOICE_HTML = """\
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>{workspace_name}</title></head>
+<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+    <tr>
+      <td style="padding:32px 16px;">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+          <tr>
+            <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
+              {logo_img}<span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
+            </td>
+          </tr>
+          <tr><td style="height:3px;background:#b8922e;"></td></tr>
+          <tr>
+            <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
+              <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
+                {workspace_name} sent you an invoice.
+              </h1>
+              <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
+                You've received an invoice for <strong>${amount}</strong> with payment due on <strong>{due_date}</strong>.
+              </p>
+              <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">{view_instructions}</p>
+              {pay_button}
+              <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
+                Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
+              </p>
+              <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
+              <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
+            </td>
+          </tr>
+          <tr>
+            <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
+              Sent by {workspace_name} &middot; Invoice #{invoice_number}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
 
 
 # Maps a workspace owner's email address to the SES-verified sending domain for that workspace.
@@ -568,9 +623,29 @@ def send_invoice_email(invoice_id: str):
         owner_email, owner_name = _owner_info(workspace)
         due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
 
+        _pay_link = invoice.stripe_payment_link or ""
+        _pay_button = (
+            f'<div style="margin:0 0 32px;">'
+            f'<a href="{_pay_link}" style="display:inline-block;background:#1a2f4e;color:#fff;'
+            f'text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:600;">'
+            f'Pay Invoice</a></div>'
+        ) if _pay_link else ""
+        _view_instructions = (
+            "You can view and pay the invoice by clicking the button below."
+            if _pay_link else
+            "You can view the invoice by clicking on the attached file."
+        )
+        _logo_url = _logo_src(workspace)
+        _logo_img = (
+            f'<img src="{_logo_url}" alt="{workspace.name}" '
+            f'style="max-height:48px;display:block;margin-bottom:10px;" />'
+        ) if _logo_url else ""
         tmpl_vars = dict(
             client_name=invoice.client.full_name, workspace_name=workspace.name,
             invoice_number=invoice.number, amount=str(invoice.total), due_date=due_str,
+            owner_email=owner_email, owner_name=owner_name or owner_email,
+            payment_link=_pay_link, pay_button=_pay_button,
+            view_instructions=_view_instructions, logo_img=_logo_img,
         )
         tmpl = (workspace.email_templates or {}).get("invoice", {})
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
@@ -591,17 +666,7 @@ def send_invoice_email(invoice_id: str):
         if custom_html_tmpl:
             html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
         else:
-            html = build_invoice_email(
-                invoice=invoice,
-                workspace_name=workspace.name,
-                logo_url=_logo_src(workspace),
-                due_str=due_str,
-                owner_email=owner_email,
-                owner_name=owner_name,
-                custom_intro=custom_intro,
-                custom_closing=custom_closing,
-                style=tmpl.get("style", {}),
-            )
+            html = _apply_tmpl(_DEFAULT_INVOICE_HTML, **tmpl_vars)
         from_addr = (f"{workspace.name} <{custom_from}>"
                      if custom_from else _workspace_from_email(workspace))
         msg = EmailMultiAlternatives(
@@ -614,19 +679,10 @@ def send_invoice_email(invoice_id: str):
         msg.attach_alternative(html, "text/html")
         try:
             from weasyprint import HTML as WeasyHTML
-            # Rebuild HTML without the logo URL so WeasyPrint doesn't make an external
-            # HTTP request to fetch it — that self-request hangs inside gunicorn.
-            # (custom_html_tmpl is user-supplied and unlikely to reference our backend URLs)
-            pdf_html = html if custom_html_tmpl else build_invoice_email(
-                invoice=invoice,
-                workspace_name=workspace.name,
-                logo_url="",
-                due_str=due_str,
-                owner_email=owner_email,
-                owner_name=owner_name,
-                custom_intro=custom_intro,
-                custom_closing=custom_closing,
-                style=tmpl.get("style", {}),
+            # For PDF: strip the logo img so WeasyPrint doesn't make an external HTTP
+            # request to our own backend URL, which hangs inside gunicorn.
+            pdf_html = html if custom_html_tmpl else _apply_tmpl(
+                _DEFAULT_INVOICE_HTML, **{**tmpl_vars, "logo_img": ""}
             )
             pdf_bytes = WeasyHTML(string=pdf_html).write_pdf()
             msg.attach(f"{invoice.number}.pdf", pdf_bytes, "application/pdf")
