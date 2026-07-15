@@ -923,6 +923,8 @@ export default function InvoiceDetail() {
   const [showRefund,     setShowRefund]     = useState(false)
   const [showEmailEdit,  setShowEmailEdit]  = useState(false)
   const [sending,        setSending]        = useState(false)
+  const [payLink,        setPayLink]        = useState('')
+  const [savingLink,     setSavingLink]     = useState(false)
 
   const { data: inv, isLoading } = useQuery({
     queryKey: ['invoice', id],
@@ -961,6 +963,19 @@ export default function InvoiceDetail() {
       await invoicesApi.remind(id!)
       showToast('Reminder sent to client')
     } catch { showToast('Failed to send reminder', 'error') }
+  }
+
+  // Must be before any early return to satisfy Rules of Hooks
+  useEffect(() => { setPayLink(inv?.stripe_payment_link || '') }, [inv?.stripe_payment_link])
+
+  const handleSavePayLink = async () => {
+    setSavingLink(true)
+    try {
+      await api.patch(`/api/invoices/${id}/`, { stripe_payment_link: payLink.trim() })
+      qc.invalidateQueries({ queryKey: ['invoice', id] })
+      showToast('Payment link saved')
+    } catch { showToast('Failed to save', 'error') }
+    finally { setSavingLink(false) }
   }
 
   const handlePrint = () => {
@@ -1189,6 +1204,51 @@ ${el.innerHTML}
                   </div>
                 )}
               </div>
+            </div>
+
+            {/* Payment Link */}
+            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 8 }}>PAYMENT LINK</div>
+              <input
+                type="url"
+                value={payLink}
+                onChange={e => setPayLink(e.target.value)}
+                placeholder="https://buy.stripe.com/..."
+                style={{
+                  width: '100%', padding: '7px 10px', fontSize: 12,
+                  border: '1px solid var(--border)', borderRadius: 5,
+                  fontFamily: 'inherit', color: 'var(--ink)', outline: 'none',
+                  boxSizing: 'border-box', marginBottom: 8,
+                }}
+              />
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button
+                  onClick={handleSavePayLink}
+                  disabled={savingLink}
+                  style={{
+                    flex: 1, padding: '6px 10px', borderRadius: 5, border: 'none',
+                    background: '#1a2f4e', color: '#fff', fontSize: 11, fontWeight: 600,
+                    cursor: 'pointer', letterSpacing: '.04em',
+                  }}
+                >
+                  {savingLink ? 'Saving…' : 'Save Link'}
+                </button>
+                {payLink && (
+                  <button
+                    onClick={() => { setPayLink(''); }}
+                    style={{
+                      padding: '6px 10px', borderRadius: 5, border: '1px solid var(--border)',
+                      background: '#fff', color: 'var(--muted)', fontSize: 11, cursor: 'pointer',
+                    }}
+                    title="Clear payment link"
+                  >✕</button>
+                )}
+              </div>
+              {inv.stripe_payment_link && (
+                <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)' }}>
+                  Included in invoice email when sent.
+                </div>
+              )}
             </div>
 
             {/* Payment History — compact */}
