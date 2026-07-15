@@ -1,6 +1,9 @@
 """CoachOS — email tasks using Django mail (Gmail SMTP)."""
 import logging
 import re
+from email.mime.application import MIMEApplication
+from email.utils import formatdate, make_msgid
+from django.core.mail.message import SafeMIMEMultipart, SafeMIMEText
 from celery import shared_task
 from django.core.mail import EmailMultiAlternatives, EmailMessage
 from django.conf import settings
@@ -51,63 +54,120 @@ def _apply_tmpl(text: str, **vars) -> str:
         return text
 
 
-# Default invoice email HTML template — used when the workspace has no custom_html saved.
-# All {placeholders} are substituted via _apply_tmpl before sending.
-_DEFAULT_INVOICE_HTML = """\
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr><td style="padding:32px 16px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
+class _InvoiceEmail(EmailMessage):
+    """EmailMessage subclass that produces the correct MIME structure for an invoice email:
 
-      <!-- Header -->
-      <tr>
-        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
-          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
-        </td>
-      </tr>
-      <tr><td style="height:3px;background:#b8922e;"></td></tr>
+        multipart/mixed
+          ├── multipart/alternative
+          │   ├── text/plain
+          │   └── text/html
+          └── application/pdf
 
-      <!-- Body -->
-      <tr>
-        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
-          <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
-            {workspace_name} sent you an invoice.
-          </h1>
-          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
-            You've received an invoice for <strong>${amount}</strong> with payment due on <strong>{due_date}</strong>.
-          </p>
-          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
-            {view_instructions}
-          </p>
-          {pay_button}
-          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
-            Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
-          </p>
-          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
-          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
-        </td>
-      </tr>
+    Django's EmailMultiAlternatives + attach() produces the wrong structure
+    (wraps plain+PDF in multipart/mixed then buries that inside multipart/alternative),
+    which causes Gmail and some clients to render the HTML as a download attachment.
+    """
+    def __init__(self, *args, html: str = "", pdf_bytes: bytes = b"", pdf_filename: str = "invoice.pdf", **kwargs):
+        super().__init__(*args, **kwargs)
+        self._html = html
+        self._pdf_bytes = pdf_bytes
+        self._pdf_filename = pdf_filename
 
-      <!-- Footer -->
-      <tr>
-        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
-          Sent by {workspace_name} &middot; Invoice #{invoice_number}
-        </td>
-      </tr>
+    def message(self):
+        encoding = self.encoding or "utf-8"
 
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>"""
+        alt = SafeMIMEMultipart("alternative")
+        alt.attach(SafeMIMEText(self.body or "", "plain", encoding))
+        alt.attach(SafeMIMEText(self._html, "html", encoding))
 
+        if self._pdf_bytes:
+            root = SafeMIMEMultipart("mixed")
+            root.attach(alt)
+            pdf = MIMEApplication(self._pdf_bytes, "pdf")
+            pdf.add_header("Content-Disposition", "attachment", filename=self._pdf_filename)
+            pdf.add_header("Content-Type", "application/pdf", name=self._pdf_filename)
+            root.attach(pdf)
+            msg = root
+        else:
+            msg = alt
+
+        msg["Subject"] = self.subject
+        msg["From"] = self.extra_headers.get("From", self.from_email)
+        msg["To"] = self.extra_headers.get("To", ", ".join(map(str, self.to)))
+        if self.cc:
+            msg["Cc"] = ", ".join(map(str, self.cc))
+        if self.reply_to:
+            msg["Reply-To"] = ", ".join(map(str, self.reply_to))
+        msg["Date"] = formatdate(localtime=False)
+        msg["Message-ID"] = make_msgid()
+        for name, value in self.extra_headers.items():
+            if name.lower() in ("from", "to"):
+                continue
+            try:
+                msg.replace_header(name, value)
+            except KeyError:
+                msg[name] = value
+        return msg
+
+
+_DEFAULT_INVOICE_HTML = (
+    '<!DOCTYPE html>\n'
+    '<html lang="en">\n'
+    '<head>\n'
+    '  <meta charset="utf-8">\n'
+    '  <meta name="viewport" content="width=device-width,initial-scale=1">\n'
+    '  <title>{workspace_name}</title>\n'
+    '</head>\n'
+    '<body style="margin:0;padding:0;background:#f0ede8;font-family:{body_font_css};">\n'
+    '<table role="presentation" width="100%" cellpadding="0" cellspacing="0">\n'
+    '  <tr><td style="padding:32px 16px;">\n'
+    '    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">\n'
+    '\n'
+    '      <!-- Header -->\n'
+    '      <tr>\n'
+    '        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">\n'
+    '          {logo_img}\n'
+    '          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>\n'
+    '        </td>\n'
+    '      </tr>\n'
+    '      <tr><td style="height:3px;background:{accent_color};"></td></tr>\n'
+    '\n'
+    '      <!-- Body -->\n'
+    '      <tr>\n'
+    '        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">\n'
+    '          <h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">\n'
+    '            {workspace_name} sent you an invoice.\n'
+    '          </h1>\n'
+    '          {intro_para}\n'
+    '          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
+    "            You've received an invoice for <strong style=\"color:{value_color};\">${amount}</strong> with payment due on <strong style=\"color:{value_color};\">{due_date}</strong>.\n"
+    '          </p>\n'
+    '          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
+    '            {view_instructions}\n'
+    '          </p>\n'
+    '          {pay_button}\n'
+    '          {closing_para}\n'
+    '          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
+    '            Please email us at <a href="mailto:{owner_email}" style="color:{accent_color};">{owner_email}</a> with any questions.\n'
+    '          </p>\n'
+    '          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>\n'
+    '          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>\n'
+    '        </td>\n'
+    '      </tr>\n'
+    '\n'
+    '      <!-- Footer -->\n'
+    '      <tr>\n'
+    '        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">\n'
+    '          Sent by {workspace_name} &middot; Invoice #{invoice_number}\n'
+    '        </td>\n'
+    '      </tr>\n'
+    '\n'
+    '    </table>\n'
+    '  </td></tr>\n'
+    '</table>\n'
+    '</body>\n'
+    '</html>'
+)
 
 # Maps a workspace owner's email address to the SES-verified sending domain for that workspace.
 # Any workspace whose owner is not listed here defaults to rass-consulting.com.
@@ -295,14 +355,38 @@ def send_activity_confirmation_email(activity_id: str):
             custom_from = ""
         from_email_addr  = custom_from or _workspace_from_email(workspace)
 
+        _show_logo = tmpl.get("show_logo", True)
+        _eff_logo_url = _logo_src(workspace) if _show_logo else ""
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
+            _ds = tmpl.get("disable_style", True)
+            _bf = saved_style.get("body_font", "")
+            _hf = saved_style.get("heading_font", "")
+            _logo_img = (
+                f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+                f'<img src="{_eff_logo_url}" alt="{workspace.name}" '
+                f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+                f'</td></tr></table>'
+            ) if _eff_logo_url else ""
+            _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+            tmpl_vars.update(dict(
+                header_bg="#1a2f4e" if _ds else saved_style.get("header_bg", "#1a2f4e"),
+                accent_color="#b8922e" if _ds else saved_style.get("accent_color", "#b8922e"),
+                value_color="#1a1714" if _ds else saved_style.get("value_color", "#1a1714"),
+                body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if _ds else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+                heading_font_css="Georgia,'Times New Roman',serif" if _ds else (_hf or "Georgia,'Times New Roman',serif"),
+                logo_img=_logo_img,
+                intro=custom_intro, closing=custom_closing,
+                intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+                closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            ))
             html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
         else:
             html = build_confirmation_email(
                 activity=activity,
                 workspace_name=workspace.name,
-                logo_url=_logo_src(workspace),
+                logo_url=_eff_logo_url,
                 coach_name=coach_name,
                 coach_email=coach_email,
                 dt_human=dt,
@@ -372,10 +456,10 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         if not client.email or activity.status != "scheduled":
             return
 
-        dt         = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        workspace   = activity.workspace
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
-        workspace   = activity.workspace
         owner_email, owner_name = _owner_info(workspace)
         time_label  = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
@@ -409,14 +493,38 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             custom_from = ""
         from_email_addr  = custom_from or _workspace_from_email(workspace)
 
+        _show_logo = tmpl.get("show_logo", True)
+        _eff_logo_url = _logo_src(workspace) if _show_logo else ""
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         if custom_html_tmpl:
+            _ds = tmpl.get("disable_style", True)
+            _bf = saved_style.get("body_font", "")
+            _hf = saved_style.get("heading_font", "")
+            _logo_img = (
+                f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+                f'<img src="{_eff_logo_url}" alt="{workspace.name}" '
+                f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+                f'</td></tr></table>'
+            ) if _eff_logo_url else ""
+            _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+            tmpl_vars.update(dict(
+                header_bg="#1a2f4e" if _ds else saved_style.get("header_bg", "#1a2f4e"),
+                accent_color="#b8922e" if _ds else saved_style.get("accent_color", "#b8922e"),
+                value_color="#1a1714" if _ds else saved_style.get("value_color", "#1a1714"),
+                body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if _ds else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+                heading_font_css="Georgia,'Times New Roman',serif" if _ds else (_hf or "Georgia,'Times New Roman',serif"),
+                logo_img=_logo_img,
+                intro=custom_intro, closing=custom_closing,
+                intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+                closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            ))
             html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
         else:
             html = build_reminder_email(
                 activity=activity,
                 workspace_name=workspace.name,
-                logo_url=_logo_src(workspace),
+                logo_url=_eff_logo_url,
                 coach_name=coach_name,
                 coach_email=coach_email,
                 dt_human=dt,
@@ -627,9 +735,9 @@ def send_activity_cancellation_email(activity_id: str):
 @shared_task(name="tasks.email.send_invoice_email")
 def send_invoice_email(invoice_id: str):
     from apps.invoicing.models import Invoice
-    from tasks.email_html import build_invoice_email
+    from tasks.email_html import build_invoice_pdf_html
     try:
-        invoice   = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
+        invoice   = Invoice.objects.select_related("client", "coach", "workspace").prefetch_related("items").get(id=invoice_id)
         workspace = invoice.workspace
         owner_email, owner_name = _owner_info(workspace)
         due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
@@ -646,11 +754,22 @@ def send_invoice_email(invoice_id: str):
             if _pay_link else
             "You can view the invoice by clicking on the attached file."
         )
-        _logo_url = _logo_src(workspace)
+        tmpl = (workspace.email_templates or {}).get("invoice", {})
+        tmpl_style = tmpl.get("style", {})
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        disable_style = bool(custom_html_tmpl) and tmpl.get("disable_style", False)
+        # When disable_style is on, suppress logo injection — custom HTML controls its own layout
+        _show_logo = tmpl.get("show_logo", True) and not disable_style
+        _logo_url = _logo_src(workspace) if _show_logo else ""
         _logo_img = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
             f'<img src="{_logo_url}" alt="{workspace.name}" '
-            f'style="max-height:48px;display:block;margin-bottom:10px;" />'
+            f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+            f'</td></tr></table>'
         ) if _logo_url else ""
+        _bf = tmpl_style.get("body_font", "")
+        _hf = tmpl_style.get("heading_font", "")
         tmpl_vars = dict(
             client_name=invoice.client.full_name, workspace_name=workspace.name,
             invoice_number=invoice.number, amount=str(invoice.total), due_date=due_str,
@@ -658,13 +777,24 @@ def send_invoice_email(invoice_id: str):
             payment_link=_pay_link, pay_button=_pay_button,
             view_instructions=_view_instructions, logo_img=_logo_img,
         )
-        tmpl = (workspace.email_templates or {}).get("invoice", {})
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
         custom_from = tmpl.get("from_email", "").strip()
         if "@" not in custom_from:
             custom_from = ""
+        _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+        tmpl_vars.update(dict(
+            intro=custom_intro,
+            closing=custom_closing,
+            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+            accent_color="#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e"),
+            value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
+            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+        ))
 
         plain = (
             f"Hi {invoice.client.first_name},\n\n"
@@ -673,32 +803,35 @@ def send_invoice_email(invoice_id: str):
             f"{'Pay online: ' + invoice.stripe_payment_link + chr(10) + chr(10) if invoice.stripe_payment_link else ''}"
             f"— {workspace.name}"
         )
-        custom_html_tmpl = tmpl.get("custom_html", "").strip()
-        if custom_html_tmpl:
-            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
-        else:
-            html = _apply_tmpl(_DEFAULT_INVOICE_HTML, **tmpl_vars)
+        effective_html_tmpl = custom_html_tmpl or _DEFAULT_INVOICE_HTML
+        html = _apply_tmpl(effective_html_tmpl, **tmpl_vars)
+        pdf_html = build_invoice_pdf_html(
+            invoice=invoice,
+            workspace_name=workspace.name,
+            logo_url="",
+            due_str=due_str,
+            owner_email=owner_email,
+            owner_name=owner_name,
+            style=tmpl.get("style", {}),
+        )
         from_addr = (f"{workspace.name} <{custom_from}>"
                      if custom_from else _workspace_from_email(workspace))
-        msg = EmailMultiAlternatives(
+        pdf_bytes = b""
+        try:
+            from weasyprint import HTML as WeasyHTML
+            pdf_bytes = WeasyHTML(string=pdf_html).write_pdf()
+        except Exception as pdf_err:
+            logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
+        msg = _InvoiceEmail(
             subject=subject,
             body=plain,
             from_email=from_addr,
             to=[invoice.client.email],
             reply_to=[owner_email] if owner_email else None,
+            html=html,
+            pdf_bytes=pdf_bytes,
+            pdf_filename=f"{invoice.number}.pdf",
         )
-        msg.attach_alternative(html, "text/html")
-        try:
-            from weasyprint import HTML as WeasyHTML
-            # For PDF: strip the logo img so WeasyPrint doesn't make an external HTTP
-            # request to our own backend URL, which hangs inside gunicorn.
-            pdf_html = html if custom_html_tmpl else _apply_tmpl(
-                _DEFAULT_INVOICE_HTML, **{**tmpl_vars, "logo_img": ""}
-            )
-            pdf_bytes = WeasyHTML(string=pdf_html).write_pdf()
-            msg.attach(f"{invoice.number}.pdf", pdf_bytes, "application/pdf")
-        except Exception as pdf_err:
-            logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
         msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")
     except Exception as e:
@@ -1140,8 +1273,32 @@ def send_portal_invite_email(client_id: str):
             custom_from = ""
         from_email_addr = custom_from or _workspace_from_email(workspace)
 
+        _show_logo = tmpl.get("show_logo", True)
+        _eff_logo_url = _logo_src(workspace) if _show_logo else ""
         custom_html = tmpl.get("custom_html", "").strip()
         if custom_html:
+            _ds = tmpl.get("disable_style", True)
+            _bf = saved_style.get("body_font", "")
+            _hf = saved_style.get("heading_font", "")
+            _logo_img = (
+                f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+                f'<img src="{_eff_logo_url}" alt="{workspace.name}" '
+                f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+                f'</td></tr></table>'
+            ) if _eff_logo_url else ""
+            _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+            tmpl_vars.update(dict(
+                header_bg="#1a2f4e" if _ds else saved_style.get("header_bg", "#1a2f4e"),
+                accent_color="#b8922e" if _ds else saved_style.get("accent_color", "#b8922e"),
+                value_color="#1a1714" if _ds else saved_style.get("value_color", "#1a1714"),
+                body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if _ds else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+                heading_font_css="Georgia,'Times New Roman',serif" if _ds else (_hf or "Georgia,'Times New Roman',serif"),
+                logo_img=_logo_img,
+                intro=custom_intro, closing=custom_closing,
+                intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+                closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            ))
             html = _apply_tmpl(custom_html, **tmpl_vars)
         else:
             html = build_portal_invite_email(
@@ -1149,7 +1306,7 @@ def send_portal_invite_email(client_id: str):
                 workspace_name=workspace.name,
                 portal_url=portal_url,
                 coach_name=coach_name,
-                logo_url=_logo_src(workspace),
+                logo_url=_eff_logo_url,
                 owner_email=owner_email,
                 owner_name=owner_name,
                 custom_intro=custom_intro,

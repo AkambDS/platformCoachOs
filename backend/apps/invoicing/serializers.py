@@ -80,10 +80,11 @@ class PaymentSerializer(serializers.ModelSerializer):
 # ── Email HTML helper ────────────────────────────────────────────────────────────
 
 def _build_email_html(invoice: Invoice) -> str:
-    """Build the invoice email HTML preview for API responses."""
+    """Build the invoice email HTML for the review-before-sending preview, matching what will be sent."""
     try:
         from django.conf import settings
         from tasks.email_html import build_invoice_email
+        from tasks.email import _apply_tmpl, _logo_src
         from apps.accounts.models import User
 
         workspace    = invoice.workspace
@@ -98,14 +99,66 @@ def _build_email_html(invoice: Invoice) -> str:
             backend_base = f"https://{host}" if host else "http://localhost:8000"
         logo_url = f"{backend_base}/api/settings/logo/{workspace.id}/" if workspace.logo_data else ""
 
-        due_str = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
-        return build_invoice_email(
-            invoice=invoice,
-            workspace_name=workspace.name,
-            logo_url=logo_url,
-            due_str=due_str,
-            owner_email=owner_email,
-            owner_name=owner_name,
+        due_str  = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+        tmpl     = (workspace.email_templates or {}).get("invoice", {})
+
+        _pay_link = invoice.stripe_payment_link or ""
+        _pay_button = (
+            f'<div style="margin:0 0 32px;">'
+            f'<a href="{_pay_link}" style="display:inline-block;background:#1a2f4e;color:#fff;'
+            f'text-decoration:none;padding:12px 28px;border-radius:6px;font-size:15px;font-weight:600;">'
+            f'Pay Invoice</a></div>'
+        ) if _pay_link else ""
+        _view_instructions = (
+            "You can view and pay the invoice by clicking the button below."
+            if _pay_link else
+            "You can view the invoice by clicking on the attached file."
         )
+        tmpl_style = tmpl.get("style", {})
+        custom_html = tmpl.get("custom_html", "").strip()
+        # disable_style only applies when custom HTML is set
+        disable_style = custom_html and tmpl.get("disable_style", False)
+        _bf = tmpl_style.get("body_font", "")
+        _hf = tmpl_style.get("heading_font", "")
+        _show_logo = tmpl.get("show_logo", True) and not disable_style
+        _logo_img = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+            f'<img src="{workspace.logo_data}" alt="{workspace.name}" '
+            f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+            f'</td></tr></table>'
+        ) if (workspace.logo_data and _show_logo) else ""
+        tmpl_vars = dict(
+            client_name=invoice.client.full_name,
+            workspace_name=workspace.name,
+            invoice_number=invoice.number,
+            amount=str(invoice.total),
+            due_date=due_str,
+            owner_email=owner_email,
+            owner_name=owner_name or owner_email,
+            payment_link=_pay_link,
+            pay_button=_pay_button,
+            view_instructions=_view_instructions,
+            logo_img=_logo_img,
+            header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+            accent_color="#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e"),
+            value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
+            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+        )
+
+        custom_intro   = _apply_tmpl(tmpl.get("intro",   ""), **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+        tmpl_vars.update(dict(
+            intro=custom_intro,
+            closing=custom_closing,
+            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+        ))
+
+        from tasks.email import _DEFAULT_INVOICE_HTML
+        effective_tmpl = custom_html or _DEFAULT_INVOICE_HTML
+        return _apply_tmpl(effective_tmpl, **tmpl_vars)
     except Exception:
         return ""

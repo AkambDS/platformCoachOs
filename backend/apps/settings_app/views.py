@@ -258,7 +258,14 @@ def email_preview(request):
 
     email_type = request.query_params.get("type", "confirmation")
     workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
-    logo_url   = _logo_src(workspace)
+    hide_logo  = request.query_params.get("hide_logo") == "1"
+    # Embed logo as data URI in preview — avoids BACKEND_URL requirement and browser caching
+    if not hide_logo and workspace.logo_data and workspace.logo_data.startswith("data:"):
+        logo_url = workspace.logo_data
+    elif not hide_logo:
+        logo_url = _logo_src(workspace)
+    else:
+        logo_url = ""
     owner_email, owner_name = _owner_info(workspace)
 
     DUMMY = dict(
@@ -342,13 +349,44 @@ def email_preview(request):
             number="INV-0042", total=150.00, currency="USD",
             stripe_payment_link="", client=client,
         )
-        html = build_invoice_email(
-            invoice=invoice, workspace_name=workspace.name, logo_url=logo_url,
-            due_str="June 30, 2026",
-            owner_email=owner_email, owner_name=owner_name,
-            custom_intro=custom_intro, custom_closing=custom_closing,
-            style=style,
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        skip_custom = request.query_params.get("skip_custom_html") == "1"
+        # disable_style only applies when custom HTML is actually being used
+        using_custom = custom_html_tmpl and not skip_custom
+        disable_style = using_custom and tmpl.get("disable_style", False)
+        from tasks.email import _apply_tmpl, _DEFAULT_INVOICE_HTML
+        _show_logo = tmpl.get("show_logo", True) and not disable_style
+        logo_img_tag = (
+            f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+            f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+            f'<img src="{logo_url}" alt="{workspace.name}" '
+            f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+            f'</td></tr></table>'
+        ) if (logo_url and _show_logo) else ""
+        _bf = style.get("body_font", "")
+        _hf = style.get("heading_font", "")
+        _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+        # Allow callers (e.g. new-invoice preview) to pass real values instead of dummy ones
+        _preview_amount      = request.query_params.get("amount",      "150.00")
+        _preview_due_date    = request.query_params.get("due_date",    "June 30, 2026")
+        _preview_client_name = request.query_params.get("client_name", "Jane Smith")
+        preview_vars = dict(
+            client_name=_preview_client_name, workspace_name=workspace.name,
+            invoice_number="INV-0042", amount=_preview_amount, due_date=_preview_due_date,
+            owner_email=owner_email, owner_name=owner_name or owner_email,
+            payment_link="", pay_button="", logo_img=logo_img_tag,
+            view_instructions="You can view the invoice by clicking on the attached file.",
+            intro=custom_intro, closing=custom_closing,
+            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
+            accent_color="#b8922e" if disable_style else style.get("accent_color", "#b8922e"),
+            value_color="#1a1714" if disable_style else style.get("value_color", "#1a1714"),
+            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
         )
+        effective_tmpl = (custom_html_tmpl if not skip_custom else "") or _DEFAULT_INVOICE_HTML
+        html = _apply_tmpl(effective_tmpl, **preview_vars)
 
     elif email_type == "portal_invite":
         frontend_url = getattr(__import__('django.conf', fromlist=['settings']).settings, 'FRONTEND_URL', '').rstrip('/')

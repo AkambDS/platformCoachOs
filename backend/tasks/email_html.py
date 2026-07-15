@@ -695,6 +695,149 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
                         header_tagline=header_tagline, body_font=body_font)
 
 
+# ── Proper invoice PDF document (with line items) ────────────────────────────────
+
+def build_invoice_pdf_html(invoice, workspace_name: str, logo_url: str,
+                           due_str: str, owner_email: str = "",
+                           owner_name: str = "", style: dict = None) -> str:
+    """Generate a standalone invoice PDF document with line items table.
+    Intended for WeasyPrint — not styled as an email wrapper."""
+    s = style or {}
+    header_bg    = s.get("header_bg")    or "#1a2f4e"
+    accent_color = s.get("accent_color") or "#b8922e"
+    value_color  = s.get("value_color")  or "#1a1714"
+
+    logo_html = (
+        f'<img src="{logo_url}" alt="{workspace_name}" '
+        f'style="max-height:56px;max-width:180px;object-fit:contain;display:block;margin-bottom:4px;" />'
+    ) if logo_url else ""
+
+    # Line items rows
+    items_html = ""
+    for item in invoice.items.all():
+        line_total = item.quantity * item.unit_price * (1 - item.discount / 100)
+        discount_cell = (
+            f'<td style="padding:10px 12px;font-size:13px;color:#6b6560;text-align:center;">'
+            f'{int(item.discount)}%</td>'
+        ) if item.discount else '<td style="padding:10px 12px;font-size:13px;color:#b5afa6;text-align:center;">—</td>'
+        items_html += f"""
+        <tr style="border-bottom:1px solid #ede9e1;">
+          <td style="padding:10px 12px;font-size:13px;color:{value_color};line-height:1.5;">{item.description}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#6b6560;text-align:center;">{item.quantity:g}</td>
+          <td style="padding:10px 12px;font-size:13px;color:#6b6560;text-align:right;">{invoice.currency} {item.unit_price:,.2f}</td>
+          {discount_cell}
+          <td style="padding:10px 12px;font-size:13px;color:{value_color};font-weight:600;text-align:right;">{invoice.currency} {line_total:,.2f}</td>
+        </tr>"""
+
+    # Tax row (if any)
+    tax_row = ""
+    _tax_pct = getattr(invoice, "tax_percent", None) or getattr(invoice, "tax", None) or 0
+    if _tax_pct and float(_tax_pct) > 0:
+        tax_row = f"""
+        <tr>
+          <td colspan="3"></td>
+          <td style="padding:6px 12px;font-size:12px;color:#8c8279;text-align:right;border-top:1px solid #ede9e1;">
+            Tax ({_tax_pct}%)
+          </td>
+          <td style="padding:6px 12px;font-size:13px;color:{value_color};text-align:right;border-top:1px solid #ede9e1;">
+            {invoice.currency} {(float(invoice.subtotal) * float(_tax_pct) / 100):,.2f}
+          </td>
+        </tr>"""
+
+    pay_note = ""
+    if invoice.stripe_payment_link:
+        pay_note = (
+            f'<p style="margin:0 0 8px;font-size:12px;color:#6b6560;">'
+            f'Pay online: <a href="{invoice.stripe_payment_link}" style="color:{accent_color};">'
+            f'{invoice.stripe_payment_link}</a></p>'
+        )
+
+    contact = ""
+    if owner_email:
+        contact = (
+            f'<p style="margin:0;font-size:12px;color:#6b6560;">'
+            f'Questions? <a href="mailto:{owner_email}" style="color:{accent_color};">'
+            f'{owner_name or owner_email}</a></p>'
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <style>
+    @page {{ margin: 0; }}
+    body {{ margin: 0; padding: 0; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; background: #f5f2ee; }}
+  </style>
+</head>
+<body>
+<div style="max-width:680px;margin:32px auto;background:#fff;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,.08);">
+
+  <!-- Header -->
+  <div style="background:{header_bg};padding:28px 36px;display:flex;align-items:flex-start;justify-content:space-between;">
+    <div>
+      {logo_html}
+      <span style="font-family:Georgia,serif;font-size:20px;color:#f7f4ef;font-weight:400;">{workspace_name}</span>
+    </div>
+    <div style="text-align:right;">
+      <div style="font-size:22px;font-weight:700;color:#fff;letter-spacing:.02em;">INVOICE</div>
+      <div style="font-size:13px;color:rgba(255,255,255,.7);margin-top:4px;">#{invoice.number}</div>
+    </div>
+  </div>
+  <div style="height:3px;background:{accent_color};"></div>
+
+  <!-- Meta row -->
+  <div style="padding:24px 36px;display:flex;gap:48px;background:#faf8f5;border-bottom:1px solid #ede9e1;">
+    <div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8c8279;margin-bottom:4px;">Bill To</div>
+      <div style="font-size:14px;font-weight:600;color:{value_color};">{invoice.client.full_name}</div>
+      {f'<div style="font-size:13px;color:#6b6560;">{invoice.client.email}</div>' if invoice.client.email else ""}
+    </div>
+    <div>
+      <div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8c8279;margin-bottom:4px;">Invoice Date</div>
+      <div style="font-size:13px;color:{value_color};">{invoice.issue_date.strftime("%B %d, %Y") if invoice.issue_date else "—"}</div>
+    </div>
+    {f'<div><div style="font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#8c8279;margin-bottom:4px;">Due Date</div><div style="font-size:13px;color:{value_color};font-weight:600;">{due_str}</div></div>' if due_str else ""}
+  </div>
+
+  <!-- Line items -->
+  <div style="padding:0 36px;">
+    <table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin:24px 0 0;">
+      <thead>
+        <tr style="background:#f5f2ee;border-bottom:2px solid {header_bg};">
+          <th style="padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;text-align:left;">Description</th>
+          <th style="padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;text-align:center;">Qty</th>
+          <th style="padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;text-align:right;">Unit Price</th>
+          <th style="padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;text-align:center;">Disc.</th>
+          <th style="padding:10px 12px;font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#8c8279;text-align:right;">Total</th>
+        </tr>
+      </thead>
+      <tbody>{items_html}</tbody>
+      {tax_row}
+      <tfoot>
+        <tr style="background:#faf8f5;">
+          <td colspan="4" style="padding:14px 12px;font-size:14px;font-weight:700;color:{value_color};text-align:right;border-top:2px solid {header_bg};">
+            TOTAL DUE
+          </td>
+          <td style="padding:14px 12px;font-size:18px;font-weight:700;color:{header_bg};text-align:right;border-top:2px solid {header_bg};">
+            {invoice.currency} {invoice.total:,.2f}
+          </td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- Footer -->
+  <div style="padding:24px 36px;border-top:1px solid #ede9e1;margin-top:24px;">
+    {pay_note}
+    {contact}
+    <p style="margin:16px 0 0;font-size:11px;color:#b5afa6;">Thank you for your business — {workspace_name}</p>
+  </div>
+
+</div>
+</body>
+</html>"""
+
+
 # ── Pipeline follow-up alert email ───────────────────────────────────────────────
 
 def build_pipeline_alert_email(
