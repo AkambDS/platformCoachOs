@@ -38,7 +38,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
         model  = Invoice
         fields = "__all__"
         read_only_fields = ["id", "workspace", "number", "total", "subtotal",
-                            "amount_paid", "stripe_invoice_id", "stripe_payment_link",
+                            "amount_paid", "stripe_invoice_id",
                             "stripe_subscription_id", "pdf_s3_key",
                             "created_at", "updated_at"]
 
