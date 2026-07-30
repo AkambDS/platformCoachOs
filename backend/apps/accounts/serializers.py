@@ -36,11 +36,20 @@ class CoachOSTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class WorkspaceSerializer(serializers.ModelSerializer):
+    """Used by LoginView/MeView to hydrate the frontend's auth store on login and page
+    load. Must include generic_templates/template_use_case_map (also read by the
+    Settings page, and by ClientCommunicationPanel's "Start from a template?" picker) —
+    without them here, those features work fine mid-session (apps.settings_app's own,
+    fuller WorkspaceSerializer returns the full object on save, which the frontend merges
+    into its in-memory store) but appear to have "lost" all saved templates the moment
+    the user logs back in or reloads the page, since this serializer silently omitted
+    the fields instead of erroring."""
     class Meta:
         model  = Workspace
         fields = ["id", "name", "slug", "plan", "primary_colour",
                   "workspace_timezone", "buffer_minutes", "cancellation_hours",
                   "logo_s3_key", "logo_data", "email_templates",
+                  "generic_templates", "template_use_case_map",
                   "address", "city", "state", "zip_code", "created_at"]
         read_only_fields = ["id", "created_at", "slug"]
 
