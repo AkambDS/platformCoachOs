@@ -151,6 +151,7 @@ class ClientMessageDraftSerializer(serializers.ModelSerializer):
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
     attachments      = serializers.SerializerMethodField()
     signed_pdf_url   = serializers.SerializerMethodField()
+    signed_pdf_name  = serializers.SerializerMethodField()
 
     class Meta:
         model  = ClientMessageDraft
@@ -158,11 +159,11 @@ class ClientMessageDraftSerializer(serializers.ModelSerializer):
                   "disable_style", "show_logo", "style",
                   "source_template_id", "source_template_name",
                   "coach_signature", "include_client_signature_line", "signature_name",
-                  "client_signed_at", "signed_pdf_url",
+                  "client_signed_at", "signed_pdf_url", "signed_pdf_name",
                   "attachments", "status", "sent_at", "created_by", "created_by_name",
                   "created_at", "updated_at"]
         read_only_fields = ["id", "client", "attachments", "status", "sent_at",
-                            "client_signed_at", "signed_pdf_url",
+                            "client_signed_at", "signed_pdf_url", "signed_pdf_name",
                             "created_by", "created_by_name", "created_at", "updated_at"]
 
     def get_attachments(self, obj):
@@ -175,6 +176,11 @@ class ClientMessageDraftSerializer(serializers.ModelSerializer):
         if not obj.signed_pdf_assessment_id:
             return None
         return _presigned_url(obj.signed_pdf_assessment.file_s3_key)
+
+    def get_signed_pdf_name(self, obj):
+        if not obj.signed_pdf_assessment_id:
+            return None
+        return obj.signed_pdf_assessment.file_name
 
 
 class GoalProgressSerializer(serializers.ModelSerializer):

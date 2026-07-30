@@ -1168,6 +1168,8 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
     queryFn: () => clientsApi.listMessageDrafts(clientId).then(r => r.data),
   })
   const drafts: any[] = draftsData?.results || draftsData || []
+  const signedContracts = drafts.filter((d: any) => d.status === 'signed')
+  const activeDrafts    = drafts.filter((d: any) => d.status !== 'signed')
 
   const { data: clientFilesData } = useQuery({
     queryKey: ['client-files', clientId],
@@ -1514,28 +1516,62 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
       ) : drafts.length === 0 ? (
         <EmptyState icon="✉" title="No drafts yet" message="Compose a message for this client — save it as a draft to send later" />
       ) : (
-        <table className="tbl">
-          <thead><tr><th>Subject</th><th>Status</th><th>Source Template</th><th>Last Updated</th><th></th></tr></thead>
-          <tbody>
-            {drafts.map((d: any) => (
-              <tr key={d.id} onClick={() => openEdit(d)} style={{ cursor: 'pointer' }}>
-                <td style={{ fontWeight: 600 }}>{d.subject || '(no subject)'}</td>
-                <td>
-                  {d.status === 'signed'
-                    ? <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7c59' }}>✓ Signed</span>
-                    : d.status === 'sent'
-                    ? <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7c59' }}>✓ Sent</span>
-                    : <span style={{ fontSize: 11, color: 'var(--muted)' }}>Draft</span>}
-                </td>
-                <td style={{ color: 'var(--muted)', fontSize: 12 }}>{d.source_template_name || '—'}</td>
-                <td style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(d.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
-                <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
-                  <button onClick={() => handleDeleteDraft(d.id)} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 12 }}>Delete</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <>
+          {signedContracts.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
+                Signed Contracts
+              </div>
+              <table className="tbl">
+                <thead><tr><th>Subject</th><th>File</th><th>Signed</th><th></th></tr></thead>
+                <tbody>
+                  {signedContracts.map((d: any) => (
+                    <tr key={d.id} onClick={() => d.signed_pdf_url && window.open(d.signed_pdf_url, '_blank')} style={{ cursor: d.signed_pdf_url ? 'pointer' : 'default' }}>
+                      <td style={{ fontWeight: 600 }}>{d.subject || '(no subject)'}</td>
+                      <td style={{ color: 'var(--muted)', fontSize: 12 }}>{d.signed_pdf_name || '—'}</td>
+                      <td style={{ fontSize: 12, color: '#4a7c59', fontWeight: 600 }}>
+                        ✓ {d.client_signed_at ? new Date(d.client_signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''}
+                      </td>
+                      <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                        <button onClick={() => handleDeleteDraft(d.id)} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {activeDrafts.length > 0 && (
+            <div>
+              {signedContracts.length > 0 && (
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
+                  Drafts
+                </div>
+              )}
+              <table className="tbl">
+                <thead><tr><th>Subject</th><th>Status</th><th>Source Template</th><th>Last Updated</th><th></th></tr></thead>
+                <tbody>
+                  {activeDrafts.map((d: any) => (
+                    <tr key={d.id} onClick={() => openEdit(d)} style={{ cursor: 'pointer' }}>
+                      <td style={{ fontWeight: 600 }}>{d.subject || '(no subject)'}</td>
+                      <td>
+                        {d.status === 'sent'
+                          ? <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7c59' }}>✓ Sent</span>
+                          : <span style={{ fontSize: 11, color: 'var(--muted)' }}>Draft</span>}
+                      </td>
+                      <td style={{ color: 'var(--muted)', fontSize: 12 }}>{d.source_template_name || '—'}</td>
+                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(d.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                      <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                        <button onClick={() => handleDeleteDraft(d.id)} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </>
       )}
 
       {showPicker && (
