@@ -312,6 +312,11 @@ function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }
 function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onStatusChange }: any) {
   const isActive = ['scheduled', 'late', 'rescheduled'].includes(activity.status)
   const [showEmailPreview, setShowEmailPreview] = useState(false)
+  // Logged automatically when a coach sends a one-off Client Communication email (see
+  // ClientMessageDraftViewSet.send) — not a schedulable session, so the confirmation/
+  // reminder/cancellation notification pipeline (built for real appointments) doesn't
+  // apply and would only show a misleading "session confirmed" preview.
+  const isCommunicationLog = activity.activity_type === 'custom' && (activity.title || '').startsWith('Email: ')
 
   return (
     <>
@@ -325,10 +330,12 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
               Edit
             </button>
           )}
-          <button className="btn btn-outline btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-            onClick={() => setShowEmailPreview(true)}>
-            <Mail size={12} /> Emails
-          </button>
+          {!isCommunicationLog && (
+            <button className="btn btn-outline btn-sm" style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+              onClick={() => setShowEmailPreview(true)}>
+              <Mail size={12} /> Emails
+            </button>
+          )}
           <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
           {isActive && activity.status !== 'completed' && (
             <button className="btn btn-sm"
@@ -379,7 +386,7 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
           {activity.notes}
         </div>
       )}
-      <NotificationStatus activity={activity} />
+      {!isCommunicationLog && <NotificationStatus activity={activity} />}
     </Modal>
     {showEmailPreview && (
       <EmailPreviewModal activityId={activity.id} onClose={() => setShowEmailPreview(false)} />

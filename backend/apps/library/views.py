@@ -1,8 +1,11 @@
+import hashlib
 import uuid as uuid_lib
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from django.conf import settings as dj_settings
 from django.contrib.postgres.search import SearchVector, SearchQuery
 from django.core.files.storage import default_storage
 from .models import KnowledgeFolder, KnowledgeItem
@@ -16,6 +19,31 @@ MIME_TO_CTYPE = {
     "video/":          "video",
     "audio/":          "video",
 }
+
+# Office files OnlyOffice can open for real-time in-browser editing, by editor type.
+# "pdf" uses OnlyOffice's PDF editor (rewrites text in place, not just annotations) —
+# quality depends on the PDF having a real text layer; scanned/image-only PDFs won't
+# expose editable text no matter what tool is used.
+ONLYOFFICE_DOC_TYPES = {
+    "doc": "word", "docx": "word", "odt": "word", "rtf": "word",
+    "xls": "cell", "xlsx": "cell", "ods": "cell", "csv": "cell",
+    "ppt": "slide", "pptx": "slide", "odp": "slide",
+    "pdf": "pdf",
+}
+
+
+def _doc_server_file_url(item):
+    """URL the OnlyOffice container fetches the document from. Deliberately points at
+    our OWN backend (proxied through onlyoffice_file below) rather than a presigned S3/
+    MinIO URL: when JWT is enabled, OnlyOffice's document server attaches its own
+    `Authorization: Bearer <jwt>` header to every outbound request it makes — including
+    the document download — and MinIO rejects a request carrying both that header AND
+    a presigned query-string signature with "multiple authentication types". Routing
+    through our backend means there's exactly one auth mechanism on that request (the
+    JWT we already verify), and the backend fetches the S3 object itself, server-side."""
+    if not item.s3_key:
+        return None
+    return f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-file/"
 
 
 def _detect_ctype(mime: str, filename: str) -> str:
@@ -51,7 +79,17 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         from django.db.models import Q
         user = self.request.user
         qs = KnowledgeItem.objects.filter(workspace=user.workspace)
-        if user.role in ("business_owner", "platform_admin"):
+
+        shared_with_client = self.request.query_params.get("shared_with_client")
+        if shared_with_client:
+            # "What's been shared with this client" (client Files > Shared Files) —
+            # a different question than the requesting coach's own Library visibility,
+            # so it isn't ANDed with the role-based filter below.
+            qs = qs.filter(
+                Q(visibility="client_visible") |
+                Q(visibility="specific", shared_client_ids__contains=[shared_with_client])
+            )
+        elif user.role in ("business_owner", "platform_admin"):
             pass  # owner sees everything
         else:
             # Coaches/assistants: see internal + client_visible + their own private uploads
@@ -68,7 +106,8 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         if q:
             qs = qs.annotate(search=SearchVector("title", "description")).filter(search=SearchQuery(q))
         if ctype:  qs = qs.filter(content_type=ctype)
-        if vis:    qs = qs.filter(visibility=vis)
+        if vis and not shared_with_client:
+            qs = qs.filter(visibility=vis)
         if folder == "root":
             qs = qs.filter(folder__isnull=True)
         elif folder:
@@ -161,3 +200,142 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         item.view_count += 1
         item.save(update_fields=["view_count"])
         return Response({"view_count": item.view_count})
+
+    @action(detail=True, methods=["get"], url_path="onlyoffice-file",
+            permission_classes=[AllowAny], authentication_classes=[])
+    def onlyoffice_file(self, request, pk=None):
+        """GET /api/library/items/{id}/onlyoffice-file/ — serves the raw file to the
+        OnlyOffice Document Server (called from document.url in edit-config's config).
+        Not user-authenticated — verified via the same JWT OnlyOffice signs its
+        document-download request with, same as onlyoffice_callback below."""
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if not token:
+                return Response({"detail": "Missing token."}, status=status.HTTP_403_FORBIDDEN)
+            try:
+                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
+            except jwt.InvalidTokenError:
+                return Response({"detail": "Invalid token."}, status=status.HTTP_403_FORBIDDEN)
+
+        try:
+            item = KnowledgeItem.objects.get(pk=pk)
+        except KnowledgeItem.DoesNotExist:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+        if not item.s3_key:
+            return Response(status=status.HTTP_404_NOT_FOUND)
+
+        import mimetypes
+        from django.http import FileResponse
+        content_type = mimetypes.guess_type(item.file_name)[0] or "application/octet-stream"
+        return FileResponse(default_storage.open(item.s3_key, "rb"), content_type=content_type)
+
+    @action(detail=True, methods=["get"], url_path="edit-config")
+    def edit_config(self, request, pk=None):
+        """GET /api/library/items/{id}/edit-config/?mode=view|edit — OnlyOffice
+        editor config, used both for the inline read-only preview (anyone who can
+        already see the item, via the normal get_queryset visibility rules) and
+        for real-time editing (?mode=edit — uploader/workspace owner only)."""
+        item = self.get_object()
+        if not item.s3_key:
+            return Response({"detail": "No file to preview."}, status=status.HTTP_400_BAD_REQUEST)
+
+        is_owner    = request.user.role == "business_owner"
+        is_uploader = item.uploaded_by_id == request.user.id
+        can_edit    = is_owner or is_uploader
+
+        requested_mode = request.query_params.get("mode", "view")
+        if requested_mode == "edit" and not can_edit:
+            return Response({"detail": "Only the uploader or workspace owner can edit this file."},
+                             status=status.HTTP_403_FORBIDDEN)
+        mode = "edit" if (requested_mode == "edit" and can_edit) else "view"
+
+        ext = item.file_name.rsplit(".", 1)[-1].lower() if "." in item.file_name else ""
+        doc_type = ONLYOFFICE_DOC_TYPES.get(ext)
+        if not doc_type:
+            return Response({"detail": "This file type can't be previewed with the document editor."},
+                             status=status.HTTP_400_BAD_REQUEST)
+
+        file_url = _doc_server_file_url(item)
+        if not file_url:
+            return Response({"detail": "File is unavailable."}, status=status.HTTP_400_BAD_REQUEST)
+
+        key = hashlib.md5(
+            f"{item.id}-{item.version}-{item.updated_at.timestamp()}".encode()
+        ).hexdigest()
+        callback_url = f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-callback/"
+
+        config = {
+            "document": {
+                "fileType": ext,
+                "key":      key,
+                "title":    item.file_name,
+                "url":      file_url,
+                "permissions": {"edit": mode == "edit", "download": True, "print": True},
+            },
+            "documentType": doc_type,
+            "editorConfig": {
+                "callbackUrl": callback_url,
+                "user": {"id": str(request.user.id), "name": request.user.full_name or request.user.email},
+                "mode": mode,
+                "customization": {"forcesave": mode == "edit"},
+            },
+        }
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            config["token"] = jwt.encode(config, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+
+        return Response({"config": config, "server_url": dj_settings.ONLYOFFICE_SERVER_URL})
+
+    @action(detail=True, methods=["post"], url_path="onlyoffice-callback",
+            permission_classes=[AllowAny], authentication_classes=[])
+    def onlyoffice_callback(self, request, pk=None):
+        """POST from the OnlyOffice Document Server when a document is saved.
+        Not user-authenticated — the doc server calls this directly — so the
+        JWT token OnlyOffice signs the payload with is verified instead."""
+        body = request.data
+
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            token = body.get("token") or request.headers.get("Authorization", "").removeprefix("Bearer ")
+            if not token:
+                return Response({"error": 1})
+            try:
+                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
+            except jwt.InvalidTokenError:
+                return Response({"error": 1})
+
+        try:
+            item = KnowledgeItem.objects.get(pk=pk)
+        except KnowledgeItem.DoesNotExist:
+            return Response({"error": 1})
+
+        # status 2 = ready for saving (editor closed), 6 = force-save while still open
+        if body.get("status") in (2, 6):
+            download_url = body.get("url")
+            if download_url:
+                import requests
+                # download_url is built from the browser-facing ONLYOFFICE_SERVER_URL —
+                # not reachable from inside our own container. Swap in the internal address.
+                if download_url.startswith(dj_settings.ONLYOFFICE_SERVER_URL):
+                    download_url = download_url.replace(
+                        dj_settings.ONLYOFFICE_SERVER_URL, dj_settings.ONLYOFFICE_INTERNAL_URL, 1
+                    )
+                resp = requests.get(download_url, timeout=30)
+                if resp.status_code == 200:
+                    from django.core.files.base import ContentFile
+                    from django.utils import timezone
+                    ext = item.file_name.rsplit(".", 1)[-1] if "." in item.file_name else "bin"
+                    new_key = f"library/{item.workspace_id}/{uuid_lib.uuid4()}.{ext}"
+                    default_storage.save(new_key, ContentFile(resp.content))
+
+                    prev = list(item.previous_versions or [])
+                    if item.s3_key:
+                        prev.append({"version": item.version, "s3_key": item.s3_key,
+                                      "replaced_at": timezone.now().isoformat()})
+                    item.previous_versions = prev
+                    item.version += 1
+                    item.s3_key = new_key
+                    item.save(update_fields=["s3_key", "version", "previous_versions"])
+
+        return Response({"error": 0})

@@ -253,7 +253,8 @@ def email_preview(request):
     the user has typed in the editor, not what's committed to the DB.
     """
     from types import SimpleNamespace
-    from tasks.email_html import build_confirmation_email, build_reminder_email, build_invoice_email, build_portal_invite_email
+    from tasks.email_html import (build_confirmation_email, build_reminder_email, build_invoice_email,
+                                   build_portal_invite_email, build_client_communication_email)
     from tasks.email import _logo_src, _owner_info
 
     email_type = request.query_params.get("type", "confirmation")
@@ -277,6 +278,11 @@ def email_preview(request):
         invoice_number="INV-0042", amount="150.00",
         due_date="June 30, 2026",
     )
+    if email_type == "client_communication":
+        # Real client name (not the generic Jane Smith placeholder) — lets a coach
+        # reference {client_name} in a draft's intro/closing and see it substituted
+        # for the actual client they're messaging.
+        DUMMY["client_name"] = request.query_params.get("client_name", DUMMY["client_name"])
 
     def apply(text):
         try:
@@ -309,6 +315,23 @@ def email_preview(request):
     # header_tagline is special: '' means "logo only / no tagline", not "use default"
     style["header_tagline"] = request.query_params.get(
         "header_tagline", saved_style.get("header_tagline", "Coaching Platform")
+    )
+    # show_header/show_footer are bools, not color strings — '0'/'false' turns them off
+    raw_show_header = request.query_params.get("show_header")
+    if raw_show_header is not None:
+        style["show_header"] = raw_show_header not in ("0", "false", "False")
+    else:
+        style["show_header"] = saved_style.get("show_header", True)
+
+    raw_show_footer = request.query_params.get("show_footer")
+    if raw_show_footer is not None:
+        style["show_footer"] = raw_show_footer not in ("0", "false", "False")
+    else:
+        style["show_footer"] = saved_style.get("show_footer", True)
+
+    # footer_text: '' means "use default disclaimer", same None-sentinel convention as header_tagline
+    style["footer_text"] = request.query_params.get(
+        "footer_text", saved_style.get("footer_text", "")
     )
 
     if email_type == "confirmation":
@@ -401,6 +424,22 @@ def email_preview(request):
             custom_intro=custom_intro,
             custom_closing=custom_closing,
             style=style,
+        )
+
+    elif email_type == "client_communication":
+        preview_client_name = request.query_params.get("client_name", "Jane Smith")
+        preview_subject     = request.query_params.get("subject", tmpl.get("subject", ""))
+        html = build_client_communication_email(
+            client_name=preview_client_name,
+            subject=preview_subject,
+            workspace_name=workspace.name,
+            coach_name=request.query_params.get("coach_name") or "Coach Mike",
+            logo_url=logo_url,
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
+            coach_signature=request.query_params.get("coach_signature", ""),
+            include_client_signature_line=request.query_params.get("include_client_signature_line") == "1",
         )
 
     else:

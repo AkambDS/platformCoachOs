@@ -219,7 +219,7 @@ export default function NewDeal() {
         <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 30, fontWeight: 300, marginBottom: 4 }}>
-              New Deal
+              New Contract
             </div>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               Add a prospect to your pipeline and track them to close
@@ -258,10 +258,10 @@ export default function NewDeal() {
               </div>
             </div>
 
-            {/* Deal Details */}
+            {/* Contract Details */}
             <div className="card">
               <div style={{ padding: '18px 24px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Deal Details</div>
+                <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Contract Details</div>
                 <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>Value, type, and timeline</div>
               </div>
               <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>

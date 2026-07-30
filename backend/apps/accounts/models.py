@@ -30,15 +30,24 @@ class Workspace(models.Model):
     city                   = models.CharField(max_length=100, blank=True)
     state                  = models.CharField(max_length=100, blank=True)
     zip_code               = models.CharField(max_length=20,  blank=True)
+    phone                  = models.CharField(max_length=30,  blank=True)
     # Scheduling defaults
     workspace_timezone      = models.CharField(max_length=64, default="America/New_York")
     buffer_minutes     = models.PositiveSmallIntegerField(default=15)
     cancellation_hours = models.PositiveSmallIntegerField(default=48)
     is_active          = models.BooleanField(default=True)
     pending_activation = models.BooleanField(default=False)
-    # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice
+    # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice, portal_invite
     # Each entry: {subject, intro, closing}
     email_templates    = models.JSONField(default=dict, blank=True)
+    # Named, reusable templates — each can be assigned to one or more use-cases (see
+    # template_use_case_map). Saving an assignment copies that template's content into
+    # email_templates[use_case] so the existing send pipeline needs no changes.
+    # Each entry: {id, name, subject, from_email, intro, closing, custom_html,
+    #              disable_style, show_logo, style, use_cases, created_at, updated_at}
+    generic_templates      = models.JSONField(default=list, blank=True)
+    # {use_case: generic_template_id} — which generic template currently "owns" each slot
+    template_use_case_map  = models.JSONField(default=dict, blank=True)
     # Third-party integration credentials — keys: zoom {account_id, client_id, client_secret}
     integrations       = models.JSONField(default=dict, blank=True)
     created_at         = models.DateTimeField(auto_now_add=True)
@@ -97,6 +106,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name     = models.CharField(max_length=200)
     role          = models.CharField(max_length=20, choices=Role.choices, default=Role.COACH)
     user_timezone = models.CharField(max_length=64, default="America/New_York")  # renamed
+    phone         = models.CharField(max_length=30, blank=True)
     avatar_url    = models.URLField(blank=True)
     is_active     = models.BooleanField(default=True)
     is_staff      = models.BooleanField(default=False)

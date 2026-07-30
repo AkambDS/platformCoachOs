@@ -48,7 +48,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
         model  = User
-        fields = ["id", "email", "full_name", "role", "user_timezone",
+        fields = ["id", "email", "full_name", "role", "user_timezone", "phone",
                   "avatar_url", "is_active", "is_superuser", "date_joined"]
         read_only_fields = ["id", "is_superuser", "date_joined"]
 

@@ -49,7 +49,8 @@ export const authApi = {
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),
   updateWorkspace: (d: any)    => api.patch('/api/settings/workspace/', d),
-  emailPreview:    (type: string) => api.get('/api/settings/email-preview/', { params: { type } }),
+  emailPreview:    (type: string, extraParams?: Record<string, any>) =>
+    api.get('/api/settings/email-preview/', { params: { type, ...extraParams } }),
   uploadLogo:      (file: File) => {
     const fd = new FormData(); fd.append('logo', file)
     return api.post('/api/settings/logo/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
@@ -97,8 +98,23 @@ export const clientsApi = {
   deleteFile:   (id: string, fid: string) => api.delete(`/api/clients/${id}/assessments/${fid}/`),
   uploadFile:   (id: string, fd: FormData) =>
     api.post(`/api/clients/${id}/assessments/upload/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  fileEditConfig: (id: string, fid: string, mode: 'view' | 'edit' = 'view') =>
+    api.get(`/api/clients/${id}/assessments/${fid}/edit-config/`, { params: { mode } }),
+  convertFileToPdf: (id: string, fid: string) =>
+    api.post(`/api/clients/${id}/assessments/${fid}/convert-to-pdf/`),
   invitePortal: (id: string) => api.post(`/api/clients/${id}/invite-portal/`),
   revokePortal: (id: string) => api.post(`/api/clients/${id}/revoke-portal/`),
+  listMessageDrafts:   (id: string)              => api.get(`/api/clients/${id}/messages/`),
+  createMessageDraft:  (id: string, d: any)      => api.post(`/api/clients/${id}/messages/`, d),
+  updateMessageDraft:  (id: string, mid: string, d: any) => api.patch(`/api/clients/${id}/messages/${mid}/`, d),
+  deleteMessageDraft:  (id: string, mid: string) => api.delete(`/api/clients/${id}/messages/${mid}/`),
+  sendMessageDraft:    (id: string, mid: string) => api.post(`/api/clients/${id}/messages/${mid}/send/`),
+  attachToMessageDraft: (id: string, mid: string, fd: FormData) =>
+    api.post(`/api/clients/${id}/messages/${mid}/attach/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  attachExistingFileToMessageDraft: (id: string, mid: string, assessmentId: string) =>
+    api.post(`/api/clients/${id}/messages/${mid}/attach-existing/`, { assessment_id: assessmentId }),
+  removeMessageAttachment: (id: string, mid: string, s3_key: string) =>
+    api.post(`/api/clients/${id}/messages/${mid}/remove-attachment/`, { s3_key }),
 }
 export const activitiesApi = {
   list:         (p?: any)            => api.get('/api/activities/', { params: p }),
@@ -200,6 +216,7 @@ export const libraryApi = {
   deleteItem:   (id: string)         => api.delete(`/api/library/items/${id}/`),
   upload:       (fd: FormData)       => api.post('/api/library/items/upload/', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
   replaceFile:  (id: string, fd: FormData) => api.post(`/api/library/items/${id}/replace-file/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
+  editConfig:   (id: string, mode: 'view' | 'edit' = 'view') => api.get(`/api/library/items/${id}/edit-config/`, { params: { mode } }),
   folders:      ()                   => api.get('/api/library/folders/'),
   createFolder: (d: any)             => api.post('/api/library/folders/', d),
   deleteFolder: (id: string)         => api.delete(`/api/library/folders/${id}/`),

@@ -4,7 +4,8 @@ import { libraryApi, authApi, clientsApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
-import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Download, ChevronRight, Pencil, FileSpreadsheet, FileImage, X, RotateCcw } from 'lucide-react'
+import { EDITABLE_OFFICE_EXTS, InlineOfficeViewer, OfficeEditorModal } from '../../components/OfficeEditor'
+import { Folder, FolderOpen, FileText, Film, Link as LinkIcon, File, Upload, Plus, Trash2, Search, Download, ChevronRight, Pencil, FileSpreadsheet, FileImage, X, RotateCcw, PencilLine } from 'lucide-react'
 
 const VISIBILITY_LABELS: Record<string, string> = {
   private:        'Just Me',
@@ -551,9 +552,9 @@ function getFileBg(item: any) {
 }
 
 // ── Preview panel ─────────────────────────────────────────────────────────────
-function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
-  item: any; onClose: () => void; onEdit: () => void
-  onDelete: () => void; onReplaced: () => void
+function FilePreviewPanel({ item, currentUser, onClose, onEdit, onDelete, onReplaced, onEditInBrowser }: {
+  item: any; currentUser: any; onClose: () => void; onEdit: () => void
+  onDelete: () => void; onReplaced: () => void; onEditInBrowser: () => void
 }) {
   const { show } = useToast()
   const [replacing, setReplacing] = useState(false)
@@ -563,7 +564,11 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
   const isPdf    = item.content_type === 'pdf' || ext === 'pdf'
   const isVideo  = item.content_type === 'video'
   const isOffice = ['xls', 'xlsx', 'csv', 'doc', 'docx', 'odt', 'rtf', 'ppt', 'pptx'].includes(ext)
+  const isEditableOffice = EDITABLE_OFFICE_EXTS.includes(ext)
   const hasFile  = !!item.presigned_url
+  const isOwner    = currentUser?.role === 'business_owner'
+  const isUploader = item.uploaded_by === currentUser?.id
+  const canEdit    = isOwner || isUploader
 
   const handleReplaceFile = async (file: File) => {
     setReplacing(true)
@@ -580,7 +585,7 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
 
   return (
     <div style={{
-      width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column',
+      width: '100%', display: 'flex', flexDirection: 'column',
       background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
       overflow: 'hidden', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 120px)',
     }}>
@@ -601,13 +606,13 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
       {/* Preview area */}
       <div style={{ flex: 1, overflow: 'auto' }}>
         {hasFile && isPdf && item.inline_url && (
-          <iframe src={item.inline_url} style={{ width: '100%', height: 340, border: 'none', display: 'block' }} title={item.title} />
+          <iframe src={item.inline_url} style={{ width: '100%', height: 'max(600px, calc(100vh - 340px))', border: 'none', display: 'block' }} title={item.title} />
         )}
         {hasFile && isImage && item.inline_url && (
-          <img src={item.inline_url} alt={item.title} style={{ width: '100%', maxHeight: 280, objectFit: 'contain', display: 'block', background: '#f8f8f8' }} />
+          <img src={item.inline_url} alt={item.title} style={{ width: '100%', maxHeight: 'max(500px, calc(100vh - 380px))', objectFit: 'contain', display: 'block', background: '#f8f8f8' }} />
         )}
         {hasFile && isVideo && item.inline_url && (
-          <video src={item.inline_url} controls style={{ width: '100%', maxHeight: 220, display: 'block', background: '#000' }} />
+          <video src={item.inline_url} controls style={{ width: '100%', maxHeight: 'max(420px, calc(100vh - 380px))', display: 'block', background: '#000' }} />
         )}
         {item.video_url && (
           <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
@@ -617,17 +622,11 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
             </a>
           </div>
         )}
-        {hasFile && isOffice && item.inline_url && (
-          <div style={{ position: 'relative' }}>
-            <iframe
-              src={`https://view.officeapps.live.com/op/embed.aspx?src=${encodeURIComponent(item.inline_url)}`}
-              style={{ width: '100%', height: 360, border: 'none', display: 'block' }}
-              title={item.title}
-            />
-            <div style={{ fontSize: 10, color: 'var(--muted)', padding: '4px 8px', textAlign: 'center', background: 'var(--paper)' }}>
-              Preview via Microsoft Office Online · requires internet access
-            </div>
-          </div>
+        {hasFile && isOffice && (
+          <InlineOfficeViewer
+            itemKey={`${item.id}-${item.version}`}
+            getEditConfig={(mode) => libraryApi.editConfig(item.id, mode).then(r => r.data)}
+          />
         )}
         {item.url && item.content_type === 'link' && (
           <div style={{ padding: '12px 16px' }}>
@@ -661,6 +660,11 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
 
       {/* Actions */}
       <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {hasFile && isEditableOffice && canEdit && (
+          <button onClick={onEditInBrowser} className="btn btn-dark btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6, background: 'var(--gold)', borderColor: 'var(--gold)' }}>
+            <PencilLine size={13} /> Edit live in browser
+          </button>
+        )}
         {hasFile && (
           <button onClick={() => window.open(item.presigned_url, '_blank')} className="btn btn-dark btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6 }}>
             <Download size={13} /> Download
@@ -683,6 +687,19 @@ function FilePreviewPanel({ item, onClose, onEdit, onDelete, onReplaced }: {
           </button>
         </div>
       </div>
+    </div>
+  )
+}
+
+function EmptyPreviewState() {
+  return (
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+      gap: 10, minHeight: 480, border: '1px dashed var(--border)', borderRadius: 'var(--radius)',
+      background: '#fff', color: 'var(--muted)',
+    }}>
+      <FileText size={28} color="var(--muted)" />
+      <div style={{ fontSize: 13 }}>Select a file to preview</div>
     </div>
   )
 }
@@ -730,6 +747,7 @@ export default function Library() {
   const [editAccessTarget, setEditAccessTarget] = useState<any>(null)
   const [editTarget, setEditTarget] = useState<any>(null)
   const [previewItem, setPreviewItem] = useState<any>(null)
+  const [editingItem, setEditingItem] = useState<any>(null)
 
   const { data: foldersData = [] } = useQuery({
     queryKey: ['library-folders'],
@@ -784,156 +802,149 @@ export default function Library() {
         }
       />
 
-      <div style={{ display: 'flex', padding: '0 28px 36px', gap: 24, alignItems: 'flex-start' }}>
+      <div style={{ display: 'flex', padding: '0 28px 36px', gap: 20, alignItems: 'flex-start' }}>
 
-        {/* Sidebar */}
-        <div className="card" style={{ width: 220, flexShrink: 0, padding: '12px 8px' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase',
-                        color: 'var(--muted)', padding: '4px 12px 8px' }}>Folders</div>
-          <FolderTree folders={folders} selected={selectedFolder} onSelect={setSelectedFolder} />
-          <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
-            <button className="btn btn-ghost btn-sm" onClick={() => setShowNewFolder(true)}
-              style={{ width: '100%', justifyContent: 'flex-start', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
-              <Plus size={13} /> New folder
+        {/* Explorer column: folders + file list */}
+        <div style={{ width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          {/* Folders */}
+          <div className="card" style={{ padding: '10px 8px' }}>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase',
+                          color: 'var(--muted)', padding: '4px 12px 8px' }}>Folders</div>
+            <FolderTree folders={folders} selected={selectedFolder} onSelect={setSelectedFolder} />
+            <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowNewFolder(true)}
+                style={{ width: '100%', justifyContent: 'flex-start', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
+                <Plus size={13} /> New folder
+              </button>
+            </div>
+          </div>
+
+          {/* Toolbar */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+              <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
+              <input className="finput" style={{ paddingLeft: 30, width: '100%', height: 32, fontSize: 12 }}
+                placeholder="Search files…" value={search} onChange={e => setSearch(e.target.value)} />
+            </div>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowUpload(true)} style={{ gap: 5, fontSize: 12, flexShrink: 0 }}>
+              <Upload size={13} /> Upload
             </button>
           </div>
-        </div>
 
-        {/* Main content */}
-        <div style={{ flex: 1, minWidth: 0, display: 'flex', gap: 16, alignItems: 'flex-start' }}>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            {/* Toolbar */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)', flex: 1 }}>
-                {folderLabel}
-                {items.length > 0 && <span style={{ fontWeight: 400, color: 'var(--muted)', fontSize: 12, marginLeft: 8 }}>{items.length} item{items.length !== 1 ? 's' : ''}</span>}
-              </div>
-              <div style={{ position: 'relative' }}>
-                <Search size={13} style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }} />
-                <input className="finput" style={{ paddingLeft: 30, width: 200, height: 32, fontSize: 12 }}
-                  placeholder="Search files…" value={search} onChange={e => setSearch(e.target.value)} />
-              </div>
-              <button className="btn btn-outline btn-sm" onClick={() => setShowUpload(true)} style={{ gap: 5, fontSize: 12 }}>
-                <Upload size={13} /> Upload
-              </button>
+          {/* File list */}
+          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>
+              {folderLabel}
+              {items.length > 0 && <span style={{ fontWeight: 400, color: 'var(--muted)', marginLeft: 6 }}>· {items.length} item{items.length !== 1 ? 's' : ''}</span>}
             </div>
 
             {isLoading ? (
-              <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+              <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
             ) : items.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 60 }}>
-                <Upload size={32} color="var(--muted)" style={{ margin: '0 auto 12px' }} />
-                <div style={{ fontSize: 14, color: 'var(--muted)' }}>
-                  {search ? 'No files match your search' : 'No files yet — upload one to get started'}
+              <div style={{ textAlign: 'center', padding: 40 }}>
+                <Upload size={26} color="var(--muted)" style={{ margin: '0 auto 10px' }} />
+                <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                  {search ? 'No files match your search' : 'No files yet'}
                 </div>
                 {!search && (
-                  <button className="btn btn-dark btn-sm" style={{ marginTop: 16 }} onClick={() => setShowUpload(true)}>
+                  <button className="btn btn-dark btn-sm" style={{ marginTop: 14 }} onClick={() => setShowUpload(true)}>
                     <Upload size={13} /> Upload File
                   </button>
                 )}
               </div>
             ) : (
-              <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <table className="tbl" style={{ tableLayout: 'fixed' }}>
-                  <colgroup>
-                    <col style={{ width: 36 }} />
-                    <col />
-                    <col style={{ width: 90 }} />
-                    <col style={{ width: 110 }} />
-                    <col style={{ width: 100 }} />
-                    <col style={{ width: 90 }} />
-                  </colgroup>
-                  <thead>
-                    <tr>
-                      <th></th>
-                      <th>Name</th>
-                      <th>Type</th>
-                      <th>Access</th>
-                      <th>Modified</th>
-                      <th style={{ textAlign: 'right' }}>Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {items.map((item: any) => {
-                      const isSelected = previewItem?.id === item.id
-                      const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || ''
-                      const typeLabel = ['xlsx','xls','csv'].includes(ext) ? 'Spreadsheet'
-                        : ['docx','doc','rtf','odt'].includes(ext) ? 'Document'
-                        : ['jpg','jpeg','png','gif','webp'].includes(ext) ? 'Image'
-                        : item.content_type ? item.content_type.charAt(0).toUpperCase() + item.content_type.slice(1)
-                        : 'File'
-                      return (
-                        <tr key={item.id}
-                          onClick={() => setPreviewItem(isSelected ? null : item)}
-                          style={{ cursor: 'pointer', background: isSelected ? 'var(--gold-faint, #faf6ed)' : undefined, transition: 'background .1s' }}>
-                          <td style={{ padding: '10px 8px 10px 14px' }}>
-                            <div style={{ background: getFileBg(item), borderRadius: 6, padding: 5, display: 'inline-flex' }}>
-                              {getFileIcon(item, 16)}
-                            </div>
-                          </td>
-                          <td style={{ padding: '10px 8px' }}>
-                            <div style={{ fontWeight: 500, fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              {item.title}
-                            </div>
-                            {item.file_name && item.file_name !== item.title && (
-                              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                {item.file_name}{item.version > 1 ? ` · v${item.version}` : ''}
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ padding: '10px 8px' }}>
-                            <span style={{ fontSize: 11, color: 'var(--muted)' }}>{typeLabel}</span>
-                          </td>
-                          <td style={{ padding: '10px 8px' }}>
-                            <span style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.05em', textTransform: 'uppercase',
+              <div style={{ maxHeight: 'calc(100vh - 420px)', minHeight: 160, overflowY: 'auto' }}>
+                {items.map((item: any) => {
+                  const isSelected = previewItem?.id === item.id
+                  const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || ''
+                  const typeLabel = ['xlsx','xls','csv'].includes(ext) ? 'Spreadsheet'
+                    : ['docx','doc','rtf','odt'].includes(ext) ? 'Document'
+                    : ['jpg','jpeg','png','gif','webp'].includes(ext) ? 'Image'
+                    : item.content_type ? item.content_type.charAt(0).toUpperCase() + item.content_type.slice(1)
+                    : 'File'
+                  return (
+                    <div key={item.id}
+                      onClick={() => setPreviewItem(isSelected ? null : item)}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px',
+                        cursor: 'pointer', borderBottom: '1px solid var(--border)',
+                        background: isSelected ? 'var(--gold-faint, #faf6ed)' : undefined,
+                        transition: 'background .1s',
+                      }}>
+                      <div style={{ background: getFileBg(item), borderRadius: 6, padding: 5, display: 'inline-flex', flexShrink: 0 }}>
+                        {getFileIcon(item, 15)}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontWeight: 500, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {item.title}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+                          <span style={{ whiteSpace: 'nowrap' }}>{typeLabel}</span>
+                          <span>·</span>
+                          <span style={{ whiteSpace: 'nowrap' }}>{new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}</span>
+                          <span
+                            style={{
+                              fontWeight: 600, letterSpacing: '.03em', textTransform: 'uppercase',
                               color: VISIBILITY_COLORS[item.visibility] || '#8c8279',
                               background: `${VISIBILITY_COLORS[item.visibility] || '#8c8279'}18`,
-                              padding: '2px 7px', borderRadius: 20 }}>
-                              {VISIBILITY_LABELS[item.visibility] || item.visibility}
-                            </span>
-                          </td>
-                          <td style={{ padding: '10px 8px', fontSize: 11, color: 'var(--muted)' }}>
-                            {new Date(item.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' })}
-                          </td>
-                          <td style={{ padding: '10px 14px 10px 8px', textAlign: 'right' }}>
-                            <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }} onClick={e => e.stopPropagation()}>
-                              {(item.presigned_url || item.url) && (
-                                <button onClick={() => window.open(item.presigned_url || item.url, '_blank')}
-                                  className="btn btn-ghost btn-sm" style={{ padding: '4px 7px' }} title="Download / Open">
-                                  <Download size={13} />
-                                </button>
-                              )}
-                              <button onClick={() => setEditTarget(item)}
-                                className="btn btn-ghost btn-sm" style={{ padding: '4px 7px' }} title="Edit">
-                                <Pencil size={13} />
-                              </button>
-                              <button onClick={() => handleDeleteItem(item.id, item.title)}
-                                className="btn btn-ghost btn-sm" style={{ padding: '4px 7px', color: '#c0392b' }} title="Delete">
-                                <Trash2 size={13} />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
+                              padding: '1px 6px', borderRadius: 20, whiteSpace: 'nowrap',
+                            }}>
+                            {VISIBILITY_LABELS[item.visibility] || item.visibility}
+                          </span>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 2, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                        {(item.presigned_url || item.url) && (
+                          <button onClick={() => window.open(item.presigned_url || item.url, '_blank')}
+                            className="btn btn-ghost btn-sm" style={{ padding: '4px 6px' }} title="Download / Open">
+                            <Download size={12} />
+                          </button>
+                        )}
+                        <button onClick={() => handleDeleteItem(item.id, item.title)}
+                          className="btn btn-ghost btn-sm" style={{ padding: '4px 6px', color: '#c0392b' }} title="Delete">
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
               </div>
             )}
           </div>
+        </div>
 
-          {/* Preview panel */}
-          {previewItem && (
+        {/* Preview panel — wide, so files can be read/edited comfortably */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {previewItem ? (
             <FilePreviewPanel
               item={previewItem}
+              currentUser={user}
               onClose={() => setPreviewItem(null)}
-              onEdit={() => { setEditTarget(previewItem); setPreviewItem(null) }}
+              onEdit={() => setEditTarget(previewItem)}
               onDelete={() => { handleDeleteItem(previewItem.id, previewItem.title); setPreviewItem(null) }}
               onReplaced={() => { qc.invalidateQueries({ queryKey: ['library-items'] }); setPreviewItem(null) }}
+              onEditInBrowser={() => setEditingItem(previewItem)}
             />
+          ) : (
+            <EmptyPreviewState />
           )}
         </div>
       </div>
+
+      {editingItem && (
+        <OfficeEditorModal
+          title={editingItem.title}
+          getEditConfig={(mode) => libraryApi.editConfig(editingItem.id, mode).then(r => r.data)}
+          onClose={() => setEditingItem(null)}
+          onSaved={async () => {
+            qc.invalidateQueries({ queryKey: ['library-items'] })
+            try {
+              const res = await libraryApi.getItem(editingItem.id)
+              setPreviewItem(res.data)
+            } catch { /* keep stale preview if refetch fails */ }
+          }}
+        />
+      )}
 
       {showUpload && (
         <UploadModal

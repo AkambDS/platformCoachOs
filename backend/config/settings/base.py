@@ -178,6 +178,7 @@ FRONTEND_URL   = env("FRONTEND_URL",   default="http://localhost:5173")
 BACKEND_URL    = env("BACKEND_URL",    default="http://localhost:8000")
 CRON_SECRET    = env("CRON_SECRET",    default="")
 RESEND_API_KEY = env("RESEND_API_KEY", default="")
+GOOGLE_CALENDAR_WEBHOOK_TOKEN = env("GOOGLE_CALENDAR_WEBHOOK_TOKEN", default="")
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(
@@ -236,6 +237,11 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.reminders.dispatch_activity_reminders",
         "schedule": crontab(minute="*/15"),
     },
+    # Google Calendar push-notification channels expire (~1 week max) — renew daily
+    "renew-calendar-watch-channels": {
+        "task": "tasks.calendar.renew_expiring_watch_channels",
+        "schedule": crontab(hour=3, minute=0),
+    },
 }
 
 # ── Stripe ────────────────────────────────────────────────────────────────
@@ -254,6 +260,13 @@ AWS_S3_ENDPOINT_URL     = _minio_endpoint if _minio_endpoint else None
 # Bucket — prefer AWS_S3_BUCKET_NAME in prod; fall back to MINIO_BUCKET for dev
 AWS_STORAGE_BUCKET_NAME = env("AWS_S3_BUCKET_NAME", default=env("MINIO_BUCKET", default="coachos-files"))
 AWS_S3_REGION_NAME      = env("AWS_S3_REGION_NAME", default="us-east-1")
+# Force SigV4: without an explicit signature version, boto3 falls back to the legacy
+# SigV2 query-string scheme (AWSAccessKeyId/Signature/Expires) for custom (MinIO)
+# endpoints. SigV2's signature covers the raw query-string values byte-for-byte, so
+# any HTTP client that re-encodes the URL even slightly differently (observed with
+# OnlyOffice's Node-based downloader) gets a 400 from MinIO. SigV4 is the modern,
+# universally-compatible standard and avoids this class of bug entirely.
+AWS_S3_SIGNATURE_VERSION = "s3v4"
 
 # Credentials — only set explicitly when running with MinIO (dev).
 # In production on EC2 with IAM instance role, boto3 picks up credentials
@@ -279,6 +292,17 @@ STORAGES = {
         "BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage",
     },
 }
+
+# ── OnlyOffice Document Server (real-time Word/Excel/PPT editing) ──────────
+ONLYOFFICE_SERVER_URL       = env("ONLYOFFICE_SERVER_URL", default="http://localhost:8082")
+ONLYOFFICE_CALLBACK_BASE_URL = env("ONLYOFFICE_CALLBACK_BASE_URL", default="http://api:8000")
+ONLYOFFICE_JWT_SECRET       = env("ONLYOFFICE_JWT_SECRET", default="")
+# OnlyOffice's save callback includes a "download the edited file from here" URL built
+# from ONLYOFFICE_SERVER_URL (the browser-facing address) — e.g. http://localhost:8082/cache/...
+# in dev, or https://domain:8443/cache/... in prod. Our backend can't reach that host from
+# inside its own container, so we rewrite it to the docker-network-internal address before
+# fetching. Defaults to the dev compose service name; override in prod (see .env.production.template).
+ONLYOFFICE_INTERNAL_URL     = env("ONLYOFFICE_INTERNAL_URL", default="http://onlyoffice")
 
 # ── SMS ───────────────────────────────────────────────────────────────────
 SMS_BACKEND        = env("SMS_BACKEND",        default="mock")

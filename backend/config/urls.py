@@ -9,7 +9,10 @@ from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.conf import settings as django_settings
 from apps.superadmin.views import public_banner
-from apps.activities.public_views import SessionConfirmView, SessionCancelView, SessionRescheduleView
+from apps.activities.public_views import (
+    SessionConfirmView, SessionCancelView, SessionRescheduleView, GoogleCalendarWebhookView,
+)
+from apps.clients.public_views import ContractSignView
 
 
 @api_view(["POST"])
@@ -159,6 +162,7 @@ urlpatterns = [
     path("session/confirm/<str:token>/",    csrf_exempt(SessionConfirmView.as_view())),
     path("session/cancel/<str:token>/",     csrf_exempt(SessionCancelView.as_view())),
     path("session/reschedule/<str:token>/", csrf_exempt(SessionRescheduleView.as_view())),
+    path("contract/sign/<str:token>/",      csrf_exempt(ContractSignView.as_view())),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
     path("api/activities/",  include("apps.activities.urls")),
@@ -176,6 +180,7 @@ urlpatterns = [
     path("api/internal/reminders/",       run_reminders),
     path("api/internal/invites/",         run_pending_invites),
     path("api/internal/pipeline-alerts/", run_pipeline_alerts),
+    path("api/webhooks/google-calendar/", csrf_exempt(GoogleCalendarWebhookView.as_view())),
     path("accounts/",        include("allauth.urls")),
     # OpenAPI
     path("api/schema/",            SpectacularAPIView.as_view(), name="schema"),

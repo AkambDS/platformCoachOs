@@ -119,10 +119,20 @@ function ZoomButton({ topic, startTime, durationMinutes, onGenerated }: {
   )
 }
 
+function PhoneButton({ phone, onGenerated }: { phone: string; onGenerated: (val: string) => void }) {
+  return (
+    <button type="button" className="btn btn-outline btn-sm" onClick={() => onGenerated(`Call: ${phone}`)}
+      style={{ whiteSpace: 'nowrap', flexShrink: 0 }} title="Use your phone number as the meeting location">
+      📞 Phone
+    </button>
+  )
+}
+
 
 function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const qc = useQueryClient()
-  const { user } = useAuthStore()
+  const { user, workspace } = useAuthStore()
+  const dialInPhone = (user as any)?.phone || (workspace as any)?.phone || ''
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
@@ -257,6 +267,9 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
             durationMinutes={endTime && startTime ? Math.round((new Date(`2000-01-01T${endTime}`).getTime() - new Date(`2000-01-01T${startTime}`).getTime()) / 60000) : 60}
             onGenerated={url => set('location', url)}
           />
+          {dialInPhone && (
+            <PhoneButton phone={dialInPhone} onGenerated={val => set('location', val)} />
+          )}
         </div>
       </div>
       <div className="fgroup">
@@ -427,6 +440,8 @@ function parseRrule(rrule: string): 'none'|'daily'|'weekly'|'biweekly'|'monthly'
 
 function EditActivityModal({ activity, onClose, onSaved }: any) {
   const qc = useQueryClient()
+  const { user, workspace } = useAuthStore()
+  const dialInPhone = (user as any)?.phone || (workspace as any)?.phone || ''
   const { data: clientsData } = useQuery({ queryKey: ['clients-all'], queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data) })
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],
@@ -551,7 +566,15 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
           <input className="finput" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
         </div>
       </div>
-      <div className="fgroup"><label className="flabel">Location / Link</label><input className="finput" value={form.location} onChange={e => set('location', e.target.value)} /></div>
+      <div className="fgroup">
+        <label className="flabel">Location / Link</label>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} style={{ flex: 1 }} />
+          {dialInPhone && (
+            <PhoneButton phone={dialInPhone} onGenerated={val => set('location', val)} />
+          )}
+        </div>
+      </div>
       <div className="fgroup"><label className="flabel">Notes (internal)</label><textarea className="ftextarea" rows={2} value={form.notes} onChange={e => set('notes', e.target.value)} /></div>
 
       {/* ── Repeat ── */}
@@ -684,7 +707,11 @@ export default function Calendar() {
     queryFn: () => activitiesApi.list({ start: range.start, end: range.end, page_size: 300 }).then(r => r.data),
     enabled: !!range.start,
   })
-  const activities: any[] = activitiesData?.results || activitiesData || []
+  // Exclude one-off Client Communication sends logged as Activities (see
+  // ClientMessageDraftViewSet.send) — they're zero-duration log entries, not
+  // schedulable sessions, so they don't belong on the calendar grid.
+  const activities: any[] = (activitiesData?.results || activitiesData || [])
+    .filter((a: any) => !(a.activity_type === 'custom' && (a.title || '').startsWith('Email: ')))
 
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],

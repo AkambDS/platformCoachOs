@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export interface User { id: string; email: string; full_name: string; role: string; is_superuser?: boolean }
+export interface User { id: string; email: string; full_name: string; role: string; is_superuser?: boolean; phone?: string }
 
 interface AuthState {
   user: User | null

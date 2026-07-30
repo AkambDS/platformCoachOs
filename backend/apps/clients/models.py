@@ -124,6 +124,10 @@ class Assessment(WorkspaceModel):
     visible_to_client = models.BooleanField(default=False, help_text="Shows in portal (FR-CP-12)")
     uploaded_by      = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at       = models.DateTimeField(auto_now_add=True)
+    updated_at       = models.DateTimeField(auto_now=True)
+    # Versioning — bumped when edited live via OnlyOffice (mirrors library.KnowledgeItem)
+    version          = models.PositiveSmallIntegerField(default=1)
+    previous_versions = models.JSONField(default=list)  # [{version, s3_key, replaced_at}]
 
     class Meta:
         db_table = "clients_assessment"
@@ -165,6 +169,50 @@ class Commitment(WorkspaceModel):
     class Meta:
         db_table = "clients_commitment"
         ordering = ["-created_at"]
+
+
+class ClientMessageDraft(WorkspaceModel):
+    """Client-communication email — composed from a generic email template
+    (tagged for the 'client_communication' use-case in Workspace.generic_templates)
+    and freely edited per-client. Can be saved as a draft and/or sent to the client;
+    sending also logs a matching Activity on the client (see ClientMessageDraftViewSet.send)."""
+    id                  = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client              = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="message_drafts")
+    subject             = models.CharField(max_length=300, blank=True)
+    intro               = models.TextField(blank=True)
+    closing             = models.TextField(blank=True)
+    custom_html         = models.TextField(blank=True)
+    disable_style       = models.BooleanField(default=False)
+    show_logo           = models.BooleanField(default=True)
+    style               = models.JSONField(default=dict, blank=True)
+    source_template_id  = models.CharField(max_length=64, blank=True)
+    source_template_name = models.CharField(max_length=200, blank=True)
+    attachments         = models.JSONField(default=list, blank=True)  # [{s3_key, file_name, size}]
+    status              = models.CharField(max_length=20, default="draft")  # draft | sent | signed
+    sent_at             = models.DateTimeField(null=True, blank=True)
+    # Signature block — coach draws their signature (stored as a PNG data URL) in the
+    # compose screen. When include_client_signature_line is set, the outgoing email also
+    # gets a "Review & Sign" link (see apps.clients.tokens / apps.clients.public_views)
+    # the client can use to draw their own signature with no login required; once signed,
+    # both signatures are baked into a finalized PDF saved as a client File (see
+    # signed_pdf_assessment).
+    coach_signature             = models.TextField(blank=True)
+    include_client_signature_line = models.BooleanField(default=False)
+    signature_name              = models.CharField(max_length=200, blank=True,
+                                        help_text="Overrides the coach's account name in the '— {name}' sign-off line")
+    client_signature     = models.TextField(blank=True)
+    client_signed_at     = models.DateTimeField(null=True, blank=True)
+    client_signer_ip     = models.GenericIPAddressField(null=True, blank=True)
+    client_signer_user_agent = models.CharField(max_length=300, blank=True)
+    signed_pdf_assessment = models.ForeignKey("Assessment", on_delete=models.SET_NULL,
+                                              null=True, blank=True, related_name="+")
+    created_by          = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
+    created_at          = models.DateTimeField(auto_now_add=True)
+    updated_at          = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "clients_messagedraft"
+        ordering = ["-updated_at"]
 
 
 class GoalProgress(WorkspaceModel):

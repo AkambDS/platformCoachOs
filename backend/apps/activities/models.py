@@ -25,6 +25,12 @@ class Activity(WorkspaceModel):
         MISSED       = "missed",        "Missed Session"
         CANCELLED    = "cancelled",     "Cancelled"
 
+    class RsvpStatus(models.TextChoices):
+        NEEDS_ACTION = "needsAction", "Needs Action"
+        ACCEPTED     = "accepted",    "Accepted"
+        DECLINED     = "declined",    "Declined"
+        TENTATIVE    = "tentative",   "Tentative"
+
     id             = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     coach          = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="activities")
     client         = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="activities")
@@ -49,9 +55,13 @@ class Activity(WorkspaceModel):
     caldav_uid     = models.CharField(max_length=500, blank=True)
     # Edit history (FR-ACT-15) — list of {changed_by, changed_at, diff}
     edit_history   = models.JSONField(default=list)
-    # Client RSVP
+    # Client RSVP — set via the tokenized confirm/cancel/reschedule links
     client_confirmed      = models.BooleanField(default=False)
     client_confirmed_at   = models.DateTimeField(null=True, blank=True)
+    # Client RSVP — set via Google Calendar attendee sync (accept/decline on the real invite)
+    client_rsvp_status    = models.CharField(max_length=20, choices=RsvpStatus.choices,
+                                              default=RsvpStatus.NEEDS_ACTION)
+    client_rsvp_synced_at = models.DateTimeField(null=True, blank=True)
     # Notification tracking — timestamps show exactly when each email was sent
     confirmation_sent_at  = models.DateTimeField(null=True, blank=True)
     cancellation_sent_at  = models.DateTimeField(null=True, blank=True)
@@ -84,6 +94,27 @@ class Activity(WorkspaceModel):
             "changed_at":   timezone.now().isoformat(),
             "diff":         diff,
         })
+
+
+class GoogleCalendarWatch(models.Model):
+    """One active Google Calendar push-notification channel per coach's primary calendar.
+
+    Google delivers only a change ping (no payload) to our webhook — sync_token lets us
+    pull the actual delta via events.list(syncToken=...) to see what changed.
+    """
+    coach       = models.OneToOneField(User, on_delete=models.CASCADE, related_name="calendar_watch")
+    channel_id  = models.UUIDField(default=uuid.uuid4, editable=False)
+    resource_id = models.CharField(max_length=200, blank=True)
+    sync_token  = models.TextField(blank=True)
+    expiration  = models.DateTimeField(null=True, blank=True)
+    created_at  = models.DateTimeField(auto_now_add=True)
+    updated_at  = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "activities_googlecalendarwatch"
+
+    def __str__(self):
+        return f"watch({self.coach_id}) exp={self.expiration}"
 
 
 BUILTIN_TYPES = ["appointment", "task", "call", "session", "training", "travel", "custom"]

@@ -36,6 +36,7 @@ function WorkspaceTab() {
     city:               (workspace as any)?.city       || '',
     state:              (workspace as any)?.state      || '',
     zip_code:           (workspace as any)?.zip_code   || '',
+    phone:              (workspace as any)?.phone      || '',
   })
   const [saving, setSaving] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
@@ -152,9 +153,16 @@ function WorkspaceTab() {
               <input className="finput" value={form.state} onChange={e => set('state', e.target.value)} placeholder="NY" />
             </div>
           </div>
-          <div className="fgroup" style={{ maxWidth: 200 }}>
-            <label className="flabel">ZIP / Postal Code</label>
-            <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
+          <div className="fgrid">
+            <div className="fgroup" style={{ maxWidth: 200 }}>
+              <label className="flabel">ZIP / Postal Code</label>
+              <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Phone Number</label>
+              <input className="finput" type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="(555) 123-4567" />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Offered as a dial-in option when scheduling meetings.</div>
+            </div>
           </div>
 
           {/* ── Scheduling Defaults ── */}
@@ -215,6 +223,7 @@ function ProfileTab() {
   const [form, setForm] = useState({
     full_name:     user?.full_name     || '',
     user_timezone: (user as any)?.user_timezone || 'America/New_York',
+    phone:         (user as any)?.phone || '',
   })
   const [pwForm, setPwForm] = useState({ current_password: '', new_password: '', confirm: '' })
   const [savingProfile, setSavingProfile] = useState(false)
@@ -226,7 +235,7 @@ function ProfileTab() {
   const handleSaveProfile = async () => {
     setSavingProfile(true)
     try {
-      const { data } = await authApi.updateMe({ full_name: form.full_name, user_timezone: form.user_timezone })
+      const { data } = await authApi.updateMe({ full_name: form.full_name, user_timezone: form.user_timezone, phone: form.phone })
       if (workspace) rehydrate(data, workspace)
       show('Profile updated')
     } catch { show('Failed to save', 'error') }
@@ -300,16 +309,23 @@ function ProfileTab() {
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Cannot be changed.</div>
             </div>
           </div>
-          <div className="fgroup">
-            <label className="flabel">Your Timezone</label>
-            <select className="fselect" value={form.user_timezone} onChange={e => set('user_timezone', e.target.value)}>
-              {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
-            </select>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
-              Used for your personal calendar and session reminders.
-              {user?.role !== 'business_owner' && workspaceOwner && (
-                <> Role is managed by <strong>{workspaceOwner.full_name}</strong>.</>
-              )}
+          <div className="fgrid">
+            <div className="fgroup">
+              <label className="flabel">Your Timezone</label>
+              <select className="fselect" value={form.user_timezone} onChange={e => set('user_timezone', e.target.value)}>
+                {TIMEZONES.map(tz => <option key={tz} value={tz}>{tz}</option>)}
+              </select>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                Used for your personal calendar and session reminders.
+                {user?.role !== 'business_owner' && workspaceOwner && (
+                  <> Role is managed by <strong>{workspaceOwner.full_name}</strong>.</>
+                )}
+              </div>
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Phone Number</label>
+              <input className="finput" type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="(555) 123-4567" />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Offered as a dial-in option when scheduling meetings.</div>
             </div>
           </div>
 
@@ -874,43 +890,37 @@ function PipelineTab() {
 }
 
 // ── Activity Types Tab ─────────────────────────────────────────────────────────
+// Trimmed to one representative shade per hue — a full 30-swatch grid ate too much
+// vertical space when two pickers sit side by side (e.g. Generic Templates' Header).
+// The native color input + hex field below still allow picking any exact color.
 const PRESET_COLORS = [
-  // Blues
-  '#1B3A6B','#2d6a9f','#2980b9','#1a6fa8','#0e4d8a','#5b9bd5',
-  // Greens
-  '#4a7c59','#16a085','#27ae60','#2e7d32','#388e3c','#6ab187',
-  // Purples & pinks
-  '#7c4d9f','#9b59b6','#8e24aa','#c2185b','#e91e7a','#7b1fa2',
-  // Warm tones
-  '#c9a84c','#e67e22','#f39c12','#d97706','#a0522d','#8d4e1f',
-  // Reds
-  '#c0392b','#e53935','#b71c1c','#cc4125',
-  // Neutrals
-  '#1a1714','#4a4540','#8c8279','#607d8b',
+  '#1B3A6B', '#2d6a9f', '#4a7c59', '#16a085',
+  '#7c4d9f', '#c2185b', '#c9a84c', '#e67e22',
+  '#c0392b', '#607d8b', '#4a4540', '#1a1714',
 ]
 
 function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
   return (
     <div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7, marginTop: 4 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
         {PRESET_COLORS.map(c => (
           <button
             key={c} type="button"
             onClick={() => onChange(c)}
+            title={c}
             style={{
-              width: 26, height: 26, borderRadius: '50%', background: c, cursor: 'pointer',
-              border: value === c ? '3px solid var(--ink)' : '2px solid rgba(0,0,0,.08)',
-              boxShadow: value === c ? `0 0 0 2px white, 0 0 0 4px ${c}` : 'none',
+              width: 18, height: 18, borderRadius: '50%', background: c, cursor: 'pointer',
+              border: value === c ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.08)',
+              boxShadow: value === c ? `0 0 0 2px white, 0 0 0 3px ${c}` : 'none',
               transition: 'all .1s', padding: 0,
             }}
           />
         ))}
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-        <div style={{ width: 26, height: 26, borderRadius: '50%', background: value, border: '2px solid rgba(0,0,0,.12)', flexShrink: 0 }} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
         <input
           type="color" value={value} onChange={e => onChange(e.target.value)}
-          style={{ width: 36, height: 26, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
+          style={{ width: 30, height: 22, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
         />
         <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{value}</span>
       </div>
@@ -1624,832 +1634,453 @@ function generateSampleHtml(key: string): string {
 </html>`
 }
 
-// ── Email Templates Tab ────────────────────────────────────────────────────────
-const BODY_FONTS = [
-  { label: 'Helvetica / Arial (default)', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
-  { label: 'Georgia',                     value: "Georgia,'Times New Roman',serif" },
-  { label: 'Verdana',                     value: "Verdana,Geneva,sans-serif" },
-  { label: 'Trebuchet MS',                value: "'Trebuchet MS',Helvetica,sans-serif" },
-]
-const HEADING_FONTS = [
-  { label: 'Georgia (default)',   value: "Georgia,'Times New Roman',serif" },
-  { label: 'Helvetica / Arial',  value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
-  { label: 'Verdana',            value: "Verdana,Geneva,sans-serif" },
-]
-
-const EMAIL_TEMPLATE_DEFS = [
-  {
-    key: 'confirmation',
-    label: 'Confirmation',
-    hint: 'Sent when a session is first scheduled.',
-    defaultSubject: 'Confirmed: {session_title} with {coach_name}',
-    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}'],
-  },
-  {
-    key: 'reminder_24h',
-    label: '24h Reminder',
-    hint: 'Sent 24 hours before the session.',
-    defaultSubject: 'Reminder: {session_title} in 24 hours',
-    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}', '{time_label}'],
-  },
-  {
-    key: 'reminder_1h',
-    label: '1h Reminder',
-    hint: 'Sent 1 hour before the session.',
-    defaultSubject: 'Reminder: {session_title} in 1 hour',
-    vars: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}', '{workspace_name}', '{time_label}'],
-  },
-  {
-    key: 'invoice',
-    label: 'Invoice',
-    hint: 'Sent when an invoice is delivered to a client.',
-    defaultSubject: 'Invoice #{invoice_number} from {workspace_name}',
-    vars: ['{workspace_name}', '{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{owner_email}', '{pay_button}', '{view_instructions}'],
-  },
-  {
-    key: 'portal_invite',
-    label: 'Portal Invite',
-    hint: 'Sent when you grant a client access to their portal.',
-    defaultSubject: 'Your portal access is ready — {workspace_name}',
-    vars: ['{client_name}', '{workspace_name}', '{coach_name}', '{portal_url}'],
-  },
+// ── Generic Email Templates ───────────────────────────────────────────────────
+// Named, reusable templates you build once and then assign to one or more
+// use-cases (invoice, reminders, client communication, …) — the single place
+// to define and edit every outbound email in the product.
+const GENERIC_USE_CASES = [
+  { key: 'confirmation',         label: 'Booking Confirmation' },
+  { key: 'reminder_24h',         label: '24h Reminder' },
+  { key: 'reminder_1h',          label: '1h Reminder' },
+  { key: 'invoice',              label: 'Invoice' },
+  { key: 'portal_invite',        label: 'Portal Invite' },
+  { key: 'client_communication', label: 'Client Communication' },
 ]
 
-const DEFAULT_HTML_TEMPLATES: Record<string, string> = {
-  invoice: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
+// Placeholders substituted at send time — differ per use case since each pulls from
+// a different backend context (a session, an invoice, a portal link, …).
+const PLACEHOLDER_HINTS: Record<string, string[]> = {
+  confirmation:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  reminder_24h:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
+  reminder_1h:          ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
+  invoice:              ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+  portal_invite:        ['{client_name}', '{coach_name}', '{workspace_name}', '{portal_url}'],
+  client_communication: ['{client_name}', '{coach_name}', '{workspace_name}'],
+}
+const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{workspace_name}', '{coach_name}']
 
-      <!-- Header -->
-      <tr>
-        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
-          {logo_img}
-          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
-        </td>
-      </tr>
-      <tr><td style="height:3px;background:{accent_color};"></td></tr>
-
-      <!-- Body -->
-      <tr>
-        <td style="background:#fff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
-          <h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
-            {workspace_name} sent you an invoice.
-          </h1>
-          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
-            You've received an invoice for <strong style="color:{value_color};">\${amount}</strong> with payment due on <strong style="color:{value_color};">{due_date}</strong>.
-          </p>
-          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
-            {view_instructions}
-          </p>
-          {pay_button}
-          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
-            Please email us at <a href="mailto:{owner_email}" style="color:{accent_color};">{owner_email}</a> with any questions.
-          </p>
-          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
-          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
-        </td>
-      </tr>
-
-      <!-- Footer -->
-      <tr>
-        <td style="padding:28px 0 0;text-align:center;font-size:11px;color:#b5afa6;">
-          Sent by {workspace_name} &middot; Invoice #{invoice_number}
-        </td>
-      </tr>
-
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
-
-  confirmation: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
-      <!-- Header -->
-      <tr>
-        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
-          {logo_img}
-          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
-        </td>
-      </tr>
-      <!-- Accent bar -->
-      <tr><td style="height:3px;background:{accent_color};"></td></tr>
-      <!-- Body -->
-      <tr>
-        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
-          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};font-weight:600;">Session Confirmed</p>
-          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Your session is confirmed</h1>
-          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
-            Hi {client_name}, your session with {coach_name} has been scheduled. We look forward to seeing you.
-          </p>
-          <!-- Session details -->
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:{value_color};">{session_time}</strong></td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
-            </tr>
-          </table>
-          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
-            Need to reschedule or have questions? Contact {coach_name} directly.
-          </p>
-          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
-        </td>
-      </tr>
-      <!-- Footer -->
-      <tr>
-        <td style="padding:28px 0 0;text-align:center;">
-          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
-
-  reminder_24h: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
-      <!-- Header -->
-      <tr>
-        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
-          {logo_img}
-          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
-        </td>
-      </tr>
-      <!-- Accent bar -->
-      <tr><td style="height:3px;background:{accent_color};"></td></tr>
-      <!-- Body -->
-      <tr>
-        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
-          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};font-weight:600;">Reminder &middot; 24 hours away</p>
-          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Session reminder</h1>
-          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
-            Hi {client_name}, this is a friendly reminder about your upcoming session with {coach_name}.
-          </p>
-          <!-- Session details -->
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:{accent_color};">{session_time}</strong></td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
-            </tr>
-          </table>
-          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
-            Need to reschedule? Please contact {coach_name} as soon as possible.
-          </p>
-          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
-        </td>
-      </tr>
-      <!-- Footer -->
-      <tr>
-        <td style="padding:28px 0 0;text-align:center;">
-          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
-
-  reminder_1h: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
-      <!-- Header -->
-      <tr>
-        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
-          {logo_img}
-          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
-        </td>
-      </tr>
-      <!-- Accent bar -->
-      <tr><td style="height:3px;background:{accent_color};"></td></tr>
-      <!-- Body -->
-      <tr>
-        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
-          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#c0392b;font-weight:600;">Upcoming in 1 hour</p>
-          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Session reminder</h1>
-          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
-            Hi {client_name}, this is a friendly reminder that your session with {coach_name} starts in 1 hour.
-          </p>
-          <!-- Session details -->
-          <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">What</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{session_title}</td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">When</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};"><strong style="color:#c0392b;">{session_time}</strong></td>
-            </tr>
-            <tr><td colspan="2" style="padding:0;border-bottom:1px solid #ede9e1;"></td></tr>
-            <tr>
-              <td style="padding:12px 20px 12px 0;font-size:11px;color:#9e9890;text-transform:uppercase;letter-spacing:.09em;width:90px;vertical-align:top;white-space:nowrap;">Coach</td>
-              <td style="padding:12px 0;font-size:15px;color:#1a1714;font-weight:500;font-family:{heading_font_css};">{coach_name}</td>
-            </tr>
-          </table>
-          <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;">
-            Need to reschedule? Please contact {coach_name} as soon as possible.
-          </p>
-          <p style="margin:12px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
-        </td>
-      </tr>
-      <!-- Footer -->
-      <tr>
-        <td style="padding:28px 0 0;text-align:center;">
-          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
-
-  portal_invite: `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;font-family:{body_font_css};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;">
-      <!-- Header -->
-      <tr>
-        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
-          {logo_img}
-          <span style="font-family:{heading_font_css};font-size:22px;font-weight:400;color:#f5f0e8;">{workspace_name}</span>
-        </td>
-      </tr>
-      <!-- Accent bar -->
-      <tr><td style="height:3px;background:{accent_color};"></td></tr>
-      <!-- Body -->
-      <tr>
-        <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;">
-          <p style="margin:0 0 4px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#4a7c59;font-weight:600;">Portal Access</p>
-          <h1 style="margin:0 0 12px;font-family:{heading_font_css};font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">Your portal is ready</h1>
-          <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;">
-            Hi {client_name}, {workspace_name} has set up a private portal for you where you can view your sessions, goals, and shared resources.
-          </p>
-          <!-- CTA button -->
-          <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 auto 32px;">
-            <tr>
-              <td style="background:#4a7c59;border-radius:4px;">
-                <a href="{portal_url}" style="display:inline-block;padding:14px 40px;font-family:{body_font_css};font-size:13px;font-weight:700;color:#ffffff;text-decoration:none;letter-spacing:.1em;text-transform:uppercase;">
-                  Access Your Portal
-                </a>
-              </td>
-            </tr>
-          </table>
-          <p style="margin:0;font-size:14px;color:#6e6560;line-height:1.7;">
-            If you have any questions, reply to this email or contact {workspace_name}.
-          </p>
-          <p style="margin:24px 0 0;font-family:{heading_font_css};font-size:15px;color:#9e9890;">&mdash; {workspace_name}</p>
-        </td>
-      </tr>
-      <!-- Footer -->
-      <tr>
-        <td style="padding:28px 0 0;text-align:center;">
-          <p style="margin:0;font-size:11px;color:#b5afa6;">Sent by {workspace_name} &middot; This is an automated notification.</p>
-        </td>
-      </tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`,
+// Ready-to-edit starting copy for each use case — lets a coach get a working, on-brand
+// template in one click instead of starting from a blank editor.
+const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing: string }> = {
+  confirmation: {
+    subject: 'Confirmed: your session with {coach_name}',
+    intro:   'Hi {client_name}, your session with {coach_name} has been scheduled. We look forward to seeing you.',
+    closing: 'Need to reschedule or have questions? Contact {coach_name} directly.',
+  },
+  reminder_24h: {
+    subject: 'Reminder: your session is in 24 hours',
+    intro:   'Hi {client_name}, this is a friendly reminder about your upcoming session with {coach_name}.',
+    closing: 'Need to reschedule? Please contact {coach_name} as soon as possible.',
+  },
+  reminder_1h: {
+    subject: 'Reminder: your session starts in 1 hour',
+    intro:   'Hi {client_name}, this is a friendly reminder that your session with {coach_name} starts in 1 hour.',
+    closing: 'Need to reschedule? Please contact {coach_name} as soon as possible.',
+  },
+  invoice: {
+    subject: 'Invoice from {workspace_name}',
+    intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
+    closing: 'Questions about this invoice? Just reply to this email.',
+  },
+  portal_invite: {
+    subject: 'Your portal access is ready — {workspace_name}',
+    intro:   'Hi {client_name}, {workspace_name} has set up a private portal for you where you can view your sessions, goals, and shared resources.',
+    closing: 'If you have any questions, reply to this email or contact us.',
+  },
+  client_communication: {
+    subject: 'A quick note from {coach_name}',
+    intro:   'Hi {client_name}, ',
+    closing: 'Talk soon,',
+  },
 }
 
-function EmailTemplatesTab() {
+// A second, alternate sample for Client Communication — formal contract copy with a
+// client signature line turned on by default. Not tied to a use-case slot (only one
+// template can be "the" assigned Client Communication template at a time), so it's
+// added as a separate saved template a coach picks from the "Start from a template?"
+// list alongside the friendly note sample.
+const CONTRACT_SAMPLE = {
+  name: 'Contract Agreement',
+  subject: 'Coaching Services Agreement — {workspace_name}',
+  intro: [
+    'This Coaching Services Agreement ("Agreement") is entered into between {workspace_name} ("Coach") and {client_name} ("Client"), effective as of the date signed below.',
+    '',
+    'Scope of Services: {workspace_name} agrees to provide coaching services as outlined during our engagement discussions, including scheduled sessions, progress tracking, and related support.',
+    '',
+    'Fees & Payment: Fees for services will be invoiced separately and are due according to the agreed payment schedule.',
+    '',
+    'Confidentiality: Both parties agree to keep shared information confidential and use it solely for the purpose of this engagement.',
+    '',
+    'Termination: Either party may terminate this agreement with 14 days written notice.',
+  ].join('\n'),
+  closing: 'By signing below, both parties agree to the terms of this Agreement.',
+}
+
+const blankGenericTemplate = () => ({
+  id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+  name: '', subject: '', from_email: '', intro: '', closing: '',
+  custom_html: '', disable_style: false, show_logo: true,
+  style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '' } as Record<string, any>,
+  use_cases: [] as string[],
+  include_client_signature_line: false,
+})
+
+function GenericTemplatesTab() {
   const { workspace, user, rehydrate } = useAuthStore()
   const { show } = useToast()
-
-  const [activeKey, setActiveKey] = useState('confirmation')
-  const [leftTab, setLeftTab]     = useState<'template' | 'custom'>('template')
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+  const [templates, setTemplates] = useState<any[]>((workspace as any)?.generic_templates || [])
+  const [useCaseMap, setUseCaseMap] = useState<Record<string, string>>((workspace as any)?.template_use_case_map || {})
+  const [editing, setEditing] = useState<any>(null)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [assigning, setAssigning] = useState(false)
+  const [assignChecks, setAssignChecks] = useState<Record<string, boolean>>({})
+  const [addingSample, setAddingSample] = useState<string | null>(null)
 
-  const saved = (workspace as any)?.email_templates || {}
-  const initField = (key: string) => ({
-    subject:        saved[key]?.subject        || '',
-    from_email:     saved[key]?.from_email     || '',
-    intro:          saved[key]?.intro          || '',
-    closing:        saved[key]?.closing        || '',
-    custom_html:    saved[key]?.custom_html    || '',
-    disable_style:  saved[key]?.disable_style  ?? true,
-    header_bg:      saved[key]?.style?.header_bg      || '',
-    accent_color:   saved[key]?.style?.accent_color   || '',
-    show_logo:      saved[key]?.show_logo      ?? true,
-    header_tagline: saved[key]?.style?.header_tagline !== undefined
-                      ? saved[key].style.header_tagline
-                      : 'Coaching Platform',
-    body_font:      saved[key]?.style?.body_font    || '',
-    heading_font:   saved[key]?.style?.heading_font || '',
-    value_color:    saved[key]?.style?.value_color  || '#1a1714',
-  })
-  const [fields, setFields] = useState(initField(activeKey))
-  const logoData = (workspace as any)?.logo_data || ''
-
-  const def = EMAIL_TEMPLATE_DEFS.find(d => d.key === activeKey)!
-
-  const buildPreviewParams = (key: string, f: ReturnType<typeof initField>) => {
-    const params: Record<string, string> = {
-      type: key, intro: f.intro, closing: f.closing, _t: String(Date.now()),
-      header_tagline: f.header_tagline, skip_custom_html: '1',
-    }
-    if (f.header_bg)    params.header_bg    = f.header_bg
-    if (f.accent_color) params.accent_color = f.accent_color
-    if (f.body_font)    params.body_font    = f.body_font
-    if (f.heading_font) params.heading_font = f.heading_font
-    if (f.value_color)  params.value_color  = f.value_color
-    if (!f.show_logo)   params.hide_logo    = '1'
-    return params
+  const persist = async (nextTemplates: any[], nextMap: Record<string, string>) => {
+    const { data } = await api.patch('/api/settings/workspace/', {
+      generic_templates: nextTemplates, template_use_case_map: nextMap,
+    })
+    if (user) rehydrate(user, { ...workspace, ...data })
+    setTemplates(data.generic_templates || nextTemplates)
+    setUseCaseMap(data.template_use_case_map || nextMap)
   }
 
-  // Must be defined before renderPreview so the guard can call it
-  const applyCustomHtmlPreview = (f: ReturnType<typeof initField>) => {
-    const bf = f.body_font || ''
-    const hf = f.heading_font || ''
-    const vars: Record<string, string> = {
-      intro: f.intro || '(Your opening paragraph goes here)',
-      closing: f.closing || '(Your closing paragraph goes here)',
-      intro_para: f.intro.trim() ? `<p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">${f.intro}</p>` : '',
-      closing_para: f.closing.trim() ? `<p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">${f.closing}</p>` : '',
-      header_bg: f.disable_style ? '#1a2f4e' : (f.header_bg || '#1a2f4e'),
-      accent_color: f.disable_style ? '#b8922e' : (f.accent_color || '#b8922e'),
-      value_color: f.disable_style ? '#1a1714' : (f.value_color || '#1a1714'),
-      body_font_css: f.disable_style ? "'Helvetica Neue',Helvetica,Arial,sans-serif" : (bf || "'Helvetica Neue',Helvetica,Arial,sans-serif"),
-      heading_font_css: f.disable_style ? "Georgia,'Times New Roman',serif" : (hf || "Georgia,'Times New Roman',serif"),
-      client_name: 'Jane Smith',
-      workspace_name: (workspace as any)?.name || 'Your Workspace',
-      invoice_number: 'INV-0042',
-      amount: '150.00',
-      due_date: 'June 30, 2026',
-      owner_email: '',
-      owner_name: (workspace as any)?.name || '',
-      payment_link: '',
-      pay_button: '',
-      view_instructions: 'See attached file for invoice details.',
-      session_title: 'Strategy Session',
-      session_time: 'Wednesday, July 15 at 10:00 AM EDT',
-      coach_name: 'Sarah Johnson',
-      time_label: '24 hours',
-      portal_url: '#',
-      logo_img: (f.show_logo && logoData)
-        ? `<table role="presentation" cellpadding="0" cellspacing="0"><tr><td style="background:#ffffff;padding:8px 14px;border-radius:5px;"><img src="${logoData}" alt="${(workspace as any)?.name || ''}" style="max-height:40px;max-width:160px;object-fit:contain;display:block;" /></td></tr></table>`
-        : '',
-    }
-    const html = f.custom_html.replace(/\{(\w+)\}/g, (_: string, k: string) => vars[k] ?? `{${k}}`)
-    setPreviewHtml(html)
+  const missingUseCases = GENERIC_USE_CASES.filter(u => !useCaseMap[u.key])
+
+  const handleAddSample = async (useCaseKey: string) => {
+    const uc = GENERIC_USE_CASES.find(u => u.key === useCaseKey)
+    const sample = USE_CASE_SAMPLES[useCaseKey]
+    if (!uc || !sample) return
+    setAddingSample(useCaseKey)
+    try {
+      const newTmpl = {
+        ...blankGenericTemplate(),
+        name: uc.label,
+        subject: sample.subject, intro: sample.intro, closing: sample.closing,
+        use_cases: [useCaseKey],
+      }
+      const nextTemplates = [...templates, newTmpl]
+      const nextMap = { ...useCaseMap, [useCaseKey]: newTmpl.id }
+      await persist(nextTemplates, nextMap)
+      show(`${uc.label} sample added — edit it any time`)
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to add sample', 'error')
+    } finally { setAddingSample(null) }
   }
 
-  // tab param: 'template' always uses standard template (API); 'custom' uses custom HTML if set
-  const renderPreview = async (key: string, f: ReturnType<typeof initField>, tab: 'template' | 'custom' = leftTab) => {
-    if (tab === 'custom' && f.custom_html.trim()) { applyCustomHtmlPreview(f); return }
+  const hasContractSample = templates.some(t => t.name === CONTRACT_SAMPLE.name)
+
+  const handleAddContractSample = async () => {
+    setAddingSample('contract')
+    try {
+      const newTmpl = {
+        ...blankGenericTemplate(),
+        name: CONTRACT_SAMPLE.name,
+        subject: CONTRACT_SAMPLE.subject, intro: CONTRACT_SAMPLE.intro, closing: CONTRACT_SAMPLE.closing,
+        include_client_signature_line: true,
+        // Not auto-assigned to the Client Communication slot — it's an alternate
+        // starting point a coach picks explicitly, not the default for that use case.
+      }
+      await persist([...templates, newTmpl], useCaseMap)
+      show('Contract Agreement sample added — edit it any time')
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to add sample', 'error')
+    } finally { setAddingSample(null) }
+  }
+
+  const renderPreview = async (t: any) => {
     setPreviewLoading(true)
     try {
-      const { data } = await api.get('/api/settings/email-preview/', { params: buildPreviewParams(key, f) })
+      const params: Record<string, string> = {
+        type: 'client_communication', client_name: 'Jane Smith',
+        subject: t.subject || 'Your subject line',
+        intro: t.intro, closing: t.closing, _t: String(Date.now()),
+      }
+      if (t.style.header_bg)    params.header_bg = t.style.header_bg
+      if (t.style.accent_color) params.accent_color = t.style.accent_color
+      if (t.style.header_tagline !== undefined) params.header_tagline = t.style.header_tagline
+      if (t.style.footer_text !== undefined) params.footer_text = t.style.footer_text
+      if (!t.show_logo) params.hide_logo = '1'
+      params.show_header = t.style.show_header === false ? '0' : '1'
+      params.show_footer = t.style.show_footer === false ? '0' : '1'
+      params.include_client_signature_line = t.include_client_signature_line ? '1' : '0'
+      const { data } = await api.get('/api/settings/email-preview/', { params })
       setPreviewHtml(data.html)
     } catch { setPreviewHtml('') }
     finally { setPreviewLoading(false) }
   }
 
-  const loadDefaultTemplate = async () => {
-    const staticTmpl = DEFAULT_HTML_TEMPLATES[activeKey]
-    if (staticTmpl) {
-      // Use the built-in default template for this type — keeps placeholders intact for editing
-      setFields(f => ({ ...f, custom_html: staticTmpl, disable_style: true }))
-      applyCustomHtmlPreview({ ...fields, custom_html: staticTmpl, disable_style: true })
-      return
-    }
-    // Fallback: fetch rendered HTML from API for types without a static default
-    setPreviewLoading(true)
-    try {
-      const { data } = await api.get('/api/settings/email-preview/', { params: buildPreviewParams(activeKey, fields) })
-      setFields(f => ({ ...f, custom_html: data.html }))
-      setPreviewHtml(data.html)
-    } catch { /* ignore */ }
-    finally { setPreviewLoading(false) }
-  }
-
-  const switchKey = (key: string) => {
-    const f = initField(key)
-    setActiveKey(key)
-    setFields(f)
-    renderPreview(key, f, leftTab)
-  }
-
-  const handleHtmlUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    try {
-      const text = await file.text()
-      setFields(f => ({ ...f, custom_html: text }))
-    } finally { e.target.value = '' }
-  }
-
-  // Initial preview on mount
-  useEffect(() => { renderPreview(activeKey, fields) }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Auto-refresh preview after user stops typing, or when switching tabs
   useEffect(() => {
-    const delay = (leftTab === 'custom' && fields.custom_html.trim()) ? 300 : 700
-    const t = setTimeout(() => renderPreview(activeKey, fields, leftTab), delay)
+    if (!editing) return
+    const t = setTimeout(() => renderPreview(editing), 400)
     return () => clearTimeout(t)
-  }, [fields.intro, fields.closing, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color, fields.custom_html, fields.disable_style, fields.show_logo, leftTab]) // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.subject, editing?.intro, editing?.closing, editing?.style?.header_bg,
+      editing?.style?.accent_color, editing?.style?.header_tagline, editing?.style?.show_header,
+      editing?.style?.show_footer, editing?.style?.footer_text, editing?.show_logo,
+      editing?.include_client_signature_line])
 
-  // Auto-save 1.5 s after user stops making changes (skip on initial mount)
-  const isFirstRender = useState(true)
-  useEffect(() => {
-    if (isFirstRender[0]) { isFirstRender[1](false); return }
-    setSaveStatus('saving')
-    const t = setTimeout(() => handleSave(fields, activeKey), 1500)
-    return () => clearTimeout(t)
-  }, [fields.subject, fields.from_email, fields.intro, fields.closing, fields.custom_html, fields.disable_style, fields.show_logo, fields.header_bg, fields.accent_color, fields.header_tagline, fields.body_font, fields.heading_font, fields.value_color]) // eslint-disable-line react-hooks/exhaustive-deps
+  const openNew  = () => setEditing(blankGenericTemplate())
+  const openEdit = (t: any) => setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', ...t.style } })
+  const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
-  const handleSave = async (f = fields, key = activeKey) => {
-    setSaveStatus('saving')
-    try {
-      const { header_bg, accent_color, header_tagline, body_font, heading_font, value_color, from_email, custom_html, disable_style, show_logo, ...rest } = f
-      const templateToSave = {
-        ...rest,
-        from_email,
-        custom_html,
-        disable_style,
-        show_logo,
-        style: { header_bg, accent_color, header_tagline, body_font, heading_font, value_color },
-      }
-      const newEmailTemplates = { ...saved, [key]: templateToSave }
-      const { data } = await settingsApi.updateWorkspace({ email_templates: newEmailTemplates })
-      if (user) rehydrate(user, { ...workspace, ...data, email_templates: newEmailTemplates })
-      setSaveStatus('saved')
-      setTimeout(() => setSaveStatus('idle'), 2000)
-    } catch {
-      show('Failed to save', 'error')
-      setSaveStatus('idle')
-    }
+  const handleDelete = async (id: string) => {
+    if (!confirm('Delete this template?')) return
+    const nextTemplates = templates.filter(t => t.id !== id)
+    const nextMap = { ...useCaseMap }
+    Object.keys(nextMap).forEach(k => { if (nextMap[k] === id) delete nextMap[k] })
+    await persist(nextTemplates, nextMap)
+    show('Template deleted')
   }
 
-  const colorRow = (label: string, key: 'header_bg' | 'accent_color' | 'value_color', defaultVal: string) => (
-    <div style={{ marginBottom: 12 }}>
-      <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>{label}</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <input type="color" value={fields[key] || defaultVal}
-          onChange={e => setFields(f => ({ ...f, [key]: e.target.value }))}
-          style={{ width: 36, height: 28, padding: 2, borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer' }} />
-        <input className="finput" value={fields[key] || defaultVal}
-          onChange={e => setFields(f => ({ ...f, [key]: e.target.value }))}
-          style={{ margin: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }} />
-        <div style={{ width: 24, height: 24, borderRadius: 4, background: fields[key] || defaultVal, border: '1px solid var(--border)', flexShrink: 0 }} />
-      </div>
-    </div>
-  )
+  const handleSaveTemplate = async () => {
+    if (!editing.name.trim()) { show('Give this template a name', 'error'); return }
+    setSaving(true)
+    try {
+      const exists = templates.some(t => t.id === editing.id)
+      const nextTemplates = exists ? templates.map(t => t.id === editing.id ? editing : t) : [...templates, editing]
+      await persist(nextTemplates, useCaseMap)
+      const checks: Record<string, boolean> = {}
+      GENERIC_USE_CASES.forEach(u => { checks[u.key] = useCaseMap[u.key] === editing.id })
+      setAssignChecks(checks)
+      setAssigning(true)
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to save template', 'error')
+    } finally { setSaving(false) }
+  }
 
-  const logoPreviewBg = fields.header_bg || '#1a2f4e'
-  const placeholderChips = (vars: string[]) => (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-      {vars.map(v => (
-        <span key={v} onClick={() => navigator.clipboard?.writeText(v)} style={{
-          background: '#f0f4ff', color: '#2d6a9f', borderRadius: 4,
-          padding: '2px 7px', fontSize: 10, fontFamily: 'monospace',
-          cursor: 'pointer', userSelect: 'all',
-        }} title="Click to copy">{v}</span>
-      ))}
-    </div>
-  )
+  const handleSaveAssignment = async () => {
+    setSaving(true)
+    try {
+      const nextMap = { ...useCaseMap }
+      GENERIC_USE_CASES.forEach(u => {
+        if (assignChecks[u.key]) nextMap[u.key] = editing.id
+        else if (nextMap[u.key] === editing.id) delete nextMap[u.key]
+      })
+      const nextTemplates = templates.map(t => t.id === editing.id ? editing : t).map(t => ({
+        ...t, use_cases: GENERIC_USE_CASES.filter(u => nextMap[u.key] === t.id).map(u => u.key),
+      }))
+      await persist(nextTemplates, nextMap)
+      show('Saved')
+      setAssigning(false)
+      setEditing(null)
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to save assignment', 'error')
+    } finally { setSaving(false) }
+  }
 
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: 'calc(100vh - 180px)', minHeight: 560 }}>
-
-      {/* Template type pills */}
-      <div style={{ display: 'flex', gap: 8, marginBottom: 16, flexShrink: 0 }}>
-        {EMAIL_TEMPLATE_DEFS.map(d => (
-          <button key={d.key} onClick={() => switchKey(d.key)} style={{
-            padding: '6px 16px', borderRadius: 20, fontSize: 12, fontWeight: 500,
-            border: '1px solid var(--border)', cursor: 'pointer',
-            background: activeKey === d.key ? 'var(--ink)' : 'var(--white)',
-            color:      activeKey === d.key ? 'var(--white)' : 'var(--ink)',
-          }}>{d.label}</button>
-        ))}
-      </div>
-
-      {/* Split layout */}
-      <div style={{ display: 'flex', gap: 16, flex: 1, overflow: 'hidden' }}>
-
-        {/* Left panel */}
-        <div style={{
-          width: 340, flexShrink: 0, display: 'flex', flexDirection: 'column',
-          background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden',
-        }}>
-          {/* Tab bar */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            {(['template', 'custom'] as const).map(t => (
-              <button key={t} onClick={() => { setLeftTab(t); renderPreview(activeKey, fields, t) }} style={{
-                flex: 1, padding: '10px 4px', border: 'none', cursor: 'pointer',
-                background: leftTab === t ? 'var(--white)' : 'var(--paper)',
-                borderBottom: leftTab === t ? '2px solid var(--ink)' : '2px solid transparent',
-                fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
-                color: leftTab === t ? 'var(--ink)' : 'var(--muted)',
-                position: 'relative',
-              }}>
-                {t === 'template' ? 'Template' : 'Custom HTML'}
-                {t === 'custom' && fields.custom_html.trim() && (
-                  <span style={{
-                    marginLeft: 5, fontSize: 9, background: '#f59e0b', color: '#fff',
-                    borderRadius: 8, padding: '1px 5px', fontWeight: 700, letterSpacing: 0,
-                  }}>ON</span>
-                )}
-              </button>
-            ))}
+  if (assigning && editing) {
+    return (
+      <div style={{ maxWidth: 480 }}>
+        <div className="card"><div className="card-body">
+          <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>Where should "{editing.name}" be used?</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16 }}>
+            Assigning it to a slot replaces whatever template was driving that email before.
           </div>
-
-          {/* Tab content — scrollable */}
-          <div style={{ flex: 1, overflow: 'auto' }}>
-
-            {/* ── TEMPLATE TAB ── */}
-            {leftTab === 'template' && (
-              <div style={{ padding: '16px 20px' }}>
-                {fields.custom_html.trim() && (
-                  <div style={{
-                    background: '#fffbeb', border: '1px solid #f59e0b', borderRadius: 6,
-                    padding: '8px 12px', marginBottom: 14, fontSize: 11, color: '#92400e', lineHeight: 1.5,
-                  }}>
-                    <strong>Custom HTML is active.</strong> These values are injected as{' '}
-                    <code style={{ fontSize: 10, background: '#fef3c7', padding: '0 3px', borderRadius: 2 }}>{'{intro}'}</code>,{' '}
-                    <code style={{ fontSize: 10, background: '#fef3c7', padding: '0 3px', borderRadius: 2 }}>{'{header_bg}'}</code> etc. into your HTML.
-                  </div>
-                )}
-
-                <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>Content</div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.5 }}>{def.hint}</div>
-                <div className="fgroup">
-                  <label className="flabel">Subject line</label>
-                  <input className="finput" placeholder={`Default: ${def.defaultSubject}`}
-                    value={fields.subject} onChange={e => setFields(f => ({ ...f, subject: e.target.value }))} />
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">From email <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span></label>
-                  <input className="finput" type="email" placeholder="Default sender"
-                    value={fields.from_email} onChange={e => setFields(f => ({ ...f, from_email: e.target.value }))} />
-                  <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>Must be @rass-consulting.com or @lauratreonze.com.</div>
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">Opening paragraph</label>
-                  <textarea className="finput" rows={3} placeholder="Leave blank for default"
-                    value={fields.intro} style={{ resize: 'vertical' }}
-                    onChange={e => setFields(f => ({ ...f, intro: e.target.value }))} />
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">Closing paragraph</label>
-                  <textarea className="finput" rows={3} placeholder="Leave blank for default"
-                    value={fields.closing} style={{ resize: 'vertical' }}
-                    onChange={e => setFields(f => ({ ...f, closing: e.target.value }))} />
-                </div>
-                <div style={{ marginBottom: 18 }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 5 }}>Placeholders (click to copy)</div>
-                  {placeholderChips(def.vars)}
-                </div>
-
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginBottom: 0 }}>
-                  <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>Style</div>
-
-                  {/* Logo row */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 8 }}>
-                    <div style={{
-                      width: 44, height: 30, borderRadius: 4, border: '1px solid var(--border)',
-                      background: logoPreviewBg,
-                      display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0,
-                    }}>
-                      {logoData
-                        ? <img src={logoData} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                        : <span style={{ fontFamily: 'serif', fontSize: 10, color: '#f7f4ef' }}>{(workspace as any)?.name?.charAt(0) || '?'}</span>
-                      }
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', flex: 1 }}>
-                      {logoData ? 'Logo uploaded' : 'No logo'} · <span style={{ color: '#2d6a9f', cursor: 'pointer' }}>Change in Workspace tab</span>
-                    </div>
-                  </div>
-
-                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 10 }}>
-                    <input type="checkbox" checked={fields.show_logo}
-                      onChange={e => setFields(f => ({ ...f, show_logo: e.target.checked }))}
-                      style={{ width: 13, height: 13, accentColor: 'var(--gold)' }} />
-                    Show logo in header
-                  </label>
-                  {colorRow('Header background', 'header_bg', '#1a2f4e')}
-                  {colorRow('Accent / highlight', 'accent_color', '#b8922e')}
-                  {colorRow('Detail values (amount, date)', 'value_color', '#1a1714')}
-                  <div style={{ marginBottom: 10 }}>
-                    <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Body font</label>
-                    <select className="fselect" style={{ margin: 0 }} value={fields.body_font}
-                      onChange={e => setFields(f => ({ ...f, body_font: e.target.value }))}>
-                      <option value="">Default</option>
-                      {BODY_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
-                    </select>
-                  </div>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 5 }}>Heading font</label>
-                    <select className="fselect" style={{ margin: 0 }} value={fields.heading_font}
-                      onChange={e => setFields(f => ({ ...f, heading_font: e.target.value }))}>
-                      <option value="">Default</option>
-                      {HEADING_FONTS.map(fn => <option key={fn.value} value={fn.value}>{fn.label}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ── CUSTOM HTML TAB ── */}
-            {leftTab === 'custom' && (
-              <div style={{ padding: '16px 20px' }}>
-                {fields.custom_html.trim() ? (
-                  <div style={{ background: '#f0fdf4', border: '1px solid #86efac', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: '#166534' }}>
-                    <strong>Active</strong> — your custom HTML is being used for all emails of this type.
-                  </div>
-                ) : (
-                  <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 12, fontSize: 11, color: 'var(--muted)' }}>
-                    Not active — standard template (Template tab) is used.
-                  </div>
-                )}
-
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 12, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={fields.disable_style}
-                    onChange={e => setFields(f => ({ ...f, disable_style: e.target.checked }))}
-                    style={{ marginTop: 2, width: 13, height: 13, accentColor: 'var(--gold)', flexShrink: 0 }} />
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>Disable style injection</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.5, marginTop: 2 }}>
-                      Checked: style placeholders use built-in default colors. Uncheck to apply Template tab colors &amp; fonts (
-                      <code style={{ fontSize: 10, background: '#f0f4ff', padding: '0 3px', borderRadius: 2 }}>{'{header_bg}'}</code>,{' '}
-                      <code style={{ fontSize: 10, background: '#f0f4ff', padding: '0 3px', borderRadius: 2 }}>{'{accent_color}'}</code>{' '}
-                      etc.) into your HTML.
-                    </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
+            {GENERIC_USE_CASES.map(u => {
+              const takenBy = useCaseMap[u.key] && useCaseMap[u.key] !== editing.id
+                ? templates.find(t => t.id === useCaseMap[u.key])?.name : null
+              return (
+                <label key={u.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!assignChecks[u.key]}
+                    onChange={e => setAssignChecks(c => ({ ...c, [u.key]: e.target.checked }))} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 500 }}>{u.label}</div>
+                    {takenBy && <div style={{ fontSize: 11, color: 'var(--muted)' }}>Currently: {takenBy} — will be replaced</div>}
                   </div>
                 </label>
-
-                <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>
-                  Write your own HTML to fully control the email layout.
-                  Use <code style={{ fontSize: 11, background: '#f0f4ff', padding: '1px 4px', borderRadius: 3 }}>{'{intro}'}</code>, <code style={{ fontSize: 11, background: '#f0f4ff', padding: '1px 4px', borderRadius: 3 }}>{'{header_bg}'}</code> etc. to pull values from the Template tab.
-                </div>
-
-                {!fields.custom_html.trim() && (
-                  <button onClick={loadDefaultTemplate} disabled={previewLoading} style={{
-                    width: '100%', padding: '8px 12px', marginBottom: 10,
-                    background: '#f0f7ff', border: '1px solid #b0cce4', borderRadius: 6,
-                    fontSize: 12, color: '#2d6a9f', cursor: 'pointer', fontWeight: 500,
-                  }}>
-                    {previewLoading ? 'Loading…' : '↓ Start from default template'}
-                  </button>
-                )}
-
-                <textarea
-                  className="finput"
-                  rows={12}
-                  placeholder={'<!DOCTYPE html>\n<html>...</html>'}
-                  value={fields.custom_html}
-                  style={{ resize: 'vertical', fontFamily: 'monospace', fontSize: 11, margin: '0 0 8px' }}
-                  onChange={e => setFields(f => ({ ...f, custom_html: e.target.value }))}
-                  spellCheck={false}
-                />
-
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
-                  <label style={{
-                    fontSize: 11, color: '#2d6a9f', cursor: 'pointer', padding: '5px 10px',
-                    border: '1px solid #b0cce4', borderRadius: 5, background: '#f0f7ff', display: 'inline-block',
-                  }}>
-                    Upload .html file
-                    <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                  </label>
-                  <button onClick={() => {
-                    const tmpl = DEFAULT_HTML_TEMPLATES[activeKey]
-                    if (!tmpl) return
-                    const blob = new Blob([tmpl], { type: 'text/html' })
-                    const a = document.createElement('a')
-                    a.href = URL.createObjectURL(blob)
-                    a.download = `${activeKey}-sample.html`
-                    a.click()
-                    URL.revokeObjectURL(a.href)
-                  }} style={{
-                    fontSize: 11, color: '#2d6a9f', background: '#f0f7ff', border: '1px solid #b0cce4',
-                    borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
-                  }}>↓ Download Sample</button>
-                  {fields.custom_html.trim() && (
-                    <>
-                      <button onClick={loadDefaultTemplate} disabled={previewLoading} style={{
-                        fontSize: 11, color: '#2d6a9f', background: '#f0f7ff', border: '1px solid #b0cce4',
-                        borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
-                      }}>Reset to default</button>
-                      <button onClick={() => setFields(f => ({ ...f, custom_html: '', disable_style: false }))} style={{
-                        fontSize: 11, color: '#dc2626', background: 'none', border: '1px solid #fca5a5',
-                        borderRadius: 5, padding: '5px 10px', cursor: 'pointer',
-                      }}>Clear — use standard template</button>
-                    </>
-                  )}
-                </div>
-
-                <div style={{ marginBottom: 8 }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.08em', marginBottom: 5 }}>All placeholders (click to copy)</div>
-                  {placeholderChips([...def.vars, '{intro}', '{closing}', '{header_bg}', '{accent_color}', '{logo_img}'])}
-                </div>
-              </div>
-            )}
+              )
+            })}
           </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => { setAssigning(false); setEditing(null) }}>Skip for now</button>
+            <button className="btn btn-dark btn-sm" onClick={handleSaveAssignment} disabled={saving}>{saving ? 'Saving…' : 'Save Assignment'}</button>
+          </div>
+        </div></div>
+      </div>
+    )
+  }
 
-          {/* Auto-save status */}
-          <div style={{ padding: '10px 20px', borderTop: '1px solid var(--border)', flexShrink: 0, background: 'var(--white)', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', minHeight: 44 }}>
-            {saveStatus === 'saving' && (
-              <span style={{ fontSize: 11, color: 'var(--muted)' }}>Saving…</span>
-            )}
-            {saveStatus === 'saved' && (
-              <span style={{ fontSize: 11, color: '#16a34a', fontWeight: 600 }}>✓ Saved</span>
-            )}
+  if (editing) {
+    // Union of placeholders for whichever use cases this template is already assigned
+    // to; falls back to the common baseline for a brand-new, not-yet-assigned template.
+    const assignedHints = (editing.use_cases || []).flatMap((uc: string) => PLACEHOLDER_HINTS[uc] || [])
+    const activePlaceholders = Array.from(new Set(assignedHints.length ? assignedHints : DEFAULT_PLACEHOLDER_HINT))
+
+    return (
+      <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <div className="card" style={{ flex: 1, minWidth: 0, maxWidth: 480 }}>
+          <div className="card-body">
+            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(null)} style={{ marginBottom: 12 }}>← Back</button>
+            <div className="fgroup">
+              <label className="flabel">Template Name</label>
+              <input className="finput" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="e.g. Warm Welcome" />
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Subject</label>
+              <input className="finput" value={editing.subject} onChange={e => setEditing({ ...editing, subject: e.target.value })} placeholder="e.g. A quick note from {workspace_name}" />
+            </div>
+            <div className="fgroup">
+              <label className="flabel">From Email <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
+              <input className="finput" value={editing.from_email} onChange={e => setEditing({ ...editing, from_email: e.target.value })} placeholder="hello@yourdomain.com" />
+            </div>
+
+            <div className="fgroup">
+              <label className="flabel">Body — Opening</label>
+              <textarea className="ftextarea" rows={3} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Body — Closing</label>
+              <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon, ..." />
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 16 }}>
+              Available: {activePlaceholders.join(' ')}
+              {!(editing.use_cases || []).length && (
+                <span> — more become available once you save and assign this to a specific email type.</span>
+              )}
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Header</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={editing.style.show_header !== false}
+                    onChange={e => setStyle('show_header', e.target.checked)} />
+                  Show header
+                </label>
+              </div>
+              <fieldset disabled={editing.style.show_header === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_header === false ? 0.5 : 1 }}>
+                <div className="fgrid">
+                  <div className="fgroup">
+                    <label className="flabel">Header Color</label>
+                    <ColorPicker value={editing.style.header_bg || '#1a2f4e'} onChange={c => setStyle('header_bg', c)} />
+                  </div>
+                  <div className="fgroup">
+                    <label className="flabel">Accent Color</label>
+                    <ColorPicker value={editing.style.accent_color || '#b8922e'} onChange={c => setStyle('accent_color', c)} />
+                  </div>
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Header Tagline</label>
+                  <input className="finput" value={editing.style.header_tagline ?? ''} onChange={e => setStyle('header_tagline', e.target.value)} placeholder="Coaching Platform" />
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={editing.show_logo} onChange={e => setEditing({ ...editing, show_logo: e.target.checked })} />
+                  Show workspace logo
+                </label>
+              </fieldset>
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Footer</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={editing.style.show_footer !== false}
+                    onChange={e => setStyle('show_footer', e.target.checked)} />
+                  Show footer
+                </label>
+              </div>
+              <fieldset disabled={editing.style.show_footer === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_footer === false ? 0.5 : 1 }}>
+                <div className="fgroup">
+                  <label className="flabel">Footer Text</label>
+                  <textarea className="ftextarea" rows={2} value={editing.style.footer_text ?? ''}
+                    onChange={e => setStyle('footer_text', e.target.value)}
+                    placeholder="This is an automated notification — please do not reply directly to this email." />
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                    Shown below your contact line and workspace name. Leave blank to use the default disclaimer above.
+                  </div>
+                </div>
+              </fieldset>
+            </div>
+
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Signature</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={!!editing.include_client_signature_line}
+                  onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
+                Include a client signature line
+              </label>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, marginLeft: 22 }}>
+                Prints a blank "Client Signature: ____  Date: ____" line at the bottom — useful for
+                contracts. The coach's own signature is drawn per-message in Client Communication, not
+                set here.
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
+              <button className="btn btn-dark" onClick={handleSaveTemplate} disabled={saving}>{saving ? 'Saving…' : 'Save & Choose Where to Use'}</button>
+            </div>
           </div>
         </div>
 
-        {/* Right — live email preview */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-          <div style={{
-            background: 'var(--white)', border: '1px solid var(--border)', borderRadius: '8px 8px 0 0',
-            borderBottom: 'none', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: 8,
-          }}>
-            <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '.1em', flexShrink: 0 }}>Subject</span>
-            <span style={{ fontSize: 13, color: fields.subject ? 'var(--ink)' : 'var(--muted)', fontStyle: fields.subject ? 'normal' : 'italic' }}>
-              {fields.subject || def.defaultSubject}
-            </span>
-            {!fields.subject && <span style={{ fontSize: 10, color: 'var(--muted)', background: '#f5f3ef', borderRadius: 4, padding: '1px 6px' }}>default</span>}
-            {fields.custom_html.trim() && (
-              <span style={{ marginLeft: 'auto', fontSize: 10, background: '#fffbeb', color: '#92400e', border: '1px solid #f59e0b', borderRadius: 4, padding: '2px 7px', flexShrink: 0 }}>Custom HTML</span>
-            )}
+        <div className="card" style={{ flex: 1, minWidth: 0, position: 'sticky', top: 80, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+            Preview {previewLoading && '· updating…'}
           </div>
-          <div style={{ flex: 1, border: '1px solid var(--border)', borderRadius: '0 0 8px 8px', overflow: 'hidden', background: '#f5f3ef', position: 'relative' }}>
-            {previewLoading && (
-              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.7)', zIndex: 1, fontSize: 13, color: 'var(--muted)' }}>
-                Loading preview…
-              </div>
-            )}
-            <iframe srcDoc={previewHtml} title="Email preview" sandbox="allow-same-origin"
-              style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} />
-          </div>
+          <iframe title="preview" srcDoc={previewHtml} style={{ width: '100%', height: 600, border: 'none', display: 'block' }} />
         </div>
       </div>
+    )
+  }
+
+  return (
+    <div style={{ maxWidth: 900 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 480 }}>
+          Build a branded template once, then choose which emails it powers — confirmations, reminders,
+          invoices, portal invites, or one-off client messages.
+        </div>
+        <button className="btn btn-dark btn-sm" onClick={openNew}>+ New Template</button>
+      </div>
+
+      {(missingUseCases.length > 0 || !hasContractSample) && (
+        <div className="card" style={{ padding: 14, marginBottom: 16, background: '#faf6ed', border: '1px solid #e8dcc0' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Quick start — add an editable sample</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+            One click adds a ready-to-edit template pre-filled with sensible copy. Edit or delete it any time.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {missingUseCases.map(u => (
+              <button key={u.key} className="btn btn-outline btn-sm" disabled={addingSample === u.key}
+                onClick={() => handleAddSample(u.key)}>
+                {addingSample === u.key ? 'Adding…' : `+ ${u.label}`}
+              </button>
+            ))}
+            {!hasContractSample && (
+              <button className="btn btn-outline btn-sm" disabled={addingSample === 'contract'}
+                onClick={handleAddContractSample}>
+                {addingSample === 'contract' ? 'Adding…' : '+ Contract Agreement'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {templates.length === 0 ? (
+        <div className="card"><div className="card-body" style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
+          No generic templates yet — add a sample above, or create one from scratch to reuse across invoices, reminders, and client messages.
+        </div></div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
+          {templates.map(t => (
+            <div key={t.id} className="card" style={{ padding: 16 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t.name || 'Untitled'}</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, minHeight: 32 }}>
+                {(t.use_cases || []).length
+                  ? (t.use_cases || []).map((uc: string) => GENERIC_USE_CASES.find(u => u.key === uc)?.label || uc).join(', ')
+                  : 'Not assigned to any use yet'}
+              </div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                <button className="btn btn-outline btn-sm" onClick={() => openEdit(t)} style={{ flex: 1, justifyContent: 'center' }}><Pencil size={12} /> Edit</button>
+                <button className="btn btn-outline btn-sm" onClick={() => handleDelete(t.id)} style={{ color: '#c0392b', borderColor: '#f5c6c2' }}><Trash2 size={12} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -2633,7 +2264,7 @@ export default function Settings() {
     { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
-    { key: 'Email Templates',  icon: <Mail size={13} />,          ownerOnly: true  },
+    { key: 'Generic Templates', icon: <Mail size={13} />,        ownerOnly: true  },
     { key: 'Integrations',    icon: <Plus size={13} />,          ownerOnly: true  },
     { key: 'Audit Log',       icon: <ClipboardList size={13} />, ownerOnly: true  },
   ]
@@ -2668,7 +2299,7 @@ export default function Settings() {
         {tab === 'Client Statuses' && isOwner && <ClientStatusesTab />}
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
-        {tab === 'Email Templates' && isOwner && <EmailTemplatesTab />}
+        {tab === 'Generic Templates' && isOwner && <GenericTemplatesTab />}
         {tab === 'Integrations'    && isOwner && <IntegrationsTab />}
         {tab === 'Audit Log'       && isOwner && <AuditLogTab />}
       </div>

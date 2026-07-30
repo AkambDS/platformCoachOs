@@ -224,7 +224,7 @@ def _build_ics(activity, method: str = "REQUEST", cancelled: bool = False) -> by
         lines.append(f"LOCATION:{_ics_escape(activity.location)}")
     lines += [
         f"ORGANIZER;CN=\"{coach_name}\":mailto:{coach_email}",
-        f"ATTENDEE;CN=\"{client_name}\";RSVP=TRUE;ROLE=REQ-PARTICIPANT:mailto:{client_email}",
+        f"ATTENDEE;CN=\"{client_name}\";ROLE=REQ-PARTICIPANT:mailto:{client_email}",
         f"STATUS:{'CANCELLED' if cancelled else 'CONFIRMED'}",
         f"SEQUENCE:{'1' if cancelled else '0'}",
         "END:VEVENT", "END:VCALENDAR",
@@ -400,7 +400,7 @@ def send_activity_confirmation_email(activity_id: str):
                 reschedule_url=reschedule_url,
                 style=saved_style,
             )
-        ics_bytes = _build_ics(activity, method="REQUEST")
+        ics_bytes = _build_ics(activity, method="PUBLISH")
 
         msg = EmailMultiAlternatives(
             subject=subject,
@@ -409,7 +409,7 @@ def send_activity_confirmation_email(activity_id: str):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+        msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
         msg.send()
 
         # ── Coach copy ──────────────────────────────────────────────────────────
@@ -435,7 +435,7 @@ def send_activity_confirmation_email(activity_id: str):
                 from_email=_workspace_from_email(workspace),
                 to=[coach_email],
             )
-            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
             coach_msg.send()
             logger.info(f"Coach copy sent to {coach_email} for activity {activity_id}")
 
@@ -617,7 +617,7 @@ def send_activity_reschedule_email(activity_id: str):
             owner_name=owner_name,
             google_cal_url=_build_google_cal_url(activity),
         )
-        ics_bytes = _build_ics(activity, method="REQUEST")
+        ics_bytes = _build_ics(activity, method="PUBLISH")
 
         msg = EmailMultiAlternatives(
             subject=f"Updated: {activity.title} with {coach_name}",
@@ -626,7 +626,7 @@ def send_activity_reschedule_email(activity_id: str):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+        msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
         msg.send()
         logger.info(f"Reschedule email sent to {client.email} for activity {activity_id}")
 
@@ -652,7 +652,7 @@ def send_activity_reschedule_email(activity_id: str):
                 from_email=_workspace_from_email(workspace),
                 to=[coach_email],
             )
-            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=REQUEST")
+            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
             coach_msg.send()
             logger.info(f"Coach reschedule copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
@@ -1166,6 +1166,40 @@ def send_client_cancellation_notice(activity_id: str):
         logger.error(f"send_client_cancellation_notice failed: {e}")
 
 
+@shared_task(name="tasks.email.send_client_rsvp_notice")
+def send_client_rsvp_notice(activity_id: str, response_status: str):
+    """Email the coach when a client accepts/declines/tentatively-RSVPs the Google Calendar invite."""
+    from apps.activities.models import Activity
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        coach = activity.coach
+        if not coach or not coach.email:
+            return
+
+        workspace   = activity.workspace
+        client_name = activity.client.full_name
+        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        verb = {"accepted": "accepted", "declined": "declined", "tentative": "tentatively accepted"}.get(
+            response_status, response_status
+        )
+
+        subject = f"{client_name} {verb} the calendar invite"
+        body    = (
+            f"Hi {coach.first_name or coach.full_name},\n\n"
+            f"{client_name} has {verb} the calendar invite for:\n\n"
+            f"  What:  {activity.title}\n"
+            f"  When:  {dt}\n\n"
+            f"— {workspace.name}"
+        )
+        EmailMultiAlternatives(
+            subject=subject, body=body,
+            from_email=_workspace_from_email(workspace), to=[coach.email],
+        ).send()
+        logger.info(f"RSVP notice ({response_status}) sent to coach {coach.email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_client_rsvp_notice failed: {e}")
+
+
 @shared_task(name="tasks.email.send_client_reschedule_request")
 def send_client_reschedule_request(activity_id: str, message: str = ""):
     """Email the coach (and business owner as fallback) when a client requests a reschedule."""
@@ -1333,3 +1367,143 @@ def send_portal_invite_email(client_id: str):
         logger.info(f"Portal invite sent to {client.email} for client {client_id}")
     except Exception as e:
         logger.error(f"send_portal_invite_email failed: {e}")
+
+
+@shared_task(name="tasks.email.send_client_communication_email")
+def send_client_communication_email(draft_id: str):
+    """Send a Client Communication draft (ClientMessageDraft) to the client and mark
+    it sent. Called synchronously from ClientMessageDraftViewSet.send so the coach gets
+    immediate success/failure feedback, rather than queued like the reminder/confirmation
+    tasks — this is a single manual send, not a bulk background job."""
+    from apps.clients.models import ClientMessageDraft
+    from tasks.email_html import build_client_communication_email
+    from django.core.files.storage import default_storage
+    from django.utils import timezone
+    import mimetypes
+
+    draft     = ClientMessageDraft.objects.select_related("client", "client__coach", "workspace").get(id=draft_id)
+    client    = draft.client
+    workspace = draft.workspace
+    if not client.email:
+        raise ValueError("This client has no email address on file.")
+
+    coach_name = draft.signature_name.strip() or (client.coach.full_name if client.coach else workspace.name)
+    owner_email, owner_name = _owner_info(workspace)
+    logo_url = _logo_src(workspace) if draft.show_logo else ""
+
+    # Generic-template samples (and any coach-written draft) may contain {client_name} /
+    # {coach_name} / {workspace_name} placeholders — substitute them here since this is
+    # the only place client_communication content actually gets sent (the Settings
+    # preview substitutes for display only and never persists back into the draft).
+    tmpl_vars = dict(client_name=client.full_name, coach_name=coach_name, workspace_name=workspace.name)
+    subject        = _apply_tmpl(draft.subject.strip(), **tmpl_vars) or "A message from your coach"
+    custom_intro   = _apply_tmpl(draft.intro,   **tmpl_vars)
+    custom_closing = _apply_tmpl(draft.closing, **tmpl_vars)
+
+    sign_url = ""
+    if draft.include_client_signature_line and not draft.client_signed_at:
+        from apps.clients.tokens import make_contract_token
+        backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
+        sign_url = f"{backend_url}/contract/sign/{make_contract_token(str(draft.id))}/"
+
+    client_signed_human = ""
+    if draft.client_signed_at:
+        client_signed_human = draft.client_signed_at.strftime("%B %d, %Y")
+
+    html = build_client_communication_email(
+        client_name=client.full_name,
+        subject=subject,
+        workspace_name=workspace.name,
+        coach_name=coach_name,
+        logo_url=logo_url,
+        owner_email=owner_email, owner_name=owner_name,
+        custom_intro=custom_intro, custom_closing=custom_closing,
+        style=draft.style or {},
+        coach_signature=draft.coach_signature,
+        include_client_signature_line=draft.include_client_signature_line,
+        sign_url=sign_url,
+        client_signature=draft.client_signature,
+        client_signed_at_human=client_signed_human,
+    )
+    plain_lines = [custom_intro, custom_closing, f"— {coach_name or workspace.name}"]
+    if sign_url:
+        plain_lines.append(f"Review & sign online: {sign_url}")
+    plain = "\n\n".join(filter(None, plain_lines))
+
+    msg = EmailMultiAlternatives(
+        subject=subject,
+        body=plain,
+        from_email=_workspace_from_email(workspace),
+        to=[client.email],
+        reply_to=[owner_email] if owner_email else None,
+    )
+    msg.attach_alternative(html, "text/html")
+
+    # Contracts (client signature requested) also go out as a real PDF attachment,
+    # not just inline HTML — same WeasyPrint pattern used for invoices.
+    if draft.include_client_signature_line:
+        try:
+            from weasyprint import HTML as WeasyHTML
+            pdf_bytes = WeasyHTML(string=html).write_pdf()
+            safe_subject = "".join(c for c in subject if c.isalnum() or c in " -_").strip() or "contract"
+            msg.attach(f"{safe_subject}.pdf", pdf_bytes, "application/pdf")
+        except Exception as e:
+            logger.warning(f"Could not attach contract PDF for draft {draft_id}: {e}")
+
+    for att in (draft.attachments or []):
+        s3_key = att.get("s3_key")
+        if not s3_key:
+            continue
+        try:
+            with default_storage.open(s3_key, "rb") as f:
+                content = f.read()
+            mime = mimetypes.guess_type(att.get("file_name", ""))[0] or "application/octet-stream"
+            msg.attach(att.get("file_name") or "attachment", content, mime)
+        except Exception as e:
+            logger.warning(f"Could not attach {s3_key} to client communication {draft_id}: {e}")
+
+    msg.send()
+
+    if draft.status != "signed":
+        draft.status = "sent"
+    draft.sent_at = timezone.now()
+    draft.save(update_fields=["status", "sent_at", "updated_at"])
+    logger.info(f"Client communication sent to {client.email} (draft {draft_id})")
+
+
+@shared_task(name="tasks.email.send_contract_signed_notice")
+def send_contract_signed_notice(draft_id: str):
+    """Notify the coach (and the workspace owner, if different) that a client has
+    signed a contract sent via Client Communication. Fire-and-forget, called from
+    apps.clients.public_views.ContractSignView.post right after the signature is
+    captured — mirrors the pattern used for session confirm/cancel notices."""
+    from apps.clients.models import ClientMessageDraft
+    try:
+        draft = ClientMessageDraft.objects.select_related("client", "client__coach", "workspace").get(id=draft_id)
+        client, workspace = draft.client, draft.workspace
+        owner_email, owner_name = _owner_info(workspace)
+
+        to_addrs = set()
+        if client.coach and client.coach.email:
+            to_addrs.add(client.coach.email)
+        if owner_email:
+            to_addrs.add(owner_email)
+        if not to_addrs:
+            return
+
+        subject = f"Signed: {draft.subject or 'Agreement'} — {client.full_name}"
+        signed_str = draft.client_signed_at.strftime("%B %d, %Y at %I:%M %p") if draft.client_signed_at else ""
+        plain = (
+            f"{client.full_name} has signed \"{draft.subject or 'Agreement'}\" on {signed_str}.\n\n"
+            f"A copy of the signed document has been saved to their Files.\n\n"
+            f"— CoachOS"
+        )
+        msg = EmailMultiAlternatives(
+            subject=subject, body=plain,
+            from_email=_workspace_from_email(workspace),
+            to=list(to_addrs),
+        )
+        msg.send()
+        logger.info(f"Contract-signed notice sent for draft {draft_id}")
+    except Exception as e:
+        logger.error(f"send_contract_signed_notice failed: {e}")

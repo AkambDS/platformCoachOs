@@ -545,7 +545,7 @@ export default function Pipeline() {
             padding: '9px 20px', background: 'var(--ink)', color: '#fff',
             border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 700, letterSpacing: '.08em',
           }}>
-            + ADD DEAL
+            + ADD CONTRACT
           </button>
         </div>
       </div>

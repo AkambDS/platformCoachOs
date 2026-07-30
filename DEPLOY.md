@@ -200,6 +200,19 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py migrate
 
 ---
 
+## OnlyOffice Setup (real-time Word/Excel/PPT editing)
+
+The `onlyoffice` container is added automatically by `docker-compose.prod.yml` and
+proxied by nginx on port 8443 of your existing domain/cert — no new DNS record or
+certbot run needed. Two manual steps on EC2:
+
+1. **Open port 8443** in the EC2 instance's security group (inbound TCP, same source rules as 443).
+2. Set `ONLYOFFICE_JWT_SECRET` in `backend/.env` to a real random secret (`python -c "import secrets; print(secrets.token_urlsafe(50))"`) — it must match between `backend/.env` and what's passed to the `onlyoffice` container (same `.env` file, so this is automatic).
+
+Then `docker compose -f docker-compose.prod.yml up -d --build` picks it up.
+
+---
+
 ## Stripe Webhook Setup
 
 After deployment, register your webhook in Stripe dashboard:

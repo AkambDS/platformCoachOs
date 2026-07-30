@@ -11,7 +11,10 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
                  header_bg: str = "#1a2f4e",
                  accent_color: str = "#b8922e",
                  header_tagline: str = "",
-                 body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif") -> str:
+                 body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif",
+                 show_header: bool = True,
+                 show_footer: bool = True,
+                 footer_text: str = "") -> str:
     if logo_url:
         brand = (
             f'<table role="presentation" cellpadding="0" cellspacing="0">'
@@ -49,21 +52,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         if header_tagline else ''
     )
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-  <title>{workspace_name}</title>
-</head>
-<body style="margin:0;padding:0;background:#eeebe5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-       style="background:#eeebe5;padding:36px 16px 48px;">
-  <tr><td align="center">
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-         style="max-width:600px;">
-
+    header_rows = f"""
     <!-- ── Header ── -->
     <tr>
       <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">
@@ -79,16 +68,13 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
     <!-- ── Accent bar ── -->
     <tr>
       <td style="height:3px;background:{accent_color};"></td>
-    </tr>
+    </tr>""" if show_header else ""
 
-    <!-- ── Body ── -->
-    <tr>
-      <td style="background:#ffffff;padding:44px 40px 40px;border-radius:0 0 8px 8px;
-                 font-family:{body_font};">
-        {body_html}
-      </td>
-    </tr>
+    body_radius = "0 0 8px 8px" if show_header else "8px"
 
+    disclaimer = footer_text.strip() or "This is an automated notification &mdash; please do not reply directly to this email."
+
+    footer_row = f"""
     <!-- ── Footer ── -->
     <tr>
       <td style="padding:28px 0 0;text-align:center;">
@@ -98,7 +84,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         </p>
         <p style="margin:0 0 6px;font-size:11px;color:#b5afa6;
                   font-family:{body_font};">
-          This is an automated notification &mdash; please do not reply directly to this email.
+          {disclaimer}
         </p>
         <p style="margin:0;font-size:10px;color:#c8c2ba;
                   font-family:{body_font};
@@ -106,7 +92,32 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
           {workspace_name}
         </p>
       </td>
+    </tr>""" if show_footer else ""
+
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>{workspace_name}</title>
+</head>
+<body style="margin:0;padding:0;background:#eeebe5;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+       style="background:#eeebe5;padding:36px 16px 48px;">
+  <tr><td align="center">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+         style="max-width:600px;">
+    {header_rows}
+
+    <!-- ── Body ── -->
+    <tr>
+      <td style="background:#ffffff;padding:44px 40px 40px;border-radius:{body_radius};
+                 font-family:{body_font};">
+        {body_html}
+      </td>
     </tr>
+    {footer_row}
 
   </table>
   </td></tr>
@@ -268,6 +279,9 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     header_bg      = s.get("header_bg")      or "#1a2f4e"
     accent_color   = s.get("accent_color")   or "#b8922e"
     header_tagline = s.get("header_tagline", "")
+    show_header    = s.get("show_header", True)
+    show_footer    = s.get("show_footer", True)
+    footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
     value_color    = s.get("value_color")    or "#1a1714"
@@ -337,7 +351,8 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font)
+                        header_tagline=header_tagline, body_font=body_font,
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
 
 
 # ── Reschedule / update email ────────────────────────────────────────────────────
@@ -494,6 +509,9 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     header_bg      = s.get("header_bg")      or "#1a2f4e"
     accent_color   = s.get("accent_color")   or "#b8922e"
     header_tagline = s.get("header_tagline", "")
+    show_header    = s.get("show_header", True)
+    show_footer    = s.get("show_footer", True)
+    footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     value_color    = s.get("value_color")    or "#1a1714"
 
@@ -556,7 +574,8 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font)
+                        header_tagline=header_tagline, body_font=body_font,
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
 
 
 # ── Cancellation email ───────────────────────────────────────────────────────────
@@ -927,6 +946,133 @@ def build_pipeline_alert_email(
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
 
 
+def build_client_communication_email(
+    client_name: str,
+    subject: str,
+    workspace_name: str,
+    coach_name: str,
+    logo_url: str = "",
+    owner_email: str = "",
+    owner_name: str = "",
+    custom_intro: str = "",
+    custom_closing: str = "",
+    style: dict = None,
+    coach_signature: str = "",
+    include_client_signature_line: bool = False,
+    sign_url: str = "",
+    client_signature: str = "",
+    client_signed_at_human: str = "",
+) -> str:
+    """Generic one-off message to a client — used by the Client Communication draft tool.
+    coach_signature is a PNG data URL drawn in the compose screen. When
+    include_client_signature_line is set and sign_url is provided, the email includes a
+    "Review & Sign" link to the public no-login signing page (apps.clients.public_views);
+    once the client has actually signed there, client_signature/client_signed_at_human
+    render their captured signature instead of the link."""
+    s = style or {}
+    first_name = client_name.split()[0] if client_name else client_name
+
+    intro_html = f"""
+    <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      {custom_intro}
+    </p>""" if custom_intro else f"""
+    <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {first_name},
+    </p>"""
+
+    closing_html = f"""
+    <p style="margin:20px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      {custom_closing}
+    </p>""" if custom_closing else ""
+
+    if coach_signature:
+        signature_html = (
+            f'<img src="{coach_signature}" alt="Signature" '
+            f'style="display:block;max-height:60px;max-width:220px;margin:14px 0 2px;" />'
+        )
+    elif include_client_signature_line:
+        # No signature drawn yet, but this looks like a contract (client signature
+        # line requested) — show where the coach's signature will go once they sign
+        # it in the compose screen, rather than silently omitting it.
+        signature_html = (
+            '<div style="display:inline-block;margin:14px 0 2px;padding:10px 24px;'
+            'border:1px dashed #c8c2ba;border-radius:4px;font-size:12px;color:#b5afa6;'
+            'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">'
+            '[ Coach signature ]</div>'
+        )
+    else:
+        signature_html = ""
+
+    if client_signature:
+        # Already signed — show the captured signature instead of a blank line/link.
+        signature_line_html = f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:36px;border-top:1px solid #ede9e1;padding-top:20px;">
+      <tr>
+        <td style="padding:0 0 6px;font-size:13px;color:#3a3530;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+          <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4a7c59;font-weight:600;margin-bottom:6px;">
+            &#10003; Signed by Client{f' on {client_signed_at_human}' if client_signed_at_human else ''}
+          </div>
+          <img src="{client_signature}" alt="Client signature" style="display:block;max-height:60px;max-width:220px;" />
+        </td>
+      </tr>
+    </table>"""
+    elif include_client_signature_line:
+        sign_button = f"""
+        <table role="presentation" cellpadding="0" cellspacing="0" style="margin:0 0 18px;">
+          <tr>
+            <td style="background:#4a7c59;border-radius:4px;">
+              <a href="{sign_url}" style="display:inline-block;padding:12px 32px;
+                        font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                        font-size:12px;font-weight:700;color:#ffffff;text-decoration:none;
+                        letter-spacing:.08em;text-transform:uppercase;">
+                Review &amp; Sign Online
+              </a>
+            </td>
+          </tr>
+        </table>""" if sign_url else ""
+        signature_line_html = f"""
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+           style="margin-top:36px;border-top:1px solid #ede9e1;padding-top:20px;">
+      <tr>
+        <td style="padding:0 0 6px;font-size:13px;color:#3a3530;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+          {sign_button}
+          Client Signature: <span style="display:inline-block;min-width:220px;border-bottom:1px solid #b5afa6;">&nbsp;</span>
+          &nbsp;&nbsp;Date: <span style="display:inline-block;min-width:100px;border-bottom:1px solid #b5afa6;">&nbsp;</span>
+        </td>
+      </tr>
+    </table>"""
+    else:
+        signature_line_html = ""
+
+    body = f"""
+    <h1 style="margin:0 0 20px;font-family:Georgia,'Times New Roman',serif;
+               font-size:26px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      {subject or "A message from your coach"}
+    </h1>
+
+    {intro_html}
+    {closing_html}
+
+    {signature_html}
+    <p style="margin:{'2px' if signature_html else '24px'} 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {coach_name or workspace_name}
+    </p>
+    {signature_line_html}"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=s.get("header_bg") or "#1a2f4e",
+                        accent_color=s.get("accent_color") or "#b8922e",
+                        header_tagline=s.get("header_tagline", ""),
+                        body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
+                        show_header=s.get("show_header", True),
+                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""))
+
+
 def build_portal_invite_email(
     client_name: str,
     workspace_name: str,
@@ -991,4 +1137,6 @@ def build_portal_invite_email(
                         header_bg=s.get("header_bg") or "#1a2f4e",
                         accent_color=s.get("accent_color") or "#b8922e",
                         header_tagline=s.get("header_tagline", ""),
-                        body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif")
+                        body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
+                        show_header=s.get("show_header", True),
+                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""))

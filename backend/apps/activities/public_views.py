@@ -8,6 +8,7 @@ Routes (added in config/urls.py):
     POST /session/cancel/<token>/     → processes cancellation
     GET  /session/reschedule/<token>/
     POST /session/reschedule/<token>/ → sends reschedule request to coach
+    POST /api/webhooks/google-calendar/ → Google Calendar RSVP push notification
 """
 import logging
 
@@ -323,3 +324,29 @@ class SessionRescheduleView(View):
             <p class="sub">This link has expired or is invalid.<br>
               Please contact your coach directly to reschedule.</p>
           </div>"""), status=400)
+
+
+# ── Google Calendar RSVP push notification ──────────────────────────────────────
+
+class GoogleCalendarWebhookView(View):
+    """
+    Receives Google Calendar's push-notification ping (no payload — just headers)
+    whenever a watched calendar changes, including attendee RSVP responses.
+    Must ack fast: real work is handed off to a Celery task.
+    """
+    def post(self, request):
+        from django.conf import settings
+
+        expected_token = getattr(settings, "GOOGLE_CALENDAR_WEBHOOK_TOKEN", "")
+        token          = request.headers.get("X-Goog-Channel-Token", "")
+        if not expected_token or token != expected_token:
+            return HttpResponse(status=403)
+
+        channel_id     = request.headers.get("X-Goog-Channel-ID", "")
+        resource_state = request.headers.get("X-Goog-Resource-State", "")
+        if not channel_id:
+            return HttpResponse(status=400)
+
+        from tasks.calendar import process_calendar_notification
+        process_calendar_notification.delay(channel_id, resource_state)
+        return HttpResponse(status=200)

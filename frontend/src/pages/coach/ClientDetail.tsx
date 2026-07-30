@@ -4,6 +4,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { EDITABLE_OFFICE_EXTS, OfficeEditorModal, InlineOfficeViewer } from '../../components/OfficeEditor'
+import SignaturePad from '../../components/SignaturePad'
 import { useAuthStore } from '../../store/auth'
 
 const GOAL_STATUSES  = ['active','completed','paused']
@@ -732,8 +734,137 @@ const LIB_VIS_L: Record<string, string> = {
   private: 'Just Me', owner_only: 'Owner Only', internal: 'All Coaches', client_visible: 'Client Visible',
 }
 
-function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clientId: string; fileList: any[]; refetch: () => Promise<any>; showToast: any; canDelete: boolean }) {
-  const [section, setSection]       = useState<'client' | 'library'>('client')
+type SelectedFile = { kind: 'client' | 'shared'; data: any }
+
+function FileRow({ icon, bar, title, subtitle, badge, isSelected, onClick }: {
+  icon: JSX.Element; bar: string; title: string; subtitle: string; badge?: JSX.Element
+  isSelected: boolean; onClick: () => void
+}) {
+  return (
+    <div onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', cursor: 'pointer',
+      borderBottom: '1px solid var(--border)', background: isSelected ? 'var(--gold-faint, #faf6ed)' : undefined,
+    }}>
+      <div style={{ width: 3, height: 30, background: bar, borderRadius: 2, flexShrink: 0 }} />
+      {icon}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 12.5, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{title}</div>
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 5, overflow: 'hidden' }}>
+          <span style={{ whiteSpace: 'nowrap' }}>{subtitle}</span>
+          {badge}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function FileVaultPreviewPanel({ selected, clientId, currentUser, canDelete, onClose, onRequestDelete, onEditInBrowser, onConvertToPdf, converting }: {
+  selected: SelectedFile; clientId: string; currentUser: any; canDelete: boolean
+  onClose: () => void; onRequestDelete: () => void; onEditInBrowser: () => void
+  onConvertToPdf: () => void; converting: boolean
+}) {
+  const { data } = selected
+  const isClient = selected.kind === 'client'
+  const name  = isClient ? data.file_name : (data.file_name || data.title || '')
+  const ext   = name.split('.').pop()?.toLowerCase() || ''
+  const isPdf   = ext === 'pdf' || data.content_type === 'pdf'
+  const isImage = ['jpg','jpeg','png','gif','webp'].includes(ext)
+  const isVideo = ['mp4','mov','avi','mkv','webm','m4v'].includes(ext) || data.content_type === 'video'
+  const isOfficeEditable = EDITABLE_OFFICE_EXTS.includes(ext)
+  const isConvertible = isOfficeEditable && !isPdf
+  const inlineUrl   = data.inline_url
+  const downloadUrl = data.presigned_url || data.url
+  const isOwner    = currentUser?.role === 'business_owner'
+  const canEditFile = isClient && isOfficeEditable && (isOwner || data.uploaded_by === currentUser?.id)
+
+  return (
+    <div style={{
+      width: '100%', display: 'flex', flexDirection: 'column',
+      background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius, 8px)',
+      overflow: 'hidden', position: 'sticky', top: 80, maxHeight: 'calc(100vh - 120px)',
+    }}>
+      <div style={{ padding: '14px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {isClient ? data.file_name : (data.title || data.file_name)}
+          </div>
+          {!isClient && data.file_name && data.file_name !== data.title && (
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{data.file_name}</div>
+          )}
+        </div>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: 4, fontSize: 16 }}>×</button>
+      </div>
+
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        {downloadUrl && isPdf && inlineUrl && (
+          <iframe src={inlineUrl} style={{ width: '100%', height: 'max(560px, calc(100vh - 380px))', border: 'none', display: 'block' }} title={name} />
+        )}
+        {downloadUrl && isImage && inlineUrl && (
+          <img src={inlineUrl} alt={name} style={{ width: '100%', maxHeight: 'max(460px, calc(100vh - 420px))', objectFit: 'contain', display: 'block', background: '#f8f8f8' }} />
+        )}
+        {downloadUrl && isVideo && inlineUrl && (
+          <video src={inlineUrl} controls style={{ width: '100%', maxHeight: 'max(400px, calc(100vh - 420px))', display: 'block', background: '#000' }} />
+        )}
+        {downloadUrl && isOfficeEditable && !isPdf && (
+          <InlineOfficeViewer
+            itemKey={`${isClient ? 'client' : 'shared'}-${data.id}-${data.version}`}
+            getEditConfig={(mode) => (isClient
+              ? clientsApi.fileEditConfig(clientId, data.id, mode).then(r => r.data)
+              : libraryApi.editConfig(data.id, mode).then(r => r.data))}
+          />
+        )}
+        {!isClient && data.url && data.content_type === 'link' && (
+          <div style={{ padding: '12px 16px' }}>
+            <a href={data.url} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center' }}>
+              Open Link
+            </a>
+          </div>
+        )}
+
+        <div style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {[
+            isClient ? { label: 'Type', value: FILE_TYPES.find(t => t.value === data.assessment_type)?.label || data.assessment_type } : null,
+            { label: 'Version', value: `v${data.version || 1}` },
+            isClient ? { label: 'Date', value: fmtDate(data.date || data.created_at) } : null,
+            !isClient ? { label: 'Access', value: LIB_VIS_L[data.visibility] || data.visibility } : null,
+            { label: 'Uploaded by', value: data.uploaded_by_name || '—' },
+          ].filter(Boolean).map((row: any) => (
+            <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>
+              <span style={{ color: 'var(--muted)' }}>{row.label}</span>
+              <span style={{ color: 'var(--ink)', fontWeight: 500 }}>{row.value}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {canEditFile && (
+          <button onClick={onEditInBrowser} className="btn btn-dark btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6, background: 'var(--gold)', borderColor: 'var(--gold)' }}>
+            ✎ Edit live in browser
+          </button>
+        )}
+        {isClient && isConvertible && (
+          <button onClick={onConvertToPdf} disabled={converting} className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6 }}>
+            {converting ? 'Saving as PDF…' : '⇩ Save as PDF'}
+          </button>
+        )}
+        {downloadUrl && (
+          <a href={downloadUrl} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6, textDecoration: 'none' }}>
+            ↓ Download
+          </a>
+        )}
+        {isClient && canDelete && (
+          <button onClick={onRequestDelete} className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6, color: '#c0392b', borderColor: '#f5c6c2' }}>
+            Delete
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentUser }: { clientId: string; fileList: any[]; refetch: () => Promise<any>; showToast: any; canDelete: boolean; currentUser: any }) {
+  const [section, setSection]       = useState<'client' | 'shared'>('client')
   const [uploading, setUploading]   = useState(false)
   const [fileType, setFileType]     = useState('other')
   const [dragOver, setDragOver]     = useState(false)
@@ -741,12 +872,30 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
   const [search, setSearch]         = useState('')
   const [confirmFile, setConfirmFile] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting]     = useState(false)
+  const [editingFile, setEditingFile] = useState<any>(null)
+  const [selected, setSelected]     = useState<SelectedFile | null>(null)
+  const [converting, setConverting] = useState(false)
 
   const { data: libData } = useQuery({
-    queryKey: ['library-client-visible'],
-    queryFn: () => libraryApi.items({ visibility: 'client_visible', page_size: 200 }).then(r => r.data),
+    queryKey: ['library-shared-with-client', clientId],
+    queryFn: () => libraryApi.items({ shared_with_client: clientId, page_size: 200 }).then(r => r.data),
   })
   const libItems: any[] = libData?.results || libData || []
+
+  // Keep the selected preview pointed at up-to-date data (e.g. after edit-in-browser
+  // bumps the version, or a delete/refetch removes the item entirely).
+  useEffect(() => {
+    if (!selected) return
+    if (selected.kind === 'client') {
+      const fresh = fileList.find(f => f.id === selected.data.id)
+      if (!fresh) setSelected(null)
+      else if (fresh !== selected.data) setSelected({ kind: 'client', data: fresh })
+    } else {
+      const fresh = libItems.find(f => f.id === selected.data.id)
+      if (fresh && fresh !== selected.data) setSelected({ kind: 'shared', data: fresh })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileList, libItems])
 
   const handleUpload = async (file: File) => {
     setUploading(true)
@@ -769,10 +918,24 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
     try {
       await clientsApi.deleteFile(clientId, confirmFile.id)
       await refetch()
+      if (selected?.kind === 'client' && selected.data.id === confirmFile.id) setSelected(null)
       showToast('File deleted')
       setConfirmFile(null)
     } catch { showToast('Failed to delete', 'error') }
     finally { setDeleting(false) }
+  }
+
+  const handleConvertToPdf = async () => {
+    if (!selected || selected.kind !== 'client') return
+    setConverting(true)
+    try {
+      const { data } = await clientsApi.convertFileToPdf(clientId, selected.data.id)
+      await refetch()
+      showToast(`Saved as ${data.file_name} — attach it from Client Communication`)
+      setSelected({ kind: 'client', data })
+    } catch (e: any) {
+      showToast(e?.response?.data?.detail || 'Conversion failed', 'error')
+    } finally { setConverting(false) }
   }
 
   const isNew = (d: string) => (Date.now() - new Date(d).getTime()) < 7 * 24 * 60 * 60 * 1000
@@ -783,38 +946,44 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
     !search || f.title?.toLowerCase().includes(search.toLowerCase()) || f.file_name?.toLowerCase().includes(search.toLowerCase()))
 
   return (
-    <div style={{ maxWidth: 980 }}>
-      {/* Section toggle + Upload */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      {/* Left column — folder-less explorer, mirrors Library's layout */}
+      <div style={{ width: 360, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-          {(['client', 'library'] as const).map(s => (
-            <button key={s} onClick={() => { setSection(s); setSearch(''); setShowUpload(false) }} style={{
-              padding: '8px 18px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
+          {(['client', 'shared'] as const).map(s => (
+            <button key={s} onClick={() => { setSection(s); setSearch('') }} style={{
+              flex: 1, padding: '8px 10px', border: 'none', cursor: 'pointer', fontSize: 12, fontWeight: 600,
               background: section === s ? 'var(--ink)' : 'var(--white)',
               color: section === s ? '#fff' : 'var(--muted)',
             }}>
-              {s === 'client' ? `Client Files (${fileList.length})` : `Shared Library (${libItems.length})`}
+              {s === 'client' ? `Client Files (${fileList.length})` : `Shared Files (${libItems.length})`}
             </button>
           ))}
         </div>
-        {section === 'client' && (
-          <button className="btn btn-dark btn-sm" onClick={() => setShowUpload(s => !s)}>
-            {showUpload ? 'Cancel' : '+ Upload File'}
-          </button>
-        )}
-      </div>
 
-      {/* Upload panel */}
-      {section === 'client' && showUpload && (
-        <div className="card" style={{ marginBottom: 20 }}>
-          <div style={{ padding: '12px 18px', borderBottom: '1px solid var(--border)' }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>Upload File</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'relative', flex: 1, minWidth: 0 }}>
+            <svg style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }}
+              width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            </svg>
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder={section === 'client' ? 'Search client files…' : 'Search shared files…'}
+              className="finput" style={{ paddingLeft: 30, width: '100%', height: 32, fontSize: 12 }} />
           </div>
-          <div style={{ padding: '14px 18px' }}>
-            <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
+          {section === 'client' && (
+            <button className="btn btn-outline btn-sm" onClick={() => setShowUpload(s => !s)} style={{ fontSize: 12, flexShrink: 0 }}>
+              {showUpload ? 'Cancel' : '+ Upload'}
+            </button>
+          )}
+        </div>
+
+        {section === 'client' && showUpload && (
+          <div className="card" style={{ padding: '12px 14px' }}>
+            <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap' }}>
               {FILE_TYPES.map(ft => (
                 <button key={ft.value} onClick={() => setFileType(ft.value)} style={{
-                  padding: '4px 12px', fontSize: 11, cursor: 'pointer', borderRadius: 4,
+                  padding: '4px 10px', fontSize: 11, cursor: 'pointer', borderRadius: 4,
                   border: '1px solid var(--border)',
                   background: fileType === ft.value ? 'var(--ink)' : 'var(--white)',
                   color: fileType === ft.value ? 'var(--paper)' : 'var(--ink)',
@@ -829,151 +998,116 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
                 display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                 border: `2px dashed ${dragOver ? 'var(--gold)' : 'var(--border)'}`,
                 background: dragOver ? 'var(--gold-faint)' : 'var(--paper)',
-                padding: '28px 20px', cursor: 'pointer', transition: '.2s', borderRadius: 6,
+                padding: '20px 14px', cursor: 'pointer', transition: '.2s', borderRadius: 6,
               }}>
               <input type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
-              {uploading ? <span style={{ fontSize: 13, color: 'var(--muted)' }}>Uploading…</span> : (
+              {uploading ? <span style={{ fontSize: 12, color: 'var(--muted)' }}>Uploading…</span> : (
                 <>
                   <IconFile />
-                  <span style={{ fontSize: 13, fontWeight: 500, marginTop: 8 }}>Drop or click to upload</span>
-                  <span style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2 }}>PDF, Word, images — max 50 MB</span>
+                  <span style={{ fontSize: 12, fontWeight: 500, marginTop: 6 }}>Drop or click to upload</span>
+                  <span style={{ fontSize: 10.5, color: 'var(--muted)', marginTop: 2 }}>Any file type — max 50 MB</span>
                 </>
               )}
             </label>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Search */}
-      <div style={{ position: 'relative', marginBottom: 20 }}>
-        <svg style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)' }}
-          width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
-        </svg>
-        <input value={search} onChange={e => setSearch(e.target.value)}
-          placeholder={section === 'client' ? 'Search client files…' : 'Search shared library…'}
-          style={{ width: '100%', paddingLeft: 36, paddingRight: 12, height: 38, boxSizing: 'border-box', border: '1px solid var(--border)', borderRadius: 6, background: 'var(--white)', fontSize: 13, outline: 'none' }} />
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          <div style={{ padding: '10px 12px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 600, color: 'var(--ink)' }}>
+            {section === 'client' ? 'Client Files' : 'Shared with this client'}
+          </div>
+          {section === 'client' ? (
+            filteredClient.length === 0 ? (
+              <div style={{ padding: 30, textAlign: 'center' }}>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  {search ? 'No files match your search' : 'No files yet — upload contracts, assessments, and reports.'}
+                </div>
+              </div>
+            ) : (
+              <div style={{ maxHeight: 'calc(100vh - 420px)', minHeight: 160, overflowY: 'auto' }}>
+                {filteredClient.map((f: any) => {
+                  const cat = fileCategory(f.file_name)
+                  const { bar, icon } = CAT_CONFIG[cat]
+                  const typeLabel = FILE_TYPES.find(t => t.value === f.assessment_type)?.label || f.assessment_type || cat
+                  return (
+                    <FileRow key={f.id}
+                      icon={icon} bar={bar} title={f.file_name}
+                      subtitle={`${typeLabel} · ${fmtDate(f.date || f.created_at)}`}
+                      badge={isNew(f.created_at) ? (
+                        <span style={{ fontWeight: 700, background: 'var(--gold)', color: 'var(--ink)', padding: '1px 5px', borderRadius: 3, fontSize: 9 }}>NEW</span>
+                      ) : undefined}
+                      isSelected={selected?.kind === 'client' && selected.data.id === f.id}
+                      onClick={() => setSelected(prev => prev?.kind === 'client' && prev.data.id === f.id ? null : { kind: 'client', data: f })}
+                    />
+                  )
+                })}
+              </div>
+            )
+          ) : (
+            filteredLib.length === 0 ? (
+              <div style={{ padding: 30, textAlign: 'center' }}>
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  {search ? 'No files match your search' : "Nothing shared with this client yet — mark a Library file 'Client Visible' or share it specifically with them."}
+                </div>
+              </div>
+            ) : (
+              <div style={{ maxHeight: 'calc(100vh - 420px)', minHeight: 160, overflowY: 'auto' }}>
+                {filteredLib.map((item: any) => {
+                  const name = item.file_name || item.title || ''
+                  const cat = item.content_type === 'link' ? 'link' as FileCategory : fileCategory(name)
+                  const { bar, icon } = CAT_CONFIG[cat]
+                  const vc = LIB_VIS_C[item.visibility] || '#8c8279'
+                  const vl = LIB_VIS_L[item.visibility] || item.visibility
+                  return (
+                    <FileRow key={item.id}
+                      icon={icon} bar={bar} title={item.title || name}
+                      subtitle={item.uploaded_by_name || ''}
+                      badge={<span style={{ fontWeight: 600, letterSpacing: '.02em', color: vc, background: `${vc}18`, padding: '1px 6px', borderRadius: 10, fontSize: 9.5 }}>{vl}</span>}
+                      isSelected={selected?.kind === 'shared' && selected.data.id === item.id}
+                      onClick={() => setSelected(prev => prev?.kind === 'shared' && prev.data.id === item.id ? null : { kind: 'shared', data: item })}
+                    />
+                  )
+                })}
+              </div>
+            )
+          )}
+        </div>
       </div>
 
-      {/* ── CLIENT FILES ── */}
-      {section === 'client' && (
-        filteredClient.length === 0
-          ? <EmptyState icon="📁" title="No files yet" message="Upload contracts, assessments, and session notes." />
-          : <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-              <table className="tbl" style={{ margin: 0 }}>
-                <thead>
-                  <tr>
-                    <th>File</th>
-                    <th>Type</th>
-                    <th>Date</th>
-                    <th>Uploaded by</th>
-                    <th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredClient.map((f: any) => {
-                    const cat = fileCategory(f.file_name)
-                    const { bar, icon, action } = CAT_CONFIG[cat]
-                    const typeLabel = FILE_TYPES.find(t => t.value === f.assessment_type)?.label || f.assessment_type || cat
-                    return (
-                      <tr key={f.id}>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                            <div style={{ width: 3, height: 32, background: bar, borderRadius: 2, flexShrink: 0 }} />
-                            {icon}
-                            <div>
-                              <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{f.file_name}</div>
-                              {isNew(f.created_at) && (
-                                <span style={{ fontSize: 9, fontWeight: 700, background: 'var(--gold)', color: 'var(--ink)', padding: '1px 5px', borderRadius: 3 }}>NEW</span>
-                              )}
-                            </div>
-                          </div>
-                        </td>
-                        <td style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{typeLabel}</td>
-                        <td style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtDate(f.date || f.created_at)}</td>
-                        <td style={{ fontSize: 12, color: 'var(--muted)' }}>{f.uploaded_by_name || '—'}</td>
-                        <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          {f.presigned_url && (
-                            <a href={f.presigned_url} target="_blank" rel="noreferrer"
-                              className="btn btn-ghost btn-sm"
-                              style={{ fontSize: 11, textDecoration: 'none', padding: '4px 10px' }}>
-                              ↓ {action}
-                            </a>
-                          )}
-                          {canDelete && (
-                            <button onClick={() => setConfirmFile({ id: f.id, name: f.file_name })}
-                              className="btn btn-ghost btn-sm"
-                              style={{ color: '#c0392b', padding: '4px 8px', fontSize: 14, marginLeft: 4 }}>×</button>
-                          )}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-      )}
-
-      {/* ── SHARED LIBRARY ── */}
-      {section === 'library' && (
-        <>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, padding: '8px 12px', background: '#f0f4ff', border: '1px solid #d0daf0', borderRadius: 6 }}>
-            Library files marked <strong>Client Visible</strong> — accessible by all clients. Manage visibility in <strong>Library</strong>.
+      {/* Right column — preview panel */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {selected ? (
+          <FileVaultPreviewPanel
+            selected={selected}
+            clientId={clientId}
+            currentUser={currentUser}
+            canDelete={canDelete}
+            converting={converting}
+            onClose={() => setSelected(null)}
+            onRequestDelete={() => selected.kind === 'client' && setConfirmFile({ id: selected.data.id, name: selected.data.file_name })}
+            onEditInBrowser={() => selected.kind === 'client' && setEditingFile(selected.data)}
+            onConvertToPdf={handleConvertToPdf}
+          />
+        ) : (
+          <div style={{
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            gap: 10, minHeight: 420, border: '1px dashed var(--border)', borderRadius: 8,
+            background: '#fff', color: 'var(--muted)',
+          }}>
+            <IconFile />
+            <div style={{ fontSize: 13 }}>Select a file to preview</div>
           </div>
-          {filteredLib.length === 0
-            ? <EmptyState icon="📚" title="No shared files" message="Mark Library files as 'Client Visible' to share them with clients." />
-            : <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                <table className="tbl" style={{ margin: 0 }}>
-                  <thead>
-                    <tr>
-                      <th>File</th>
-                      <th>Access</th>
-                      <th>Uploaded by</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filteredLib.map((item: any) => {
-                      const name = item.file_name || item.title || ''
-                      const cat = item.content_type === 'link' ? 'link' as FileCategory : fileCategory(name)
-                      const { bar, icon, action } = CAT_CONFIG[cat]
-                      const vc = LIB_VIS_C[item.visibility] || '#8c8279'
-                      const vl = LIB_VIS_L[item.visibility] || item.visibility
-                      return (
-                        <tr key={item.id}>
-                          <td>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                              <div style={{ width: 3, height: 32, background: bar, borderRadius: 2, flexShrink: 0 }} />
-                              {icon}
-                              <div>
-                                <div style={{ fontWeight: 600, fontSize: 13, color: 'var(--ink)' }}>{item.title}</div>
-                                {item.file_name && item.file_name !== item.title && (
-                                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>{item.file_name}</div>
-                                )}
-                              </div>
-                            </div>
-                          </td>
-                          <td>
-                            <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10, background: `${vc}18`, color: vc }}>{vl}</span>
-                          </td>
-                          <td style={{ fontSize: 12, color: 'var(--muted)' }}>{item.uploaded_by_name || '—'}</td>
-                          <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                            {(item.presigned_url || item.url) && (
-                              <button onClick={() => window.open(item.presigned_url || item.url, '_blank')}
-                                className="btn btn-ghost btn-sm"
-                                style={{ fontSize: 11, padding: '4px 10px' }}>
-                                {item.url && !item.presigned_url ? '↗ Open' : `↓ ${action}`}
-                              </button>
-                            )}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-          }
-        </>
+        )}
+      </div>
+
+      {/* Live document editor */}
+      {editingFile && (
+        <OfficeEditorModal
+          title={editingFile.file_name}
+          getEditConfig={(mode) => clientsApi.fileEditConfig(clientId, editingFile.id, mode).then(r => r.data)}
+          onClose={() => setEditingFile(null)}
+          onSaved={() => refetch()}
+        />
       )}
 
       {/* Delete confirmation */}
@@ -995,7 +1129,7 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete }: { clie
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices']
+const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices', 'Client Communication']
 
 const NOTE_TYPES = [
   { value: 'session', label: 'Session Note' },
@@ -1010,6 +1144,431 @@ const FILE_TYPES = [
   { value: 'other',      label: 'Other' },
 ]
 
+
+// ── Client Communication ─────────────────────────────────────────────────────
+// Draft/preview only — no send pipeline yet. Compose using a generic template
+// tagged for 'client_communication' (Settings → Generic Templates), or start blank.
+function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientId: string; clientName: string; coachName: string }) {
+  const qc = useQueryClient()
+  const { show } = useToast()
+  const { workspace } = useAuthStore()
+  const [editing, setEditing]   = useState<any>(null)
+  const [showPicker, setShowPicker] = useState(false)
+  const [previewHtml, setPreviewHtml] = useState('')
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [saving, setSaving]     = useState(false)
+  const [attaching, setAttaching] = useState(false)
+  const [showFilePicker, setShowFilePicker] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [showSendConfirm, setShowSendConfirm] = useState(false)
+  const [showSigPad, setShowSigPad] = useState(false)
+
+  const { data: draftsData, isLoading } = useQuery({
+    queryKey: ['client-message-drafts', clientId],
+    queryFn: () => clientsApi.listMessageDrafts(clientId).then(r => r.data),
+  })
+  const drafts: any[] = draftsData?.results || draftsData || []
+
+  const { data: clientFilesData } = useQuery({
+    queryKey: ['client-files', clientId],
+    queryFn: () => clientsApi.listFiles(clientId).then(r => r.data),
+  })
+  const clientFiles: any[] = clientFilesData?.results || clientFilesData || []
+
+  const genericTemplates: any[] = (workspace as any)?.generic_templates || []
+  // Show every saved template as a starting point here, not just whichever one is
+  // currently "live" for the Client Communication slot — template_use_case_map only
+  // holds one active template per use case, but a coach may have several saved
+  // (e.g. a friendly note AND a contract) they'd reasonably want to start from.
+  const commTemplates = genericTemplates
+
+  const renderPreview = async (d: any) => {
+    setPreviewLoading(true)
+    try {
+      const { data } = await settingsApi.emailPreview('client_communication', {
+        client_name: clientName, subject: d.subject, intro: d.intro, closing: d.closing,
+        header_bg: d.style?.header_bg, accent_color: d.style?.accent_color,
+        header_tagline: d.style?.header_tagline, hide_logo: d.show_logo ? undefined : '1',
+        show_header: d.style?.show_header === false ? '0' : '1',
+        show_footer: d.style?.show_footer === false ? '0' : '1',
+        footer_text: d.style?.footer_text,
+        // coach_signature is a data URL (can be tens of KB) — too large for a GET query
+        // string, so the live preview doesn't render it; the compose form shows the
+        // drawn signature directly instead, and the real send always includes it.
+        include_client_signature_line: d.include_client_signature_line ? '1' : '0',
+        coach_name: (d.signature_name || '').trim() || coachName || undefined,
+        _t: Date.now(),
+      })
+      setPreviewHtml(data.html)
+    } catch { setPreviewHtml('') }
+    finally { setPreviewLoading(false) }
+  }
+
+  useEffect(() => {
+    if (!editing) return
+    const t = setTimeout(() => renderPreview(editing), 400)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing?.subject, editing?.intro, editing?.closing, editing?.style?.header_bg, editing?.style?.accent_color,
+      editing?.style?.header_tagline, editing?.style?.show_header,
+      editing?.style?.show_footer, editing?.style?.footer_text, editing?.show_logo,
+      editing?.include_client_signature_line, editing?.signature_name])
+
+  const startBlank = () => {
+    setEditing({
+      subject: '', intro: '', closing: '', custom_html: '', disable_style: false, show_logo: true,
+      style: {}, source_template_id: '', source_template_name: '', attachments: [],
+      coach_signature: '', include_client_signature_line: false, signature_name: '',
+    })
+    setShowSigPad(false)
+    setShowPicker(false)
+  }
+
+  const startFromTemplate = (t: any) => {
+    setEditing({
+      subject: t.subject || '', intro: t.intro || '', closing: t.closing || '',
+      custom_html: t.custom_html || '', disable_style: t.disable_style || false, show_logo: t.show_logo ?? true,
+      style: { ...(t.style || {}) }, source_template_id: t.id, source_template_name: t.name, attachments: [],
+      coach_signature: '', include_client_signature_line: t.include_client_signature_line || false, signature_name: '',
+    })
+    setShowSigPad(false)
+    setShowPicker(false)
+  }
+
+  const openNew  = () => { if (commTemplates.length > 0) setShowPicker(true); else startBlank() }
+  const openEdit = (d: any) => {
+    setEditing({ ...d, style: { ...(d.style || {}) } })
+    setShowSigPad(!!d.coach_signature)
+  }
+
+  const saveDraft = async () => {
+    const payload = {
+      subject: editing.subject, intro: editing.intro, closing: editing.closing,
+      custom_html: editing.custom_html, disable_style: editing.disable_style, show_logo: editing.show_logo,
+      style: editing.style, source_template_id: editing.source_template_id || '',
+      source_template_name: editing.source_template_name || '',
+      coach_signature: editing.coach_signature || '',
+      include_client_signature_line: !!editing.include_client_signature_line,
+      signature_name: editing.signature_name || '',
+    }
+    const { data } = editing.id
+      ? await clientsApi.updateMessageDraft(clientId, editing.id, payload)
+      : await clientsApi.createMessageDraft(clientId, payload)
+    setEditing(data)
+    qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+    return data
+  }
+
+  const handleSaveDraft = async () => {
+    setSaving(true)
+    try {
+      await saveDraft()
+      show('Draft saved')
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to save draft', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleSend = async () => {
+    setSending(true)
+    try {
+      const saved = await saveDraft()
+      await clientsApi.sendMessageDraft(clientId, saved.id)
+      qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+      qc.invalidateQueries({ queryKey: ['client-activities', clientId] })
+      show(`Email sent to ${clientName}`)
+      setShowSendConfirm(false)
+      setEditing(null)
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to send email', 'error')
+    } finally { setSending(false) }
+  }
+
+  const handleDeleteDraft = async (id: string) => {
+    if (!confirm('Delete this draft?')) return
+    await clientsApi.deleteMessageDraft(clientId, id)
+    qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+    if (editing?.id === id) setEditing(null)
+    show('Draft deleted')
+  }
+
+  const handleAttach = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file || !editing?.id) { e.target.value = ''; return }
+    setAttaching(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const { data } = await clientsApi.attachToMessageDraft(clientId, editing.id, fd)
+      setEditing(data)
+      qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Failed to attach file', 'error')
+    } finally { setAttaching(false); e.target.value = '' }
+  }
+
+  const handleRemoveAttachment = async (s3_key: string) => {
+    if (!editing?.id) return
+    const { data } = await clientsApi.removeMessageAttachment(clientId, editing.id, s3_key)
+    setEditing(data)
+    qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+  }
+
+  const handleAttachExisting = async (assessmentId: string) => {
+    if (!editing?.id) return
+    setAttaching(true)
+    try {
+      const { data } = await clientsApi.attachExistingFileToMessageDraft(clientId, editing.id, assessmentId)
+      setEditing(data)
+      qc.invalidateQueries({ queryKey: ['client-message-drafts', clientId] })
+      setShowFilePicker(false)
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Failed to attach file', 'error')
+    } finally { setAttaching(false) }
+  }
+
+  if (editing) {
+    return (
+      <>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>
+            {editing.id ? 'Edit Draft' : 'New Message'}
+            {editing.source_template_name && (
+              <span style={{ fontSize: 12, color: 'var(--muted)', marginLeft: 10, fontFamily: "'DM Sans', sans-serif" }}>
+                from "{editing.source_template_name}"
+              </span>
+            )}
+            {editing.status === 'sent' && editing.sent_at && (
+              <span style={{ fontSize: 11, color: '#4a7c59', marginLeft: 10, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
+                ✓ Sent {new Date(editing.sent_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              </span>
+            )}
+            {editing.status === 'signed' && editing.client_signed_at && (
+              <span style={{ fontSize: 11, color: '#4a7c59', marginLeft: 10, fontFamily: "'DM Sans', sans-serif", fontWeight: 600 }}>
+                ✓ Signed by client {new Date(editing.client_signed_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+                {editing.signed_pdf_url && (
+                  <>
+                    {' · '}
+                    <a href={editing.signed_pdf_url} target="_blank" rel="noreferrer" style={{ color: '#4a7c59' }}>
+                      View signed PDF
+                    </a>
+                  </>
+                )}
+              </span>
+            )}
+          </div>
+          <button className="btn btn-outline btn-sm" onClick={() => setEditing(null)}>← Back to drafts</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+          <div className="card" style={{ flex: 1, minWidth: 0, maxWidth: 480 }}>
+            <div className="card-body">
+              <div className="fgroup">
+                <label className="flabel">Subject</label>
+                <input className="finput" value={editing.subject} onChange={e => setEditing({ ...editing, subject: e.target.value })} placeholder="e.g. Following up on our session" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Message</label>
+                <textarea className="ftextarea" rows={6} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder={`Hi ${clientName.split(' ')[0] || ''}, ...`} />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Closing <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
+                <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon," />
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
+                  Attachments
+                </div>
+                {(editing.attachments || []).length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
+                    {editing.attachments.map((a: any) => (
+                      <div key={a.s3_key} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, padding: '6px 10px', background: 'var(--paper)', borderRadius: 4 }}>
+                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{a.file_name}</span>
+                        <button onClick={() => handleRemoveAttachment(a.s3_key)} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 11 }}>Remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {editing.id ? (
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    <label className="btn btn-outline btn-sm" style={{ display: 'inline-flex', cursor: attaching ? 'not-allowed' : 'pointer' }}>
+                      <input type="file" style={{ display: 'none' }} onChange={handleAttach} disabled={attaching} />
+                      {attaching ? 'Uploading…' : '+ From Computer'}
+                    </label>
+                    <button className="btn btn-outline btn-sm" disabled={attaching} onClick={() => setShowFilePicker(true)}>
+                      + From Client Files
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>Save the draft first to attach files.</div>
+                )}
+              </div>
+
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
+                  Signature
+                </div>
+                <div className="fgroup">
+                  <label className="flabel">Sign as <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
+                  <input className="finput" value={editing.signature_name || ''}
+                    onChange={e => setEditing({ ...editing, signature_name: e.target.value })}
+                    placeholder={coachName || 'Coach name'} />
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                    Appears as "— {editing.signature_name || coachName || 'name'}" at the close of the email. Leave blank to use your account name.
+                  </div>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: showSigPad ? 10 : 0 }}>
+                  <input type="checkbox" checked={showSigPad}
+                    onChange={e => {
+                      setShowSigPad(e.target.checked)
+                      if (!e.target.checked) setEditing({ ...editing, coach_signature: '' })
+                    }} />
+                  Include your signature
+                </label>
+                {showSigPad && (
+                  <div className="fgroup">
+                    <label className="flabel">Draw your signature</label>
+                    <SignaturePad value={editing.coach_signature || ''} onChange={v => setEditing({ ...editing, coach_signature: v })} />
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                      Drawn here, not a legally binding e-signature — just an image included in the email.
+                    </div>
+                  </div>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginTop: 10 }}>
+                  <input type="checkbox" checked={!!editing.include_client_signature_line}
+                    onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
+                  Include a signature line for {clientName.split(' ')[0] || 'the client'}
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, marginLeft: 22 }}>
+                  Prints a blank "Client Signature: ____  Date: ____" line — useful for contracts sent to print and sign.
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
+                <button className="btn btn-outline" onClick={handleSaveDraft} disabled={saving || sending}>{saving ? 'Saving…' : 'Save Draft'}</button>
+                <button className="btn btn-dark" onClick={() => setShowSendConfirm(true)} disabled={saving || sending}>
+                  {sending ? 'Sending…' : 'Send Email'}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div className="card" style={{ flex: 1, minWidth: 0, position: 'sticky', top: 80, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 16px', borderBottom: '1px solid var(--border)', fontSize: 11, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+              Preview {previewLoading && '· updating…'}
+            </div>
+            <iframe title="preview" srcDoc={previewHtml} style={{ width: '100%', height: 560, border: 'none', display: 'block' }} />
+          </div>
+        </div>
+
+        {showFilePicker && (
+          <Modal title="Attach a Client File" onClose={() => setShowFilePicker(false)}>
+            {clientFiles.length === 0 ? (
+              <div style={{ fontSize: 13, color: 'var(--muted)' }}>No files uploaded for this client yet — see the Files tab.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 360, overflowY: 'auto' }}>
+                {clientFiles.map((f: any) => {
+                  const already = (editing.attachments || []).some((a: any) => a.file_name === f.file_name)
+                  return (
+                    <button key={f.id} disabled={attaching || already}
+                      onClick={() => handleAttachExisting(f.id)}
+                      className="btn btn-outline btn-sm"
+                      style={{ justifyContent: 'space-between', width: '100%', opacity: already ? 0.5 : 1 }}>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{f.file_name}</span>
+                      <span style={{ fontSize: 11, color: 'var(--muted)', flexShrink: 0, marginLeft: 8 }}>{already ? 'Attached' : 'Attach'}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+          </Modal>
+        )}
+
+        {showSendConfirm && (
+          <Modal title="Send Email" onClose={() => !sending && setShowSendConfirm(false)} footer={
+            <>
+              <button className="btn btn-outline btn-sm" onClick={() => setShowSendConfirm(false)} disabled={sending}>Cancel</button>
+              <button className="btn btn-dark btn-sm" onClick={handleSend} disabled={sending}>{sending ? 'Sending…' : 'Send Now'}</button>
+            </>
+          }>
+            <p style={{ fontSize: 14, lineHeight: 1.6, margin: 0 }}>
+              Send this email to <strong>{clientName}</strong>
+              {(editing.subject || '').trim() && <> — subject "<strong>{editing.subject}</strong>"</>}?
+              This will save the draft and email it right away.
+            </p>
+          </Modal>
+        )}
+      </>
+    )
+  }
+
+  return (
+    <>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Client Communication</div>
+        <button className="btn btn-dark btn-sm" onClick={openNew}>+ New Message</button>
+      </div>
+      {isLoading ? (
+        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+      ) : drafts.length === 0 ? (
+        <EmptyState icon="✉" title="No drafts yet" message="Compose a message for this client — save it as a draft to send later" />
+      ) : (
+        <table className="tbl">
+          <thead><tr><th>Subject</th><th>Status</th><th>Source Template</th><th>Last Updated</th><th></th></tr></thead>
+          <tbody>
+            {drafts.map((d: any) => (
+              <tr key={d.id} onClick={() => openEdit(d)} style={{ cursor: 'pointer' }}>
+                <td style={{ fontWeight: 600 }}>{d.subject || '(no subject)'}</td>
+                <td>
+                  {d.status === 'signed'
+                    ? <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7c59' }}>✓ Signed</span>
+                    : d.status === 'sent'
+                    ? <span style={{ fontSize: 11, fontWeight: 600, color: '#4a7c59' }}>✓ Sent</span>
+                    : <span style={{ fontSize: 11, color: 'var(--muted)' }}>Draft</span>}
+                </td>
+                <td style={{ color: 'var(--muted)', fontSize: 12 }}>{d.source_template_name || '—'}</td>
+                <td style={{ fontSize: 12, color: 'var(--muted)' }}>{new Date(d.updated_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}</td>
+                <td style={{ textAlign: 'right' }} onClick={e => e.stopPropagation()}>
+                  <button onClick={() => handleDeleteDraft(d.id)} style={{ background: 'none', border: 'none', color: '#c0392b', cursor: 'pointer', fontSize: 12 }}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {showPicker && (
+        <Modal title="Start from a template?" onClose={() => setShowPicker(false)}>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+            Pick a saved template to pre-fill the subject and message below — you can still edit
+            everything before sending. Or start with a blank message instead.
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {commTemplates.map((t: any) => (
+              <button key={t.id} onClick={() => startFromTemplate(t)} style={{
+                display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                padding: '10px 14px', borderRadius: 6, cursor: 'pointer', textAlign: 'left',
+                border: '1px solid var(--border)', background: 'var(--white)',
+              }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{t.name}</span>
+                <span style={{ fontSize: 11, color: 'var(--muted)' }}>Pre-fills subject, message, and styling from this template</span>
+              </button>
+            ))}
+            <button onClick={startBlank} style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+              padding: '10px 14px', borderRadius: 6, cursor: 'pointer', textAlign: 'left', marginTop: 4,
+              border: '1px dashed var(--border)', background: 'var(--paper)',
+            }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>Start blank</span>
+              <span style={{ fontSize: 11, color: 'var(--muted)' }}>Empty subject and message — write it from scratch</span>
+            </button>
+          </div>
+        </Modal>
+      )}
+    </>
+  )
+}
 
 export default function ClientDetail() {
   const { id } = useParams<{ id: string }>()
@@ -1688,7 +2247,7 @@ export default function ClientDetail() {
 
         {/* ── Files ── */}
         {tab === 'Files' && (
-          <FileVault clientId={id!} fileList={fileList} refetch={refetchFiles} showToast={showToast} canDelete={canDelete} />
+          <FileVault clientId={id!} fileList={fileList} refetch={refetchFiles} showToast={showToast} canDelete={canDelete} currentUser={me} />
         )}
 
         {/* ── Invoices ── */}
@@ -1720,6 +2279,10 @@ export default function ClientDetail() {
               )
             }
           </>
+        )}
+
+        {tab === 'Client Communication' && (
+          <ClientCommunicationPanel clientId={id!} clientName={`${client.first_name} ${client.last_name}`} coachName={(client as any).coach_name || ''} />
         )}
       </div>
 

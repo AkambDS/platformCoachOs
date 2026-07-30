@@ -14,9 +14,13 @@ assessment_router.register(r"", views.AssessmentViewSet, basename="assessment")
 note_router = DefaultRouter()
 note_router.register(r"", views.ClientNoteViewSet, basename="client-note")
 
+message_router = DefaultRouter()
+message_router.register(r"", views.ClientMessageDraftViewSet, basename="client-message-draft")
+
 urlpatterns = [
     path("", include(router.urls)),
     path("<uuid:client_pk>/goals/",       include(goal_router.urls)),
     path("<uuid:client_pk>/assessments/", include(assessment_router.urls)),
     path("<uuid:client_pk>/notes/",       include(note_router.urls)),
+    path("<uuid:client_pk>/messages/",    include(message_router.urls)),
 ]

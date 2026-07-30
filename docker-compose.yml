@@ -47,6 +47,19 @@ services:
       - "1025:1025"
       - "8025:8025"
 
+  # ── OnlyOffice Document Server — real-time in-browser editing of Word/Excel/PPT ──
+  onlyoffice:
+    image: onlyoffice/documentserver:latest
+    restart: unless-stopped
+    environment:
+      JWT_ENABLED: "true"
+      JWT_SECRET: ${ONLYOFFICE_JWT_SECRET:-coachos_onlyoffice_dev_secret}
+    ports:
+      - "8082:80"
+    volumes:
+      - onlyoffice_data:/var/www/onlyoffice/Data
+      - onlyoffice_logs:/var/log/onlyoffice
+
   # ── Runs migrate once, then stays healthy for other services to depend on ──
   migrate:
     build:
@@ -128,3 +141,5 @@ volumes:
   postgres_data:
   minio_data:
   frontend_node_modules:
+  onlyoffice_data:
+  onlyoffice_logs:
