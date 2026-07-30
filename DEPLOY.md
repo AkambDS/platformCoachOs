@@ -204,12 +204,18 @@ docker compose -f docker-compose.prod.yml exec backend python manage.py migrate
 
 The `onlyoffice` container is added automatically by `docker-compose.prod.yml` and
 proxied by nginx on port 8443 of your existing domain/cert — no new DNS record or
-certbot run needed. Two manual steps on EC2:
+certbot run needed. Manual steps on EC2:
 
 1. **Open port 8443** in the EC2 instance's security group (inbound TCP, same source rules as 443).
-2. Set `ONLYOFFICE_JWT_SECRET` in `backend/.env` to a real random secret (`python -c "import secrets; print(secrets.token_urlsafe(50))"`) — it must match between `backend/.env` and what's passed to the `onlyoffice` container (same `.env` file, so this is automatic).
+2. Generate a real random secret: `python3 -c "import secrets; print(secrets.token_urlsafe(50))"`, then set it in **both** of these files with the *same* value:
+   - `backend/.env` → `ONLYOFFICE_JWT_SECRET=...` (read by the Django app at runtime, via `env_file:`)
+   - `.env` at the repo root, next to `docker-compose.prod.yml` → `ONLYOFFICE_JWT_SECRET=...` (read by `docker compose` itself to resolve the `${ONLYOFFICE_JWT_SECRET:?...}` in the `onlyoffice` service block — same mechanism `DB_PASSWORD` already relies on)
 
-Then `docker compose -f docker-compose.prod.yml up -d --build` picks it up.
+   These are two different files loaded two different ways — `env_file: ./backend/.env` only injects vars into a container's own environment, it does **not** feed `docker compose`'s own `${VAR}` interpolation. Setting it in `backend/.env` alone is not enough and will fail with `required variable ONLYOFFICE_JWT_SECRET is missing a value`. If the two copies ever drift apart, OnlyOffice's editor/PDF-conversion features will fail with silent 403s (JWT signature mismatch) rather than an obvious error.
+3. Set `ONLYOFFICE_SERVER_URL` in `backend/.env` to your **exact** site domain (the same one your SSL cert and nginx `server_name` use, e.g. `https://coachos.yourdomain.com:8443`, not a shorter/parent domain) — a mismatch here gets silently blocked by the CSP header and/or fails TLS hostname verification, showing up in the browser console as `net::ERR_CONNECTION_TIMED_OUT` or a blank editor with no obvious error.
+4. Add `backend` to `ALLOWED_HOSTS` in `backend/.env`, alongside your real domain (e.g. `ALLOWED_HOSTS=yourdomain.com,backend`) — the OnlyOffice document server fetches files by calling `http://backend:8000/...` directly (`ONLYOFFICE_CALLBACK_BASE_URL`), which sends `Host: backend:8000`. Without `backend` in `ALLOWED_HOSTS`, Django's host-header check rejects that request with a `400`, and the editor shows "Download failed." (Confirm the fetch is even reaching Django with `docker compose -f docker-compose.prod.yml logs backend | grep onlyoffice-file` — a `400` there with `Node.js/...` as the user agent is this exact issue.)
+
+Then `docker compose -f docker-compose.prod.yml up -d --build` picks it up (use `--force-recreate backend celery celery-beat` if you only changed `backend/.env` and want to be sure the new values are actually loaded).
 
 ---
 
