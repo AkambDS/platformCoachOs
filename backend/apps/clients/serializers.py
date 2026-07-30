@@ -28,9 +28,16 @@ class AssessmentSerializer(serializers.ModelSerializer):
         try:
             from django.core.files.storage import default_storage
             from django.conf import settings
+            from urllib.parse import quote
 
-            filename  = obj.file_name or obj.file_s3_key.split("/")[-1]
-            safe_name = filename.replace('"', '\\"')
+            filename = obj.file_name or obj.file_s3_key.split("/")[-1]
+            # The Content-Disposition header value must be ISO-8859-1-encodable — S3
+            # rejects the whole presigned request otherwise (e.g. em dashes, accented
+            # letters, emoji in a filename). Give an ASCII-only fallback in `filename=`
+            # plus the real Unicode name (percent-encoded, always ASCII-safe itself) in
+            # `filename*=` per RFC 5987 — modern clients use the latter, older ones the former.
+            ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
+            disposition = f"{disposition_type}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
             if hasattr(default_storage, "bucket"):
                 try:
                     url = default_storage.bucket.meta.client.generate_presigned_url(
@@ -38,7 +45,7 @@ class AssessmentSerializer(serializers.ModelSerializer):
                         Params={
                             "Bucket": default_storage.bucket_name,
                             "Key":    obj.file_s3_key,
-                            "ResponseContentDisposition": f'{disposition_type}; filename="{safe_name}"',
+                            "ResponseContentDisposition": disposition,
                         },
                         ExpiresIn=3600,
                     )

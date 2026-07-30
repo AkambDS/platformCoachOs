@@ -39,9 +39,15 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
         try:
             from django.core.files.storage import default_storage
             from django.conf import settings as dj_settings
+            from urllib.parse import quote
 
-            filename  = obj.file_name or obj.s3_key.split("/")[-1]
-            safe_name = filename.replace('"', '\\"')
+            filename = obj.file_name or obj.s3_key.split("/")[-1]
+            # Content-Disposition must be ISO-8859-1-encodable — S3 rejects the whole
+            # presigned request if the filename has e.g. an em dash, accented letters,
+            # or emoji. ASCII fallback in `filename=`, real Unicode name (percent-encoded,
+            # always ASCII itself) in `filename*=` per RFC 5987.
+            ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
+            disposition = f"inline; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
             if hasattr(default_storage, "bucket"):
                 try:
@@ -50,7 +56,7 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
                         Params={
                             "Bucket": default_storage.bucket_name,
                             "Key":    obj.s3_key,
-                            "ResponseContentDisposition": f'inline; filename="{safe_name}"',
+                            "ResponseContentDisposition": disposition,
                         },
                         ExpiresIn=3600,
                     )
@@ -75,10 +81,11 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
         try:
             from django.core.files.storage import default_storage
             from django.conf import settings as dj_settings
+            from urllib.parse import quote
 
             filename   = obj.file_name or obj.s3_key.split("/")[-1]
-            safe_name  = filename.replace('"', '\\"')
-            disposition = f'attachment; filename="{safe_name}"'
+            ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
+            disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
 
             # S3 / MinIO: generate presigned URL with Content-Disposition so the
             # browser downloads the file instead of rendering it inline.

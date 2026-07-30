@@ -307,8 +307,13 @@ class ContractSignView(View):
             from weasyprint import HTML as WeasyHTML
             pdf_bytes = WeasyHTML(string=html).write_pdf()
 
-            safe_subject = "".join(c for c in subject if c.isalnum() or c in " -_").strip() or "Agreement"
-            file_name = f"{safe_subject} — Signed.pdf"
+            # Strictly ASCII — .isalnum() alone is Unicode-aware (true for accented
+            # letters etc.), and a non-ASCII filename breaks the presigned S3 URL's
+            # Content-Disposition header later (must be ISO-8859-1-encodable). Also
+            # avoid the em dash specifically: same charset problem.
+            ascii_subject = subject.encode("ascii", "ignore").decode("ascii")
+            safe_subject = "".join(c for c in ascii_subject if c.isalnum() or c in " -_").strip() or "Agreement"
+            file_name = f"{safe_subject} - Signed.pdf"
             s3_key = f"assessments/{workspace.id}/{client.id}/{uuid_lib.uuid4()}.pdf"
             default_storage.save(s3_key, ContentFile(pdf_bytes))
 
