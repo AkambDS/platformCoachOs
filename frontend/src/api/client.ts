@@ -100,8 +100,8 @@ export const clientsApi = {
     api.post(`/api/clients/${id}/assessments/upload/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
   fileEditConfig: (id: string, fid: string, mode: 'view' | 'edit' = 'view') =>
     api.get(`/api/clients/${id}/assessments/${fid}/edit-config/`, { params: { mode } }),
-  convertFileToPdf: (id: string, fid: string) =>
-    api.post(`/api/clients/${id}/assessments/${fid}/convert-to-pdf/`),
+  convertFileToPdf: (id: string, fid: string, d?: { assessment_type?: string; visible_to_client?: boolean }) =>
+    api.post(`/api/clients/${id}/assessments/${fid}/convert-to-pdf/`, d),
   invitePortal: (id: string) => api.post(`/api/clients/${id}/invite-portal/`),
   revokePortal: (id: string) => api.post(`/api/clients/${id}/revoke-portal/`),
   listMessageDrafts:   (id: string)              => api.get(`/api/clients/${id}/messages/`),
@@ -217,6 +217,7 @@ export const libraryApi = {
   upload:       (fd: FormData)       => api.post('/api/library/items/upload/', fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
   replaceFile:  (id: string, fd: FormData) => api.post(`/api/library/items/${id}/replace-file/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } }),
   editConfig:   (id: string, mode: 'view' | 'edit' = 'view') => api.get(`/api/library/items/${id}/edit-config/`, { params: { mode } }),
+  convertToPdf: (id: string, folder?: string | null) => api.post(`/api/library/items/${id}/convert-to-pdf/`, { folder: folder ?? 'root' }),
   folders:      ()                   => api.get('/api/library/folders/'),
   createFolder: (d: any)             => api.post('/api/library/folders/', d),
   deleteFolder: (id: string)         => api.delete(`/api/library/folders/${id}/`),

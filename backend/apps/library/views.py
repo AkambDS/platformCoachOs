@@ -8,6 +8,7 @@ from rest_framework.response import Response
 from django.conf import settings as dj_settings
 from django.contrib.postgres.search import SearchVector, SearchQuery
 from django.core.files.storage import default_storage
+from django.shortcuts import get_object_or_404
 from .models import KnowledgeFolder, KnowledgeItem
 from .serializers import FolderSerializer, KnowledgeItemSerializer
 from apps.accounts.permissions import IsAssistantOrAbove
@@ -194,6 +195,108 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         ser = KnowledgeItemSerializer(item, context={"request": request})
         return Response(ser.data)
 
+    @action(detail=True, methods=["post"], url_path="convert-to-pdf")
+    def convert_to_pdf(self, request, pk=None):
+        """POST /api/library/items/{id}/convert-to-pdf/ — converts an Office document to
+        PDF via OnlyOffice's ConvertService and saves the result as a NEW Library item
+        (the original is untouched), optionally into a chosen folder.
+        Body: {folder: <folder id> | "root" | omitted (defaults to source item's folder)}"""
+        item = self.get_object()
+        if not item.s3_key:
+            return Response({"detail": "No file to convert."}, status=status.HTTP_400_BAD_REQUEST)
+
+        ext = item.file_name.rsplit(".", 1)[-1].lower() if "." in item.file_name else ""
+        if ext == "pdf":
+            return Response({"detail": "This file is already a PDF."}, status=status.HTTP_400_BAD_REQUEST)
+        if ext not in ONLYOFFICE_DOC_TYPES:
+            return Response({"detail": "This file type can't be converted to PDF."},
+                             status=status.HTTP_400_BAD_REQUEST)
+
+        folder_param = request.data.get("folder", None)
+        if folder_param in (None, ""):
+            target_folder = item.folder
+        elif folder_param == "root":
+            target_folder = None
+        else:
+            target_folder = get_object_or_404(
+                KnowledgeFolder, pk=folder_param, workspace=request.user.workspace
+            )
+
+        import requests
+
+        # ConvertService fetches `url` itself with no auth headers of its own (unlike the
+        # editor, which signs document.url requests) — token travels as a query param
+        # that onlyoffice_file accepts as a fallback to the Authorization header.
+        file_token = ""
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            file_token = jwt.encode({"iid": str(item.id)}, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+        source_url = _doc_server_file_url(item)
+        if not source_url:
+            return Response({"detail": "File is unavailable."}, status=status.HTTP_400_BAD_REQUEST)
+        if file_token:
+            source_url += f"?token={file_token}"
+
+        convert_key = hashlib.md5(f"convert-{item.id}-{uuid_lib.uuid4()}".encode()).hexdigest()
+        payload = {
+            "async": False,
+            "filetype": ext,
+            "outputtype": "pdf",
+            "title": item.file_name,
+            "key": convert_key,
+            "url": source_url,
+        }
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            payload["token"] = jwt.encode(payload, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+
+        try:
+            resp = requests.post(
+                f"{dj_settings.ONLYOFFICE_INTERNAL_URL}/ConvertService.ashx",
+                json=payload,
+                headers={"Accept": "application/json"},
+                timeout=60,
+            )
+            data = resp.json()
+        except Exception as e:
+            return Response({"detail": f"Conversion request failed: {e}"}, status=status.HTTP_502_BAD_GATEWAY)
+
+        if data.get("error"):
+            return Response({"detail": f"Conversion failed (error {data['error']})."},
+                             status=status.HTTP_502_BAD_GATEWAY)
+        file_url = data.get("fileUrl")
+        if not file_url:
+            return Response({"detail": "Conversion did not return a file."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        try:
+            pdf_resp = requests.get(file_url, timeout=60)
+            pdf_resp.raise_for_status()
+        except Exception as e:
+            return Response({"detail": f"Could not download converted file: {e}"},
+                             status=status.HTTP_502_BAD_GATEWAY)
+
+        from django.core.files.base import ContentFile
+        base_name = item.file_name.rsplit(".", 1)[0] if "." in item.file_name else item.file_name
+        new_file_name = f"{base_name}.pdf"
+        new_key = f"library/{request.user.workspace.id}/{uuid_lib.uuid4()}.pdf"
+        default_storage.save(new_key, ContentFile(pdf_resp.content))
+
+        new_item = KnowledgeItem.objects.create(
+            workspace=request.user.workspace,
+            folder=target_folder,
+            content_type="pdf",
+            title=f"{item.title} (PDF)",
+            description=item.description,
+            visibility=item.visibility,
+            shared_client_ids=item.shared_client_ids,
+            shared_user_ids=item.shared_user_ids,
+            s3_key=new_key,
+            file_name=new_file_name,
+            uploaded_by=request.user,
+        )
+        ser = KnowledgeItemSerializer(new_item, context={"request": request})
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=["post"], url_path="track-view")
     def track_view(self, request, pk=None):
         item = self.get_object()
@@ -205,12 +308,14 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             permission_classes=[AllowAny], authentication_classes=[])
     def onlyoffice_file(self, request, pk=None):
         """GET /api/library/items/{id}/onlyoffice-file/ — serves the raw file to the
-        OnlyOffice Document Server (called from document.url in edit-config's config).
-        Not user-authenticated — verified via the same JWT OnlyOffice signs its
-        document-download request with, same as onlyoffice_callback below."""
+        OnlyOffice Document Server. Editor opens sign this request themselves
+        (Authorization header); the conversion API (convert_to_pdf) does not, so it
+        passes the token as a ?token= query param on the URL it hands to ConvertService
+        instead — same pattern as apps.clients.views.AssessmentViewSet."""
         if dj_settings.ONLYOFFICE_JWT_SECRET:
             import jwt
-            token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+            token = (request.headers.get("Authorization", "").removeprefix("Bearer ")
+                      or request.query_params.get("token", ""))
             if not token:
                 return Response({"detail": "Missing token."}, status=status.HTTP_403_FORBIDDEN)
             try:

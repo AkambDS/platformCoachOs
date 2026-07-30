@@ -451,8 +451,10 @@ class AssessmentViewSet(viewsets.ModelViewSet):
     def convert_to_pdf(self, request, pk=None, client_pk=None):
         """POST /api/clients/{client_pk}/assessments/{id}/convert-to-pdf/ — converts an
         Office document to PDF via OnlyOffice's ConvertService and saves the result as
-        a new client File, so it can be downloaded or attached to a Client Communication
-        email as a real PDF."""
+        a NEW client File (the original is untouched), so it can be downloaded or attached
+        to a Client Communication email as a real PDF. Body may include `assessment_type`
+        (which File category/"folder" to file the PDF under — defaults to the source
+        file's own category) and `visible_to_client` (defaults to false, same as before)."""
         obj = self.get_object()
         if not obj.file_s3_key:
             return Response({"detail": "No file to convert."}, status=status.HTTP_400_BAD_REQUEST)
@@ -463,6 +465,12 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         if ext not in ONLYOFFICE_DOC_TYPES:
             return Response({"detail": "This file type can't be converted to PDF."},
                              status=status.HTTP_400_BAD_REQUEST)
+
+        assessment_type = request.data.get("assessment_type") or obj.assessment_type
+        valid_types = {c[0] for c in Assessment.AssessmentType.choices}
+        if assessment_type not in valid_types:
+            return Response({"detail": "Invalid assessment_type."}, status=status.HTTP_400_BAD_REQUEST)
+        visible_to_client = str(request.data.get("visible_to_client", "false")).lower() == "true"
 
         import hashlib, uuid as uuid_lib, requests
 
@@ -525,8 +533,8 @@ class AssessmentViewSet(viewsets.ModelViewSet):
 
         new_obj = Assessment.objects.create(
             workspace=obj.workspace, client=obj.client, uploaded_by=request.user,
-            assessment_type=obj.assessment_type, date=timezone.now().date(),
-            file_s3_key=new_key, file_name=new_file_name, visible_to_client=False,
+            assessment_type=assessment_type, date=timezone.now().date(),
+            file_s3_key=new_key, file_name=new_file_name, visible_to_client=visible_to_client,
         )
         _log(request, obj.client, "converted_to_pdf", file_name=obj.file_name)
         return Response(AssessmentSerializer(new_obj, context={"request": request}).data,

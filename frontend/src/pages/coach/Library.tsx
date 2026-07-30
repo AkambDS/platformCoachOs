@@ -552,12 +552,50 @@ function getFileBg(item: any) {
 }
 
 // ── Preview panel ─────────────────────────────────────────────────────────────
-function FilePreviewPanel({ item, currentUser, onClose, onEdit, onDelete, onReplaced, onEditInBrowser }: {
-  item: any; currentUser: any; onClose: () => void; onEdit: () => void
-  onDelete: () => void; onReplaced: () => void; onEditInBrowser: () => void
+function SavePdfModal({ folders, currentFolder, onClose, onConvert }: {
+  folders: any[]; currentFolder: string | null; onClose: () => void
+  onConvert: (folder: string) => Promise<void>
+}) {
+  const [folder, setFolder] = useState(currentFolder || '')
+  const [saving, setSaving] = useState(false)
+  const allFolders: any[] = []
+  const flatten = (fs: any[], depth = 0) => {
+    fs.forEach(f => { allFolders.push({ ...f, depth }); if (f.children?.length) flatten(f.children, depth + 1) })
+  }
+  flatten(folders || [])
+
+  return (
+    <Modal title="Save as PDF" onClose={() => !saving && onClose()} footer={
+      <>
+        <button className="btn btn-outline btn-sm" onClick={onClose} disabled={saving}>Cancel</button>
+        <button className="btn btn-dark btn-sm" disabled={saving} onClick={async () => { setSaving(true); await onConvert(folder || 'root') }}>
+          {saving ? 'Converting…' : 'Save PDF'}
+        </button>
+      </>
+    }>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        Creates a new PDF file alongside the original — the original file is not changed.
+      </div>
+      <div className="fgroup">
+        <label className="flabel">Save into folder</label>
+        <select className="fselect" value={folder} onChange={e => setFolder(e.target.value)}>
+          <option value="root">No folder</option>
+          {allFolders.map(f => (
+            <option key={f.id} value={f.id}>{' '.repeat(f.depth * 2)}{f.name}</option>
+          ))}
+        </select>
+      </div>
+    </Modal>
+  )
+}
+
+function FilePreviewPanel({ item, currentUser, folders, onClose, onEdit, onDelete, onReplaced, onEditInBrowser, onConverted }: {
+  item: any; currentUser: any; folders: any[]; onClose: () => void; onEdit: () => void
+  onDelete: () => void; onReplaced: () => void; onEditInBrowser: () => void; onConverted: (item: any) => void
 }) {
   const { show } = useToast()
   const [replacing, setReplacing] = useState(false)
+  const [showSavePdf, setShowSavePdf] = useState(false)
   const replaceRef = useRef<HTMLInputElement>(null)
   const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || ''
   const isImage  = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
@@ -581,6 +619,18 @@ function FilePreviewPanel({ item, currentUser, onClose, onEdit, onDelete, onRepl
     } catch (e: any) {
       show(e?.response?.data?.detail || 'Replace failed', 'error')
     } finally { setReplacing(false) }
+  }
+
+  const handleConvertToPdf = async (folder: string) => {
+    try {
+      const res = await libraryApi.convertToPdf(item.id, folder)
+      show('Saved as PDF')
+      setShowSavePdf(false)
+      onConverted(res.data)
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Conversion failed', 'error')
+      setShowSavePdf(false)
+    }
   }
 
   return (
@@ -678,6 +728,11 @@ function FilePreviewPanel({ item, currentUser, onClose, onEdit, onDelete, onRepl
             </button>
           </>
         )}
+        {hasFile && !isPdf && isOffice && (
+          <button onClick={() => setShowSavePdf(true)} className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6 }}>
+            <Download size={13} /> Save as PDF…
+          </button>
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           <button onClick={onEdit} className="btn btn-outline btn-sm" style={{ flex: 1, justifyContent: 'center', gap: 5 }}>
             <Pencil size={12} /> Edit
@@ -687,6 +742,15 @@ function FilePreviewPanel({ item, currentUser, onClose, onEdit, onDelete, onRepl
           </button>
         </div>
       </div>
+
+      {showSavePdf && (
+        <SavePdfModal
+          folders={folders}
+          currentFolder={item.folder || null}
+          onClose={() => setShowSavePdf(false)}
+          onConvert={handleConvertToPdf}
+        />
+      )}
     </div>
   )
 }
@@ -919,11 +983,13 @@ export default function Library() {
             <FilePreviewPanel
               item={previewItem}
               currentUser={user}
+              folders={folders}
               onClose={() => setPreviewItem(null)}
               onEdit={() => setEditTarget(previewItem)}
               onDelete={() => { handleDeleteItem(previewItem.id, previewItem.title); setPreviewItem(null) }}
               onReplaced={() => { qc.invalidateQueries({ queryKey: ['library-items'] }); setPreviewItem(null) }}
               onEditInBrowser={() => setEditingItem(previewItem)}
+              onConverted={(newItem) => { qc.invalidateQueries({ queryKey: ['library-items'] }); setPreviewItem(newItem) }}
             />
           ) : (
             <EmptyPreviewState />

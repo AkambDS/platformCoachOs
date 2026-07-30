@@ -875,6 +875,7 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
   const [editingFile, setEditingFile] = useState<any>(null)
   const [selected, setSelected]     = useState<SelectedFile | null>(null)
   const [converting, setConverting] = useState(false)
+  const [showConvertPicker, setShowConvertPicker] = useState(false)
 
   const { data: libData } = useQuery({
     queryKey: ['library-shared-with-client', clientId],
@@ -925,14 +926,17 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
     finally { setDeleting(false) }
   }
 
-  const handleConvertToPdf = async () => {
+  const handleConvertToPdf = async (assessmentType: string, visibleToClient: boolean) => {
     if (!selected || selected.kind !== 'client') return
     setConverting(true)
     try {
-      const { data } = await clientsApi.convertFileToPdf(clientId, selected.data.id)
+      const { data } = await clientsApi.convertFileToPdf(clientId, selected.data.id, {
+        assessment_type: assessmentType, visible_to_client: visibleToClient,
+      })
       await refetch()
       showToast(`Saved as ${data.file_name} — attach it from Client Communication`)
       setSelected({ kind: 'client', data })
+      setShowConvertPicker(false)
     } catch (e: any) {
       showToast(e?.response?.data?.detail || 'Conversion failed', 'error')
     } finally { setConverting(false) }
@@ -1086,7 +1090,7 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
             onClose={() => setSelected(null)}
             onRequestDelete={() => selected.kind === 'client' && setConfirmFile({ id: selected.data.id, name: selected.data.file_name })}
             onEditInBrowser={() => selected.kind === 'client' && setEditingFile(selected.data)}
-            onConvertToPdf={handleConvertToPdf}
+            onConvertToPdf={() => setShowConvertPicker(true)}
           />
         ) : (
           <div style={{
@@ -1124,7 +1128,52 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
           </p>
         </Modal>
       )}
+
+      {/* Save-as-PDF destination picker */}
+      {showConvertPicker && selected?.kind === 'client' && (
+        <SaveClientPdfModal
+          defaultType={selected.data.assessment_type || 'other'}
+          converting={converting}
+          onClose={() => !converting && setShowConvertPicker(false)}
+          onConvert={handleConvertToPdf}
+        />
+      )}
     </div>
+  )
+}
+
+function SaveClientPdfModal({ defaultType, converting, onClose, onConvert }: {
+  defaultType: string; converting: boolean; onClose: () => void
+  onConvert: (assessmentType: string, visibleToClient: boolean) => void
+}) {
+  const [assessmentType, setAssessmentType] = useState(defaultType)
+  const [visibleToClient, setVisibleToClient] = useState(false)
+
+  return (
+    <Modal title="Save as PDF" onClose={onClose} footer={
+      <>
+        <button className="btn btn-outline btn-sm" onClick={onClose} disabled={converting}>Cancel</button>
+        <button className="btn btn-dark btn-sm" disabled={converting} onClick={() => onConvert(assessmentType, visibleToClient)}>
+          {converting ? 'Converting…' : 'Save PDF'}
+        </button>
+      </>
+    }>
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.5 }}>
+        Creates a new PDF file alongside the original — the original file is not changed.
+      </div>
+      <div className="fgroup">
+        <label className="flabel">File type</label>
+        <select className="fselect" value={assessmentType} onChange={e => setAssessmentType(e.target.value)}>
+          {FILE_TYPES.map(ft => (
+            <option key={ft.value} value={ft.value}>{ft.label}</option>
+          ))}
+        </select>
+      </div>
+      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, marginTop: 10, cursor: 'pointer' }}>
+        <input type="checkbox" checked={visibleToClient} onChange={e => setVisibleToClient(e.target.checked)} />
+        Visible to client in portal
+      </label>
+    </Modal>
   )
 }
 
@@ -1162,6 +1211,7 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
   const [sending, setSending] = useState(false)
   const [showSendConfirm, setShowSendConfirm] = useState(false)
   const [showSigPad, setShowSigPad] = useState(false)
+  const [viewingSignedPdf, setViewingSignedPdf] = useState<{ url: string; name: string } | null>(null)
 
   const { data: draftsData, isLoading } = useQuery({
     queryKey: ['client-message-drafts', clientId],
@@ -1351,7 +1401,11 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
                 {editing.signed_pdf_url && (
                   <>
                     {' · '}
-                    <a href={editing.signed_pdf_url} target="_blank" rel="noreferrer" style={{ color: '#4a7c59' }}>
+                    <a
+                      href={editing.signed_pdf_url}
+                      onClick={e => { e.preventDefault(); setViewingSignedPdf({ url: editing.signed_pdf_url, name: editing.signed_pdf_name || 'Signed contract' }) }}
+                      style={{ color: '#4a7c59', cursor: 'pointer' }}
+                    >
                       View signed PDF
                     </a>
                   </>
@@ -1501,6 +1555,14 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
             </p>
           </Modal>
         )}
+
+        {viewingSignedPdf && (
+          <Modal title={viewingSignedPdf.name} onClose={() => setViewingSignedPdf(null)} size="lg" footer={
+            <a href={viewingSignedPdf.url} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm">Open in new tab</a>
+          }>
+            <iframe src={viewingSignedPdf.url} title={viewingSignedPdf.name} style={{ width: '100%', height: '75vh', border: 'none', display: 'block' }} />
+          </Modal>
+        )}
       </>
     )
   }
@@ -1526,7 +1588,7 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
                 <thead><tr><th>Subject</th><th>File</th><th>Signed</th><th></th></tr></thead>
                 <tbody>
                   {signedContracts.map((d: any) => (
-                    <tr key={d.id} onClick={() => d.signed_pdf_url && window.open(d.signed_pdf_url, '_blank')} style={{ cursor: d.signed_pdf_url ? 'pointer' : 'default' }}>
+                    <tr key={d.id} onClick={() => d.signed_pdf_url && setViewingSignedPdf({ url: d.signed_pdf_url, name: d.signed_pdf_name || d.subject || 'Signed contract' })} style={{ cursor: d.signed_pdf_url ? 'pointer' : 'default' }}>
                       <td style={{ fontWeight: 600 }}>{d.subject || '(no subject)'}</td>
                       <td style={{ color: 'var(--muted)', fontSize: 12 }}>{d.signed_pdf_name || '—'}</td>
                       <td style={{ fontSize: 12, color: '#4a7c59', fontWeight: 600 }}>
@@ -1600,6 +1662,14 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
               <span style={{ fontSize: 11, color: 'var(--muted)' }}>Empty subject and message — write it from scratch</span>
             </button>
           </div>
+        </Modal>
+      )}
+
+      {viewingSignedPdf && (
+        <Modal title={viewingSignedPdf.name} onClose={() => setViewingSignedPdf(null)} size="lg" footer={
+          <a href={viewingSignedPdf.url} target="_blank" rel="noreferrer" className="btn btn-outline btn-sm">Open in new tab</a>
+        }>
+          <iframe src={viewingSignedPdf.url} title={viewingSignedPdf.name} style={{ width: '100%', height: '75vh', border: 'none', display: 'block' }} />
         </Modal>
       )}
     </>
