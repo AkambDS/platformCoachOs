@@ -89,6 +89,20 @@ def _owner_info(workspace) -> tuple:
     return "", ""
 
 
+def _coach_has_google_calendar(coach) -> bool:
+    """True if this coach has a connected Google account with a stored SocialToken.
+
+    When true, the client's real Google Calendar invite (native Accept/Decline/Maybe,
+    tracked back into CoachOS via the RSVP webhook) is the one actionable email — our own
+    branded email drops its Confirm/Reschedule/Cancel buttons to avoid sending the client
+    two emails with two different, conflicting response mechanisms for the same booking.
+    """
+    if not coach:
+        return False
+    from allauth.socialaccount.models import SocialToken
+    return SocialToken.objects.filter(account__user=coach, account__provider="google").exists()
+
+
 class _PartialFormatMap(dict):
     """Returns {key} literally for any key not in the dict, enabling partial substitution."""
     def __missing__(self, key):
@@ -412,20 +426,36 @@ def send_activity_confirmation_email(activity_id: str):
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Confirmed: {activity.title} with {coach_name}"
 
+        google_connected = _coach_has_google_calendar(activity.coach)
+
         from apps.activities.tokens import make_session_token
         backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
-        confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
-        cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
-        reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+        if google_connected:
+            # Google's own calendar invite (separate email, native Accept/Decline/Maybe)
+            # is the one actionable email in this case — avoid a second, conflicting
+            # set of response links here.
+            confirm_url = cancel_url = reschedule_url = ""
+        else:
+            confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
+            cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+            reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
-            f"Confirm attendance: {confirm_url}\n"
-            f"Request reschedule: {reschedule_url}\n"
-            f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
-        )
+        if google_connected:
+            plain = (
+                f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
+                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+                f"You'll receive a separate Google Calendar invite — accept, decline, or propose a new "
+                f"time directly on that invite to let {coach_name} know.\n\n— {workspace.name}"
+            )
+        else:
+            plain = (
+                f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
+                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+                f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
+                f"Confirm attendance: {confirm_url}\n"
+                f"Request reschedule: {reschedule_url}\n"
+                f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
+            )
         saved_style      = tmpl.get("style", {})
         from_email_addr  = _workspace_from_email(workspace)
 
@@ -662,21 +692,34 @@ def send_activity_reschedule_email(activity_id: str):
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
+        google_connected = _coach_has_google_calendar(activity.coach)
+
         from apps.activities.tokens import make_session_token
         backend_url    = getattr(settings, "BACKEND_URL", "").rstrip("/")
-        confirm_url    = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
-        cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
-        reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+        if google_connected:
+            confirm_url = cancel_url = reschedule_url = ""
+        else:
+            confirm_url    = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
+            cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+            reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A new calendar invite is attached. Open it to update your calendar.\n\n"
-            f"Confirm attendance: {confirm_url}\n"
-            f"Request reschedule: {reschedule_url}\n"
-            f"Cancel session:     {cancel_url}\n\n"
-            f"— {workspace.name}"
-        )
+        if google_connected:
+            plain = (
+                f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
+                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+                f"You'll receive an updated Google Calendar invite — accept, decline, or propose a new "
+                f"time directly on that invite to let {coach_name} know.\n\n— {workspace.name}"
+            )
+        else:
+            plain = (
+                f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
+                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+                f"A new calendar invite is attached. Open it to update your calendar.\n\n"
+                f"Confirm attendance: {confirm_url}\n"
+                f"Request reschedule: {reschedule_url}\n"
+                f"Cancel session:     {cancel_url}\n\n"
+                f"— {workspace.name}"
+            )
         html = build_reschedule_email(
             activity=activity,
             workspace_name=workspace.name,
