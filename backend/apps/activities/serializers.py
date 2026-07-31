@@ -106,6 +106,7 @@ class ActivitySerializer(serializers.ModelSerializer):
                   "location", "meeting_link", "notes", "rrule", "recurrence_id",
                   "google_cal_uid", "client", "client_name", "coach", "coach_name",
                   "deal", "edit_history", "created_at", "send_confirmation", "send_update",
+                  "email_template_id",
                   "repeat", "repeat_until", "edit_scope",
                   "confirmation_sent_at", "cancellation_sent_at",
                   "reminder_24h_sent", "reminder_24h_sent_at",

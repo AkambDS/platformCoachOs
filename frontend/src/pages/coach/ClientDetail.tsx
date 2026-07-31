@@ -43,7 +43,8 @@ function fmtDatetime(d: string) {
 // ── New Activity Modal ────────────────────────────────────────────────────────
 function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   const qc = useQueryClient()
-  const { user } = useAuthStore()
+  const { user, workspace } = useAuthStore()
+  const genericTemplates: any[] = (workspace as any)?.generic_templates || []
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
@@ -66,6 +67,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   const [repeatEnd, setRepeatEnd] = useState<'never'|'date'>('never')
   const [repeatUntil, setRepeatUntil] = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
+  const [emailTemplateId, setEmailTemplateId] = useState('')
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const toUTC = (local: string) => local ? new Date(local).toISOString() : local
@@ -83,7 +85,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
     const end_at = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.title || !start_at) return
     setSaving(true)
-    const payload: any = { ...form, client: clientId, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation }
+    const payload: any = { ...form, client: clientId, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation, email_template_id: emailTemplateId }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -112,7 +114,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
             {(activityTypes as any[]).map((t: any) => (
-              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+              <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>
@@ -223,6 +225,17 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
           <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
         </div>
       </div>
+      {sendConfirmation && genericTemplates.length > 0 && (
+        <div className="fgroup" style={{ marginTop: 10 }}>
+          <label className="flabel">Email template</label>
+          <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
+            <option value="">Default (Settings → Generic Templates → Booking Confirmation)</option>
+            {genericTemplates.map((t: any) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </Modal>
   )
 }
@@ -2181,7 +2194,7 @@ export default function ClientDetail() {
                     }
                     const sc = statusColor[statusLabel] || '#8c8279'
                     const label = item._type === 'activity'
-                      ? (item.activity_type || 'Session').charAt(0).toUpperCase() + (item.activity_type || 'session').slice(1)
+                      ? (item.activity_type || 'session').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
                       : `Invoice ${item.number}`
                     const sub = item._type === 'activity'
                       ? fmtDatetime(item.start_at)

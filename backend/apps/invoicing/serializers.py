@@ -84,7 +84,7 @@ def _build_email_html(invoice: Invoice) -> str:
     try:
         from django.conf import settings
         from tasks.email_html import build_invoice_email
-        from tasks.email import _apply_tmpl, _logo_src
+        from tasks.email import _apply_tmpl, _logo_src, _get_invoice_template
         from apps.accounts.models import User
 
         workspace    = invoice.workspace
@@ -100,7 +100,7 @@ def _build_email_html(invoice: Invoice) -> str:
         logo_url = f"{backend_base}/api/settings/logo/{workspace.id}/" if workspace.logo_data else ""
 
         due_str  = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
-        tmpl     = (workspace.email_templates or {}).get("invoice", {})
+        tmpl     = _get_invoice_template(invoice)
 
         _pay_link = invoice.stripe_payment_link or ""
         _pay_button = (

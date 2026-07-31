@@ -682,7 +682,7 @@ class ClientMessageDraftViewSet(viewsets.ModelViewSet):
             workspace=request.user.workspace,
             coach=request.user,
             client=draft.client,
-            activity_type=Activity.ActivityType.CUSTOM,
+            activity_type=Activity.ActivityType.CLIENT_COMMUNICATION,
             title=f"Email: {draft.subject or '(no subject)'}",
             status=Activity.Status.COMPLETED,
             start_at=now, end_at=now,

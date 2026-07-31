@@ -26,6 +26,59 @@ def _logo_url(workspace) -> str:
     return _logo_src(workspace)
 
 
+def _get_invoice_template(invoice) -> dict:
+    """Resolve which template dict drives this invoice's email. A per-invoice override
+    (invoice.email_template_id, set from the "Email template" picker in Review-before-
+    sending) takes precedence over the workspace's default "invoice" slot (Settings >
+    Generic Templates) — lets a coach keep e.g. separate "Daily"/"Monthly" invoice
+    templates and pick one per invoice instead of only ever having one default."""
+    workspace = invoice.workspace
+    if invoice.email_template_id:
+        tmpl = next(
+            (t for t in (workspace.generic_templates or [])
+             if isinstance(t, dict) and t.get("id") == invoice.email_template_id),
+            None,
+        )
+        if tmpl:
+            return {
+                "subject":       tmpl.get("subject", ""),
+                "from_email":    tmpl.get("from_email", ""),
+                "intro":         tmpl.get("intro", ""),
+                "closing":       tmpl.get("closing", ""),
+                "custom_html":   tmpl.get("custom_html", ""),
+                "disable_style": tmpl.get("disable_style", False),
+                "show_logo":     tmpl.get("show_logo", True),
+                "style":         tmpl.get("style", {}),
+            }
+    return (workspace.email_templates or {}).get("invoice", {})
+
+
+def _get_activity_confirmation_template(activity) -> dict:
+    """Resolve which template dict drives this activity's booking confirmation email —
+    mirrors _get_invoice_template. A per-activity override (activity.email_template_id,
+    set from the "Email template" picker on the schedule form) takes precedence over the
+    workspace's default "confirmation" slot (Settings > Generic Templates)."""
+    workspace = activity.workspace
+    if activity.email_template_id:
+        tmpl = next(
+            (t for t in (workspace.generic_templates or [])
+             if isinstance(t, dict) and t.get("id") == activity.email_template_id),
+            None,
+        )
+        if tmpl:
+            return {
+                "subject":       tmpl.get("subject", ""),
+                "from_email":    tmpl.get("from_email", ""),
+                "intro":         tmpl.get("intro", ""),
+                "closing":       tmpl.get("closing", ""),
+                "custom_html":   tmpl.get("custom_html", ""),
+                "disable_style": tmpl.get("disable_style", False),
+                "show_logo":     tmpl.get("show_logo", True),
+                "style":         tmpl.get("style", {}),
+            }
+    return (workspace.email_templates or {}).get("confirmation", {})
+
+
 def _owner_info(workspace) -> tuple:
     """Return (owner_email, owner_name) for the business owner of the workspace."""
     try:
@@ -330,7 +383,7 @@ def send_activity_confirmation_email(activity_id: str):
             session_title=activity.title, session_time=dt,
             workspace_name=workspace.name,
         )
-        tmpl = (workspace.email_templates or {}).get("confirmation", {})
+        tmpl = _get_activity_confirmation_template(activity)
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Confirmed: {activity.title} with {coach_name}"
@@ -754,7 +807,7 @@ def send_invoice_email(invoice_id: str):
             if _pay_link else
             "You can view the invoice by clicking on the attached file."
         )
-        tmpl = (workspace.email_templates or {}).get("invoice", {})
+        tmpl = _get_invoice_template(invoice)
         tmpl_style = tmpl.get("style", {})
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
         disable_style = bool(custom_html_tmpl) and tmpl.get("disable_style", False)

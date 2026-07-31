@@ -16,6 +16,7 @@ class Activity(WorkspaceModel):
         TRAINING    = "training",    "Training"
         TRAVEL      = "travel",      "Travel"
         CUSTOM      = "custom",      "Custom"
+        CLIENT_COMMUNICATION = "client_communication", "Client Communication"
 
     class Status(models.TextChoices):
         SCHEDULED    = "scheduled",     "Scheduled"
@@ -62,6 +63,10 @@ class Activity(WorkspaceModel):
     client_rsvp_status    = models.CharField(max_length=20, choices=RsvpStatus.choices,
                                               default=RsvpStatus.NEEDS_ACTION)
     client_rsvp_synced_at = models.DateTimeField(null=True, blank=True)
+    # Overrides the workspace's default "confirmation" generic template (Settings >
+    # Generic Templates) for this activity's booking confirmation email — e.g. picking
+    # a specific booking-confirmation flavor at schedule time. Blank = workspace default.
+    email_template_id = models.CharField(max_length=100, blank=True)
     # Notification tracking — timestamps show exactly when each email was sent
     confirmation_sent_at  = models.DateTimeField(null=True, blank=True)
     cancellation_sent_at  = models.DateTimeField(null=True, blank=True)
@@ -117,7 +122,7 @@ class GoogleCalendarWatch(models.Model):
         return f"watch({self.coach_id}) exp={self.expiration}"
 
 
-BUILTIN_TYPES = ["appointment", "task", "call", "session", "training", "travel", "custom"]
+BUILTIN_TYPES = ["appointment", "task", "call", "session", "training", "travel", "custom", "client_communication"]
 
 
 class ActivityTypeConfig(WorkspaceModel):

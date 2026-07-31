@@ -80,6 +80,10 @@ class Invoice(WorkspaceModel):
     refunded_at       = models.DateTimeField(null=True, blank=True)
     # PDF
     pdf_s3_key        = models.CharField(max_length=500, blank=True)
+    # Overrides the workspace's default "invoice" generic template (Settings > Generic
+    # Templates) for this invoice's send/reminder emails — e.g. a separate "Monthly"
+    # template vs the default "Daily"/one-time one. Blank = use the workspace default.
+    email_template_id = models.CharField(max_length=100, blank=True)
     created_at        = models.DateTimeField(auto_now_add=True)
     updated_at        = models.DateTimeField(auto_now=True)
 

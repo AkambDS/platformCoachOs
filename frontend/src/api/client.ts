@@ -136,6 +136,7 @@ export const invoicesApi = {
   get:           (id: string)         => api.get(`/api/invoices/${id}/`),
   create:        (d: any)             => api.post('/api/invoices/', d),
   update:        (id: string, d: any) => api.put(`/api/invoices/${id}/`, d),
+  patch:         (id: string, d: any) => api.patch(`/api/invoices/${id}/`, d),
   send:          (id: string)         => api.post(`/api/invoices/${id}/send/`),
   recordPayment: (id: string, d: any) => api.post(`/api/invoices/${id}/record-payment/`, d),
   void:          (id: string)         => api.post(`/api/invoices/${id}/void/`),

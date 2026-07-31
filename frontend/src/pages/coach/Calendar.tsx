@@ -167,6 +167,8 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const [endDate, setEndDate]     = useState(defaultStart ? defaultStart.slice(0, 10) : '')
   const [endTime, setEndTime]     = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
+  const [emailTemplateId, setEmailTemplateId] = useState('')
+  const genericTemplates: any[] = (workspace as any)?.generic_templates || []
   const [repeat, setRepeat]         = useState<'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly'>('none')
   const [repeatEnd, setRepeatEnd]   = useState<'never'|'date'>('never')
   const [repeatUntil, setRepeatUntil] = useState('')
@@ -193,7 +195,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
     }
     try {
-      await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation })
+      await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation, email_template_id: emailTemplateId })
       qc.invalidateQueries({ queryKey: ['activities'] })
       onSaved(sendConfirmation)
     } catch (err: any) {
@@ -226,7 +228,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
             {(activityTypes as any[]).map((t: any) => (
-              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+              <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>
@@ -344,6 +346,17 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
           <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
         </div>
       </div>
+      {sendConfirmation && genericTemplates.length > 0 && (
+        <div className="fgroup" style={{ marginTop: 10 }}>
+          <label className="flabel">Email template</label>
+          <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
+            <option value="">Default (Settings → Generic Templates → Booking Confirmation)</option>
+            {genericTemplates.map((t: any) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
     </Modal>
   )
 }
@@ -538,7 +551,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
             {(activityTypes as any[]).map((t: any) => (
-              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+              <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>

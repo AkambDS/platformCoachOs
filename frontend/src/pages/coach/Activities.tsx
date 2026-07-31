@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast } from '../../components/ui'
+import { useAuthStore } from '../../store/auth'
 import {
   CalendarDays, MapPin, User, Clock, ChevronRight, Mail, CheckCircle2, Circle, XCircle,
 } from 'lucide-react'
@@ -16,6 +17,7 @@ const TYPE_COLOURS: Record<string, string> = {
   training:    '#7c4d9f',
   travel:      '#8c8279',
   custom:      '#a0522d',
+  client_communication: '#1565c0',
 }
 const STATUS_TABS = [
   { label: 'All',         value: '' },
@@ -74,6 +76,8 @@ function ActivityFormModal({
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
   })
+  const { workspace } = useAuthStore()
+  const genericTemplates: any[] = (workspace as any)?.generic_templates || []
   const clients: any[] = clientsData?.results || clientsData || []
   const isEdit = !!initial?.id
 
@@ -88,6 +92,7 @@ function ActivityFormModal({
     notes:         initial?.notes         || '',
   })
   const [sendConfirmation, setSendConfirmation] = useState(!isEdit)
+  const [emailTemplateId, setEmailTemplateId] = useState('')
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
@@ -102,7 +107,7 @@ function ActivityFormModal({
         await activitiesApi.patch(initial.id, payload)
         onSaved()
       } else {
-        await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation })
+        await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation, email_template_id: emailTemplateId })
         onSaved(sendConfirmation)
       }
     } catch { } finally { setSaving(false) }
@@ -135,7 +140,7 @@ function ActivityFormModal({
           <label className="flabel">Type</label>
           <select className="fselect" value={form.activity_type} onChange={e => set('activity_type', e.target.value)}>
             {(activityTypes as any[]).map((t: any) => (
-              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+              <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>
@@ -192,6 +197,17 @@ function ActivityFormModal({
               Client gets a .ics file to add to their calendar, plus 24h and 1h reminders.
             </span>
           </label>
+        </div>
+      )}
+      {!isEdit && sendConfirmation && genericTemplates.length > 0 && (
+        <div className="fgroup" style={{ marginTop: 10 }}>
+          <label className="flabel">Email template</label>
+          <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
+            <option value="">Default (Settings → Generic Templates → Booking Confirmation)</option>
+            {genericTemplates.map((t: any) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
         </div>
       )}
     </Modal>
@@ -315,8 +331,10 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
   // Logged automatically when a coach sends a one-off Client Communication email (see
   // ClientMessageDraftViewSet.send) — not a schedulable session, so the confirmation/
   // reminder/cancellation notification pipeline (built for real appointments) doesn't
-  // apply and would only show a misleading "session confirmed" preview.
-  const isCommunicationLog = activity.activity_type === 'custom' && (activity.title || '').startsWith('Email: ')
+  // apply and would only show a misleading "session confirmed" preview. The title-prefix
+  // check is a fallback for logs created before activity_type gained a dedicated value.
+  const isCommunicationLog = activity.activity_type === 'client_communication'
+    || (activity.activity_type === 'custom' && (activity.title || '').startsWith('Email: '))
 
   return (
     <>
@@ -376,13 +394,13 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
       }
     >
       <div className="kv"><span className="kvl">Client</span><span className="kvv">{activity.client_name}</span></div>
-      <div className="kv"><span className="kvl">Type</span><span className="kvv" style={{ textTransform: 'capitalize' }}>{activity.activity_type}</span></div>
+      <div className="kv"><span className="kvl">Type</span><span className="kvv">{(activity.activity_type || '').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></div>
       <div className="kv"><span className="kvl">Status</span><span className="kvv"><StatusBadge status={activity.status} /></span></div>
       <div className="kv"><span className="kvl">Start</span><span className="kvv">{new Date(activity.start_at).toLocaleString()}</span></div>
       {activity.end_at && <div className="kv"><span className="kvl">End</span><span className="kvv">{new Date(activity.end_at).toLocaleString()}</span></div>}
       {activity.location && <div className="kv"><span className="kvl">Location</span><span className="kvv">{activity.location}</span></div>}
       {activity.notes && (
-        <div style={{ marginTop: 12, fontSize: 13, color: '#555', lineHeight: 1.6, background: 'var(--paper)', padding: 12, borderRadius: 'var(--radius-sm)' }}>
+        <div style={{ marginTop: 12, fontSize: 13, color: '#555', lineHeight: 1.6, background: 'var(--paper)', padding: 12, borderRadius: 'var(--radius-sm)', maxHeight: 320, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
           {activity.notes}
         </div>
       )}
@@ -532,7 +550,7 @@ export default function Activities() {
           >
             <option value="">All types</option>
             {(activityTypesList as any[]).map((t: any) => (
-              <option key={t.name} value={t.name}>{t.name.charAt(0).toUpperCase() + t.name.slice(1)}</option>
+              <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
         </div>
@@ -587,7 +605,7 @@ export default function Activities() {
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <div style={{ width: 8, height: 8, borderRadius: '50%', background: TYPE_COLOURS[a.activity_type] || '#8c8279', flexShrink: 0 }} />
-                      <span style={{ textTransform: 'capitalize', fontSize: 12 }}>{a.activity_type}</span>
+                      <span style={{ fontSize: 12 }}>{(a.activity_type || '').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span>
                     </div>
                   </td>
                   <td style={{ fontWeight: 500 }}>{a.title}</td>

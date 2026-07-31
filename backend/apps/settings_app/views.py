@@ -121,7 +121,7 @@ def public_branding(request):
 _BUILTIN_COLORS = {
     "appointment": "#c9a84c", "task": "#4a7c59", "call": "#2d6a9f",
     "session": "#1a1714",    "training": "#7c4d9f", "travel": "#8c8279",
-    "custom": "#a0522d",
+    "custom": "#a0522d",     "client_communication": "#1565c0",
 }
 
 _BUILTIN_STAGES = [
@@ -189,14 +189,21 @@ def pipeline_stage_config_detail(request, pk):
 
 
 def _seed_activity_types(workspace):
-    """Seed built-in types once — skip if any builtin already exists for this workspace."""
-    if ActivityTypeConfig.objects.filter(workspace=workspace, is_builtin=True).exists():
+    """Seed any built-in types not yet present for this workspace — idempotent, and
+    backfills newly-added BUILTIN_TYPES (e.g. client_communication) for workspaces that
+    were already seeded before that type existed."""
+    existing = set(ActivityTypeConfig.objects.filter(
+        workspace=workspace, is_builtin=True
+    ).values_list("name", flat=True))
+    missing = [n for n in BUILTIN_TYPES if n not in existing]
+    if not missing:
         return
-    for i, name in enumerate(BUILTIN_TYPES):
+    start = ActivityTypeConfig.objects.filter(workspace=workspace).count()
+    for i, name in enumerate(missing):
         ActivityTypeConfig.objects.get_or_create(
             workspace=workspace, name=name,
             defaults={"color": _BUILTIN_COLORS.get(name, "#1a1714"), "is_builtin": True,
-                      "is_active": True, "sort_order": i},
+                      "is_active": True, "sort_order": start + i},
         )
 
 

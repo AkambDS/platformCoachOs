@@ -564,15 +564,20 @@ def workspace_activity_types(request, pk):
     _BUILTIN_COLORS = {
         "appointment": "#1B3A6B", "task": "#2e7d32", "call": "#6a1b9a",
         "session": "#c76a1b",     "training": "#1565c0", "travel": "#546e7a",
-        "custom": "#795548",
+        "custom": "#795548",      "client_communication": "#0d6e6e",
     }
 
-    if not ActivityTypeConfig.objects.filter(workspace=ws).exists():
-        for i, name in enumerate(BUILTIN_TYPES):
+    existing = set(ActivityTypeConfig.objects.filter(
+        workspace=ws, is_builtin=True
+    ).values_list("name", flat=True))
+    missing = [n for n in BUILTIN_TYPES if n not in existing]
+    if missing:
+        start = ActivityTypeConfig.objects.filter(workspace=ws).count()
+        for i, name in enumerate(missing):
             ActivityTypeConfig.objects.get_or_create(
                 workspace=ws, name=name,
                 defaults={"color": _BUILTIN_COLORS.get(name, "#1a1714"),
-                          "is_builtin": True, "is_active": True, "sort_order": i},
+                          "is_builtin": True, "is_active": True, "sort_order": start + i},
             )
 
     if request.method == "POST":

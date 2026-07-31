@@ -926,6 +926,7 @@ export default function InvoiceDetail() {
   const [sending,        setSending]        = useState(false)
   const [payLink,        setPayLink]        = useState('')
   const [savingLink,     setSavingLink]     = useState(false)
+  const [changingTemplate, setChangingTemplate] = useState(false)
 
   const { data: inv, isLoading } = useQuery({
     queryKey: ['invoice', id],
@@ -948,6 +949,15 @@ export default function InvoiceDetail() {
       showToast('Invoice sent to client')
     } catch { showToast('Failed to send', 'error') }
     finally { setSending(false) }
+  }
+
+  const handleChangeTemplate = async (templateId: string) => {
+    setChangingTemplate(true)
+    try {
+      await invoicesApi.patch(id!, { email_template_id: templateId })
+      await qc.invalidateQueries({ queryKey: ['invoice', id] })
+    } catch { showToast('Failed to switch template', 'error') }
+    finally { setChangingTemplate(false) }
   }
 
   const handleVoid = async () => {
@@ -1175,8 +1185,14 @@ ${el.innerHTML}
                   { label: 'Paid',     value: `$${fmt$(paid)}`,      bold: false, color: paid > 0 ? '#22c55e' : 'var(--muted)' },
                   { label: 'Balance',  value: `$${fmt$(remaining)}`, bold: true,  color: remaining > 0 ? (isOverdue ? '#e67e22' : '#e67e22') : 'var(--muted)' },
                   { label: 'Due Date', value: fmtDate(inv.due_date), bold: false, color: isOverdue ? '#e67e22' : 'var(--ink)' },
+                  {
+                    label: 'Type',
+                    value: inv.invoice_type === 'subscription'
+                      ? `Subscription${inv.billing_cycle ? ` (${inv.billing_cycle.charAt(0).toUpperCase() + inv.billing_cycle.slice(1)})` : ''}`
+                      : 'One-Time',
+                    bold: false, color: 'var(--ink)',
+                  },
                   ...(inv.invoice_type === 'subscription' ? [
-                    { label: 'Billing', value: inv.billing_cycle ? inv.billing_cycle.charAt(0).toUpperCase() + inv.billing_cycle.slice(1) : '—', bold: false, color: 'var(--ink)' },
                     { label: 'Ends', value: inv.subscription_end ? fmtDate(inv.subscription_end) : 'Until stopped', bold: false, color: inv.subscription_end ? 'var(--ink)' : 'var(--muted)' },
                   ] : []),
                 ].map(({ label, value, bold, color }) => (
@@ -1339,6 +1355,23 @@ ${el.innerHTML}
               <strong>{inv.client_name}</strong>
               {inv.client_email && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {inv.client_email}</span>}
             </div>
+            {(((workspace as any)?.generic_templates || []).length > 0) && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
+                <span style={{ fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', fontSize: 10, flexShrink: 0 }}>EMAIL TEMPLATE</span>
+                <select
+                  className="fselect"
+                  style={{ flex: 1 }}
+                  value={inv.email_template_id || ''}
+                  disabled={changingTemplate}
+                  onChange={e => handleChangeTemplate(e.target.value)}
+                >
+                  <option value="">Default (Settings → Generic Templates → Invoice)</option>
+                  {((workspace as any)?.generic_templates || []).map((t: any) => (
+                    <option key={t.id} value={t.id}>{t.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div style={{ height: 440, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: '#eeebe5' }}>
               <iframe
                 srcDoc={inv.email_html || ''}
