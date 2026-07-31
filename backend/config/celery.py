@@ -10,4 +10,6 @@ app.conf.include = [
     'tasks.reminders',
     'tasks.calendar',
     'tasks.sms',
+    'tasks.invoicing',
+    'tasks.pipeline',
 ]

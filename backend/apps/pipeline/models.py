@@ -24,6 +24,10 @@ class Deal(WorkspaceModel):
     stage            = models.CharField(max_length=50, default=Stage.LEAD_NEW)
     stage_changed_at    = models.DateTimeField(auto_now_add=True)
     pipeline_alert_sent_at = models.DateTimeField(null=True, blank=True)
+    # Per-deal override of the stage's alert_stop_after_days (PipelineStageConfig) — once
+    # set, follow-up alerts for THIS deal stop after this date regardless of the stage
+    # default. Blank = use the stage's standard alert_stop_after_days rule.
+    alert_stop_date        = models.DateField(null=True, blank=True)
     class DealType(models.TextChoices):
         COACHING_1_1    = "1_1_coaching",       "1:1 Coaching"
         GROUP_PROGRAM   = "group_program",       "Group Program"
@@ -66,6 +70,9 @@ class PipelineStageConfig(WorkspaceModel):
     color          = models.CharField(max_length=7, default="#1e3a5f")
     order          = models.PositiveIntegerField(default=0)
     follow_up_days = models.PositiveIntegerField(null=True, blank=True)
+    # Alerts repeat once daily starting at follow_up_days; stop once a deal has spent
+    # this many days in the stage. Blank = keep alerting until the deal moves stage.
+    alert_stop_after_days = models.PositiveIntegerField(null=True, blank=True)
     notify_owner   = models.BooleanField(default=True)
     notify_client  = models.BooleanField(default=False)
     is_builtin     = models.BooleanField(default=False)

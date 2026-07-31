@@ -717,7 +717,7 @@ function PipelineTab() {
   })
   const [showAdd, setShowAdd] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
-  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
   const [editForm, setEditForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
 
@@ -735,12 +735,16 @@ function PipelineTab() {
       const after = stageList.find(s => s.slug === newForm.insertAfterSlug)
       order = after ? after.order + 1 : stageList.length
     }
-    const payload = { ...newForm, slug, order, follow_up_days: newForm.follow_up_days ? Number(newForm.follow_up_days) : null }
+    const payload = {
+      ...newForm, slug, order,
+      follow_up_days: newForm.follow_up_days ? Number(newForm.follow_up_days) : null,
+      alert_stop_after_days: newForm.alert_stop_after_days ? Number(newForm.alert_stop_after_days) : null,
+    }
     try {
       await settingsApi.createPipelineStage(payload)
       qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
       setShowAdd(false)
-      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
       show('Stage added')
     } catch (e: any) {
       show(e?.response?.data?.label?.[0] || e?.response?.data?.slug?.[0] || 'Failed to add stage', 'error')
@@ -749,7 +753,11 @@ function PipelineTab() {
 
   const handleEdit = async () => {
     setSaving(true)
-    const payload = { ...editForm, follow_up_days: editForm.follow_up_days ? Number(editForm.follow_up_days) : null }
+    const payload = {
+      ...editForm,
+      follow_up_days: editForm.follow_up_days ? Number(editForm.follow_up_days) : null,
+      alert_stop_after_days: editForm.alert_stop_after_days ? Number(editForm.alert_stop_after_days) : null,
+    }
     try {
       await settingsApi.updatePipelineStage(editTarget.id, payload)
       qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
@@ -789,7 +797,7 @@ function PipelineTab() {
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               {s.follow_up_days ? `Alert after ${s.follow_up_days}d` : <span style={{ color: '#bbb' }}>No alert</span>}
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client }) }} style={{ padding: '2px 6px' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', alert_stop_after_days: s.alert_stop_after_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client }) }} style={{ padding: '2px 6px' }}>
               <Pencil size={13} />
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(s)} style={{ color: '#c0392b', padding: '2px 6px' }}>
@@ -823,6 +831,12 @@ function PipelineTab() {
             <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
             <input className="finput" type="number" min={1} max={365} value={newForm.follow_up_days}
               onChange={e => setNewForm(f => ({ ...f, follow_up_days: e.target.value }))} placeholder="e.g. 14" />
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Once triggered, the alert repeats once a day until the deal moves stage (or the stop window below is reached).</div>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Stop alerting after (days in stage) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop</span></label>
+            <input className="finput" type="number" min={1} max={365} value={newForm.alert_stop_after_days}
+              onChange={e => setNewForm(f => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="e.g. 30" />
           </div>
           <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
@@ -862,6 +876,12 @@ function PipelineTab() {
             <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
             <input className="finput" type="number" min={1} max={365} value={editForm.follow_up_days}
               onChange={e => setEditForm((f: any) => ({ ...f, follow_up_days: e.target.value }))} placeholder="No alert" />
+            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Once triggered, the alert repeats once a day until the deal moves stage (or the stop window below is reached).</div>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Stop alerting after (days in stage) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop</span></label>
+            <input className="finput" type="number" min={1} max={365} value={editForm.alert_stop_after_days}
+              onChange={e => setEditForm((f: any) => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="Never stop" />
           </div>
           <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>

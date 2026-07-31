@@ -1194,6 +1194,11 @@ ${el.innerHTML}
                   },
                   ...(inv.invoice_type === 'subscription' ? [
                     { label: 'Ends', value: inv.subscription_end ? fmtDate(inv.subscription_end) : 'Until stopped', bold: false, color: inv.subscription_end ? 'var(--ink)' : 'var(--muted)' },
+                    {
+                      label: 'Next Invoice',
+                      value: inv.next_invoice_date ? fmtDate(inv.next_invoice_date) : (inv.subscription_auto_send ? '—' : 'Auto-send off'),
+                      bold: false, color: 'var(--ink)',
+                    },
                   ] : []),
                 ].map(({ label, value, bold, color }) => (
                   <div key={label} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12 }}>

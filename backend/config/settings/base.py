@@ -242,6 +242,23 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.calendar.renew_expiring_watch_channels",
         "schedule": crontab(hour=3, minute=0),
     },
+    # Recurring/subscription invoices — generate + send the next period's invoice once
+    # its due date arrives
+    "dispatch-subscription-invoices": {
+        "task": "tasks.invoicing.dispatch_subscription_invoices",
+        "schedule": crontab(hour=7, minute=0),
+    },
+    # Pipeline follow-up alerts — daily nudge for deals stuck past their stage's
+    # follow-up threshold, until the deal moves or its alert window closes
+    "dispatch-pipeline-alerts": {
+        "task": "tasks.pipeline.dispatch_pipeline_alerts",
+        "schedule": crontab(hour=8, minute=0),
+    },
+    # Retry any invite email that failed to send at invitation-creation time
+    "retry-pending-invites": {
+        "task": "tasks.email.retry_pending_invites",
+        "schedule": crontab(minute="*/5"),
+    },
 }
 
 # ── Stripe ────────────────────────────────────────────────────────────────

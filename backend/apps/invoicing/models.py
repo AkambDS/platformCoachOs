@@ -74,6 +74,11 @@ class Invoice(WorkspaceModel):
     subscription_start    = models.DateField(null=True, blank=True)
     subscription_end      = models.DateField(null=True, blank=True)  # null = run until manually stopped
     subscription_auto_send = models.BooleanField(default=True)
+    # When set, tasks.invoicing.dispatch_subscription_invoices will clone this invoice
+    # into the next period's invoice and (if subscription_auto_send) email it once this
+    # date arrives. Cleared on the invoice that fires — the newly-generated invoice
+    # becomes the new schedule anchor — so each invoice fires at most once.
+    next_invoice_date = models.DateField(null=True, blank=True)
     # Refunds
     refund_amount     = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     refund_reason     = models.CharField(max_length=300, blank=True)
@@ -105,6 +110,35 @@ class Invoice(WorkspaceModel):
         tax = after_discount * self.tax_percent / 100
         self.total = after_discount + tax
         return self.total
+
+    def compute_next_invoice_date(self):
+        """Date the next invoice in this subscription series should be generated and
+        sent — one billing_cycle after this invoice's own due date, with the day-of-
+        month snapped to billing_day. None if this isn't an auto-sending subscription
+        invoice, or the series has ended (subscription_end reached)."""
+        if self.invoice_type != self.InvoiceType.SUBSCRIPTION or not self.subscription_auto_send:
+            return None
+        if not self.billing_cycle or not self.billing_day:
+            return None
+        from dateutil.relativedelta import relativedelta
+        from django.utils import timezone as _tz
+        cycle_delta = {
+            self.BillingCycle.MONTHLY:   relativedelta(months=1),
+            self.BillingCycle.QUARTERLY: relativedelta(months=3),
+            self.BillingCycle.YEARLY:    relativedelta(years=1),
+        }.get(self.billing_cycle)
+        if not cycle_delta:
+            return None
+        base = self.due_date or self.subscription_start or _tz.now().date()
+        next_date = base + cycle_delta
+        day = min(self.billing_day, 28)
+        try:
+            next_date = next_date.replace(day=day)
+        except ValueError:
+            pass
+        if self.subscription_end and next_date > self.subscription_end:
+            return None
+        return next_date
 
 
 class InvoiceItem(models.Model):

@@ -722,9 +722,11 @@ export default function Calendar() {
   })
   // Exclude one-off Client Communication sends logged as Activities (see
   // ClientMessageDraftViewSet.send) — they're zero-duration log entries, not
-  // schedulable sessions, so they don't belong on the calendar grid.
+  // schedulable sessions, so they don't belong on the calendar grid. The title-prefix
+  // check is a fallback for logs created before activity_type gained a dedicated value.
   const activities: any[] = (activitiesData?.results || activitiesData || [])
-    .filter((a: any) => !(a.activity_type === 'custom' && (a.title || '').startsWith('Email: ')))
+    .filter((a: any) => a.activity_type !== 'client_communication'
+      && !(a.activity_type === 'custom' && (a.title || '').startsWith('Email: ')))
 
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],

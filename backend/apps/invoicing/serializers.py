@@ -40,6 +40,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "workspace", "number", "total", "subtotal",
                             "amount_paid", "stripe_invoice_id",
                             "stripe_subscription_id", "pdf_s3_key",
+                            "next_invoice_date",
                             "created_at", "updated_at"]
 
     def get_payments(self, obj):
@@ -54,6 +55,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
         for item in items_data:
             InvoiceItem.objects.create(invoice=invoice, **item)
         invoice.calculate_total()
+        invoice.next_invoice_date = invoice.compute_next_invoice_date()
         invoice.save()
         return invoice
 
@@ -66,6 +68,9 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
             for item in items_data:
                 InvoiceItem.objects.create(invoice=instance, **item)
         instance.calculate_total()
+        # Recompute in case billing_cycle/billing_day/subscription_auto_send/subscription_end
+        # changed — e.g. a coach toggling auto-send off should stop the series immediately.
+        instance.next_invoice_date = instance.compute_next_invoice_date()
         instance.save()
         return instance
 

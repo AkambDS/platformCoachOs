@@ -103,6 +103,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
     def void_invoice(self, request, pk=None):
         invoice = self.get_object()
         invoice.status = Invoice.Status.VOID
+        # Voiding a subscription invoice stops the series — otherwise the next period
+        # would still auto-generate and email off a voided invoice.
+        invoice.next_invoice_date = None
         invoice.save()
         return Response(InvoiceDetailSerializer(invoice).data)
 

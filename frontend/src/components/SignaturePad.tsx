@@ -6,20 +6,35 @@ export default function SignaturePad({ value, onChange }: { value: string; onCha
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
   const hasStroke = useRef(false)
+  const points = useRef<{ x: number; y: number }[]>([])
   const [empty, setEmpty] = useState(!value)
+
+  const drawBaseline = (ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement) => {
+    ctx.save()
+    ctx.strokeStyle = '#e3ddd3'
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.moveTo(12, canvas.height - 20)
+    ctx.lineTo(canvas.width - 12, canvas.height - 20)
+    ctx.stroke()
+    ctx.restore()
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
     if (!ctx) return
-    ctx.lineWidth = 2
+    ctx.lineWidth = 2.4
     ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
     ctx.strokeStyle = '#1a1714'
     if (value) {
       const img = new Image()
       img.onload = () => ctx.drawImage(img, 0, 0, canvas.width, canvas.height)
       img.src = value
+    } else {
+      drawBaseline(ctx, canvas)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -35,18 +50,33 @@ export default function SignaturePad({ value, onChange }: { value: string; onCha
     e.preventDefault()
     drawing.current = true
     const ctx = canvasRef.current?.getContext('2d')
-    const { x, y } = pos(e)
+    const p = pos(e)
+    points.current = [p]
     ctx?.beginPath()
-    ctx?.moveTo(x, y)
+    ctx?.moveTo(p.x, p.y)
   }
 
+  // Straight lineTo() per raw mouse-move point looks jagged/angular since mousemove
+  // fires at a coarser rate than the cursor actually travels — quadratic-curving
+  // through the midpoint of each new pair of points (the standard signature-pad
+  // smoothing technique) renders a natural, fluid stroke from the same input instead.
   const move = (e: React.MouseEvent | React.TouchEvent) => {
     if (!drawing.current) return
     e.preventDefault()
     const ctx = canvasRef.current?.getContext('2d')
-    const { x, y } = pos(e)
-    ctx?.lineTo(x, y)
-    ctx?.stroke()
+    if (!ctx) return
+    const p = pos(e)
+    points.current.push(p)
+    const len = points.current.length
+    if (len >= 3) {
+      const prev = points.current[len - 2]
+      const xc = (p.x + prev.x) / 2
+      const yc = (p.y + prev.y) / 2
+      ctx.quadraticCurveTo(prev.x, prev.y, xc, yc)
+    } else {
+      ctx.lineTo(p.x, p.y)
+    }
+    ctx.stroke()
     hasStroke.current = true
     setEmpty(false)
   }
@@ -54,6 +84,7 @@ export default function SignaturePad({ value, onChange }: { value: string; onCha
   const end = () => {
     if (!drawing.current) return
     drawing.current = false
+    points.current = []
     if (hasStroke.current && canvasRef.current) {
       onChange(canvasRef.current.toDataURL('image/png'))
     }
@@ -62,7 +93,10 @@ export default function SignaturePad({ value, onChange }: { value: string; onCha
   const clear = () => {
     const canvas = canvasRef.current
     const ctx = canvas?.getContext('2d')
-    if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height)
+    if (canvas && ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height)
+      drawBaseline(ctx, canvas)
+    }
     hasStroke.current = false
     setEmpty(true)
     onChange('')

@@ -171,6 +171,7 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
     source:     deal.source || '',
     notes:      deal.notes  || '',
     tags:       (deal.tags  || []) as string[],
+    alert_stop_date: deal.alert_stop_date || '',
   })
 
   const currentStage = stages.find((s: any) => s.slug === deal.stage)
@@ -198,6 +199,7 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
         source:     draft.source,
         notes:      draft.notes,
         tags:       draft.tags,
+        alert_stop_date: draft.alert_stop_date || null,
       })
       qc.invalidateQueries({ queryKey: ['pipeline'] })
       qc.invalidateQueries({ queryKey: ['pipeline-deal', deal.id] })
@@ -360,6 +362,24 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
               </div>
             )}
           </div>
+
+          {/* Follow-up alert override */}
+          {(editing || deal.alert_stop_date) && (
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: '.1em', fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>FOLLOW-UP ALERTS</div>
+              {editing ? (
+                <>
+                  <label className="flabel" style={{ marginBottom: 4 }}>Stop alerting for this deal after <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— overrides the stage's default, blank = use stage default</span></label>
+                  <input className="finput" type="date" value={draft.alert_stop_date}
+                    onChange={e => setDraft(d => ({ ...d, alert_stop_date: e.target.value }))} />
+                </>
+              ) : (
+                <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+                  Alerts for this deal stop after <strong style={{ color: 'var(--ink)' }}>{fmtDate(deal.alert_stop_date)}</strong>
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* RIGHT: stage mover */}

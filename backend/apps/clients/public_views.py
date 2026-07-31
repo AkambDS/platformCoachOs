@@ -173,8 +173,19 @@ class ContractSignView(View):
               var canvas = document.getElementById('sigCanvas');
               var ctx = canvas.getContext('2d');
               var hint = document.getElementById('sigHint');
-              var drawing = false, hasStroke = false;
-              ctx.lineWidth = 2; ctx.lineCap = 'round'; ctx.strokeStyle = '#1a1714';
+              var drawing = false, hasStroke = false, points = [];
+              ctx.lineWidth = 2.4; ctx.lineCap = 'round'; ctx.lineJoin = 'round'; ctx.strokeStyle = '#1a1714';
+
+              function drawBaseline() {{
+                ctx.save();
+                ctx.strokeStyle = '#e3ddd3'; ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(16, canvas.height - 28); ctx.lineTo(canvas.width - 16, canvas.height - 28);
+                ctx.stroke();
+                ctx.restore();
+                ctx.strokeStyle = '#1a1714'; ctx.lineWidth = 2.4;
+              }}
+              drawBaseline();
 
               function pos(e) {{
                 var rect = canvas.getBoundingClientRect();
@@ -182,9 +193,32 @@ class ContractSignView(View):
                 var scaleX = canvas.width / rect.width, scaleY = canvas.height / rect.height;
                 return {{ x: (p.clientX - rect.left) * scaleX, y: (p.clientY - rect.top) * scaleY }};
               }}
-              function start(e) {{ e.preventDefault(); drawing = true; hint.style.display = 'none'; var p = pos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); }}
-              function move(e) {{ if (!drawing) return; e.preventDefault(); var p = pos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); hasStroke = true; }}
-              function end() {{ drawing = false; }}
+              // Straight lineTo() per raw mouse-move point looks jagged/angular since
+              // mousemove fires at a coarser rate than the cursor actually travels —
+              // quadratic-curving through the midpoint of each new pair of points (the
+              // standard signature-pad smoothing technique) renders a natural, fluid
+              // stroke from the same input instead.
+              function start(e) {{
+                e.preventDefault(); drawing = true; hint.style.display = 'none';
+                var p = pos(e); points = [p];
+                ctx.beginPath(); ctx.moveTo(p.x, p.y);
+              }}
+              function move(e) {{
+                if (!drawing) return;
+                e.preventDefault();
+                var p = pos(e); points.push(p);
+                var len = points.length;
+                if (len >= 3) {{
+                  var xc = (points[len - 1].x + points[len - 2].x) / 2;
+                  var yc = (points[len - 1].y + points[len - 2].y) / 2;
+                  ctx.quadraticCurveTo(points[len - 2].x, points[len - 2].y, xc, yc);
+                }} else {{
+                  ctx.lineTo(p.x, p.y);
+                }}
+                ctx.stroke();
+                hasStroke = true;
+              }}
+              function end() {{ drawing = false; points = []; }}
               canvas.addEventListener('mousedown', start);
               canvas.addEventListener('mousemove', move);
               canvas.addEventListener('mouseup', end);
@@ -195,6 +229,7 @@ class ContractSignView(View):
 
               document.getElementById('clearSig').addEventListener('click', function() {{
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
+                drawBaseline();
                 hasStroke = false; hint.style.display = 'flex';
               }});
 

@@ -360,6 +360,32 @@ def send_invite_email(invitation_id: str):
         raise
 
 
+@shared_task(name="tasks.email.retry_pending_invites")
+def retry_pending_invites():
+    """Runs every 5 minutes: retries any invite email that failed on creation (send_invite_email
+    raises so accounts/views.py leaves email_sent=False when the initial send fails) — the
+    Celery Beat equivalent of the old cron-job.org-triggered /api/internal/invites/ endpoint."""
+    from apps.accounts.models import WorkspaceInvitation
+    from django.utils import timezone
+
+    pending_ids = list(
+        WorkspaceInvitation.objects.filter(
+            email_sent=False, accepted=False, expires_at__gt=timezone.now(),
+        ).values_list("id", flat=True)
+    )
+    sent = 0
+    for invite_id in pending_ids:
+        try:
+            send_invite_email(str(invite_id))
+            WorkspaceInvitation.objects.filter(pk=invite_id).update(email_sent=True)
+            sent += 1
+        except Exception as e:
+            logger.error(f"Pending invite email failed {invite_id}: {e}")
+    if sent:
+        logger.info(f"retry_pending_invites: sent {sent} invite(s)")
+    return sent
+
+
 @shared_task(name="tasks.email.send_activity_confirmation_email")
 def send_activity_confirmation_email(activity_id: str):
     from apps.activities.models import Activity

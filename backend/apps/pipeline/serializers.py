@@ -30,7 +30,7 @@ class DealSerializer(serializers.ModelSerializer):
             "id", "client", "client_name", "client_company", "coach", "stage",
             "stage_changed_at", "deal_value", "deal_type", "tags", "source", "notes",
             "expected_close_date", "probability", "next_action", "next_action_date",
-            "closed_at", "created_at", "stage_history", "progress_log",
+            "alert_stop_date", "closed_at", "created_at", "stage_history", "progress_log",
         ]
         read_only_fields = ["id", "stage_changed_at", "closed_at", "created_at"]
 

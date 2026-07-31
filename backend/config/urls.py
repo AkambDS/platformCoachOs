@@ -86,47 +86,20 @@ def run_pending_invites(request):
 @api_view(["POST"])
 @permission_classes([AllowAny])
 def run_pipeline_alerts(request):
-    """POST /api/internal/pipeline-alerts/ — daily cron. Sends follow-up alerts for overdue deals."""
+    """POST /api/internal/pipeline-alerts/ — optional external-cron trigger for the same
+    daily pipeline-alert dispatch that already runs automatically via Celery Beat
+    (tasks.pipeline.dispatch_pipeline_alerts). Kept for parity with the other
+    cron-job.org-triggered endpoints above; harmless to call twice in the same day since
+    the dispatch function dedupes per-deal per-day itself."""
     secret = request.headers.get("X-Cron-Secret", "")
     expected = getattr(django_settings, "CRON_SECRET", "")
     if not expected or secret != expected:
         return Response({"detail": "Forbidden"}, status=403)
 
     import threading
+    from tasks.pipeline import dispatch_pipeline_alerts
 
-    def _run():
-        import logging
-        from django.utils import timezone
-        from apps.pipeline.models import Deal, PipelineStageConfig
-        from apps.accounts.models import User
-        logger = logging.getLogger(__name__)
-        now = timezone.now()
-        active_deals = Deal.objects.exclude(
-            stage__in=["closed_lost", "active_client"]
-        ).select_related("workspace", "client", "coach")
-        sent = 0
-        for deal in active_deals:
-            if deal.pipeline_alert_sent_at:
-                continue
-            try:
-                cfg = PipelineStageConfig.objects.get(workspace=deal.workspace, slug=deal.stage)
-            except PipelineStageConfig.DoesNotExist:
-                continue
-            if not cfg.follow_up_days:
-                continue
-            days_in_stage = (now - deal.stage_changed_at).days
-            if days_in_stage < cfg.follow_up_days:
-                continue
-            # Send alert
-            try:
-                from tasks.email import send_pipeline_alert
-                send_pipeline_alert(str(deal.id))
-                Deal.objects.filter(pk=deal.pk).update(pipeline_alert_sent_at=now)
-                sent += 1
-            except Exception as e:
-                logger.error(f"Pipeline alert failed for deal {deal.id}: {e}")
-
-    threading.Thread(target=_run, daemon=True).start()
+    threading.Thread(target=dispatch_pipeline_alerts, daemon=True).start()
     return Response({"detail": "ok"})
 
 
