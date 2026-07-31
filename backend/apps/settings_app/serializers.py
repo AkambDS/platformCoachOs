@@ -1,4 +1,3 @@
-from django.conf import settings
 from rest_framework import serializers
 from apps.accounts.models import Workspace
 from apps.pipeline.models import PipelineStageConfig
@@ -35,37 +34,6 @@ class WorkspaceSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "name"]
         extra_kwargs = {"workspace_timezone": {"required": False}}
 
-    def _validate_from_email_domain(self, from_email, label):
-        allowed_domains = getattr(settings, "ALLOWED_FROM_EMAIL_DOMAINS", None)
-        if not allowed_domains or not from_email:
-            return
-        if "@" not in from_email:
-            raise serializers.ValidationError(f"'{label}': from_email must be a valid email address.")
-        domain = from_email.split("@", 1)[1].lower()
-        if domain not in allowed_domains:
-            allowed = ", ".join(sorted(allowed_domains))
-            raise serializers.ValidationError(
-                f"'{label}': from_email domain '{domain}' is not authorized. Allowed domains: {allowed}."
-            )
-
-    def validate_email_templates(self, value):
-        if not isinstance(value, dict):
-            return value
-        for tmpl_key, tmpl in value.items():
-            if isinstance(tmpl, dict):
-                self._validate_from_email_domain(tmpl.get("from_email", "").strip(), tmpl_key)
-        return value
-
-    def validate_generic_templates(self, value):
-        if not isinstance(value, list):
-            return value
-        for tmpl in value:
-            if isinstance(tmpl, dict):
-                self._validate_from_email_domain(
-                    (tmpl.get("from_email") or "").strip(), tmpl.get("name") or tmpl.get("id", "")
-                )
-        return value
-
     def update(self, instance, validated_data):
         instance = super().update(instance, validated_data)
         # Sync any generic-template → use-case assignment into email_templates, so the
@@ -84,7 +52,6 @@ class WorkspaceSerializer(serializers.ModelSerializer):
                 continue
             email_templates[use_case] = {
                 "subject":       tmpl.get("subject", ""),
-                "from_email":    tmpl.get("from_email", ""),
                 "intro":         tmpl.get("intro", ""),
                 "closing":       tmpl.get("closing", ""),
                 "custom_html":   tmpl.get("custom_html", ""),

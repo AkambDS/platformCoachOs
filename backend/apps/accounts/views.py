@@ -375,9 +375,14 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         user = self.get_object()
+        from allauth.socialaccount.models import SocialToken
+        google_calendar_connected = SocialToken.objects.filter(
+            account__user=user, account__provider="google"
+        ).exists()
         return Response({
             "user":      UserSerializer(user).data,
             "workspace": WorkspaceSerializer(user.workspace).data,
+            "google_calendar_connected": google_calendar_connected,
         })
 
     def partial_update(self, request, *args, **kwargs):
@@ -594,3 +599,23 @@ def password_reset_confirm(request):
     user.set_password(password)
     user.save(update_fields=["password"])
     return Response({"detail": "Password updated. You can now sign in with your new password."})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def google_calendar_connect(request):
+    """
+    GET /api/auth/google-calendar/connect/ — full-page browser navigation (not fetch).
+
+    Auth here is JWT-only (CookieJWTAuthentication) — there's no Django session for the
+    logged-in coach. allauth's "connect this provider to my existing account" flow reads
+    request.user from Django's session-based auth, so it would see an anonymous user and
+    fail to attribute the resulting Google account correctly. This bridges the gap by
+    establishing a real Django session for the already-JWT-authenticated user, then handing
+    off to allauth's connect flow.
+    """
+    from django.contrib.auth import login as django_login
+    from django.shortcuts import redirect
+
+    django_login(request, request.user, backend="django.contrib.auth.backends.ModelBackend")
+    return redirect("/accounts/google/login/?process=connect")

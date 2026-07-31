@@ -19,9 +19,6 @@ X_FRAME_OPTIONS             = "DENY" # X-Frame-Options: DENY
 
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
-# ── Authorized custom sender domains ─────────────────────────────────────
-ALLOWED_FROM_EMAIL_DOMAINS = {"rass-consulting.com", "lauratreonze.com"}
-
 # ── Email: AWS SES via SMTP ───────────────────────────────────────────────
 EMAIL_BACKEND     = "django.core.mail.backends.smtp.EmailBackend"
 EMAIL_HOST        = env("EMAIL_HOST",     default="email-smtp.us-east-1.amazonaws.com")

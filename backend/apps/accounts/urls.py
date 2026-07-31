@@ -16,4 +16,5 @@ urlpatterns = [
     path("password-reset/",          views.password_reset_request,  name="auth-password-reset"),
     path("password-reset/confirm/",  views.password_reset_confirm,  name="auth-password-reset-confirm"),
     path("token-info/",              views.token_info,              name="auth-token-info"),
+    path("google-calendar/connect/", views.google_calendar_connect, name="auth-google-calendar-connect"),
 ]

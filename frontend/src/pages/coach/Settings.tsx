@@ -220,6 +220,20 @@ function ProfileTab() {
   const teamMembers: any[] = teamData?.results || teamData || []
   const workspaceOwner = teamMembers.find((m: any) => m.role === 'business_owner')
 
+  const { data: meData } = useQuery({
+    queryKey: ['me-integrations'],
+    queryFn: () => authApi.me().then(r => r.data),
+  })
+  const googleCalendarConnected = !!meData?.google_calendar_connected
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('google_calendar') === 'connected') {
+      show('Google Calendar connected')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
   const [form, setForm] = useState({
     full_name:     user?.full_name     || '',
     user_timezone: (user as any)?.user_timezone || 'America/New_York',
@@ -367,6 +381,35 @@ function ProfileTab() {
             <button className="btn btn-dark" onClick={handleChangePassword} disabled={savingPw}>
               {savingPw ? 'Updating…' : 'Change Password'}
             </button>
+          </div>
+
+          {/* ── Integrations ── */}
+          {secHdr(<CalendarDays size={13} />, 'Integrations')}
+
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 8,
+          }}>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>Google Calendar</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                {googleCalendarConnected
+                  ? 'Connected — sessions sync to your calendar and client RSVPs update automatically.'
+                  : 'Connect to sync scheduled sessions and track client accept/decline responses.'}
+              </div>
+            </div>
+            {googleCalendarConnected ? (
+              <span style={{
+                padding: '5px 14px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+                background: '#e8f5e9', color: '#2d6a2d', whiteSpace: 'nowrap',
+              }}>
+                ✓ Connected
+              </span>
+            ) : (
+              <a href="/api/auth/google-calendar/connect/" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                Connect Google Calendar
+              </a>
+            )}
           </div>
 
         </div>
@@ -1738,7 +1781,7 @@ const CONTRACT_SAMPLE = {
 
 const blankGenericTemplate = () => ({
   id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-  name: '', subject: '', from_email: '', intro: '', closing: '',
+  name: '', subject: '', intro: '', closing: '',
   custom_html: '', disable_style: false, show_logo: true,
   style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '' } as Record<string, any>,
   use_cases: [] as string[],
@@ -1943,11 +1986,6 @@ function GenericTemplatesTab() {
               <label className="flabel">Subject</label>
               <input className="finput" value={editing.subject} onChange={e => setEditing({ ...editing, subject: e.target.value })} placeholder="e.g. A quick note from {workspace_name}" />
             </div>
-            <div className="fgroup">
-              <label className="flabel">From Email <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
-              <input className="finput" value={editing.from_email} onChange={e => setEditing({ ...editing, from_email: e.target.value })} placeholder="hello@yourdomain.com" />
-            </div>
-
             <div className="fgroup">
               <label className="flabel">Body — Opening</label>
               <textarea className="ftextarea" rows={3} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />

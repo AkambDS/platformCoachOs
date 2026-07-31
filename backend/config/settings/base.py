@@ -202,9 +202,14 @@ ACCOUNT_AUTHENTICATION_METHOD = "email"
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "SCOPE": ["profile", "email", "https://www.googleapis.com/auth/calendar"],
-        "AUTH_PARAMS": {"access_type": "offline"},
+        "AUTH_PARAMS": {"access_type": "offline", "prompt": "consent"},
     }
 }
+# Skip allauth's intermediate "Continue" confirmation page — go straight to Google
+# on GET, so the frontend's "Connect Google Calendar" link works in one click.
+SOCIALACCOUNT_LOGIN_ON_GET = True
+# Where allauth sends the browser back after the OAuth connect flow completes.
+LOGIN_REDIRECT_URL = f"{FRONTEND_URL}/settings?google_calendar=connected"
 
 # ── Email ─────────────────────────────────────────────────────────────────
 # Use SMTP when EMAIL_HOST is set (e.g. Mailpit on port 1025 in dev).

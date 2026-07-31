@@ -42,7 +42,6 @@ def _get_invoice_template(invoice) -> dict:
         if tmpl:
             return {
                 "subject":       tmpl.get("subject", ""),
-                "from_email":    tmpl.get("from_email", ""),
                 "intro":         tmpl.get("intro", ""),
                 "closing":       tmpl.get("closing", ""),
                 "custom_html":   tmpl.get("custom_html", ""),
@@ -68,7 +67,6 @@ def _get_activity_confirmation_template(activity) -> dict:
         if tmpl:
             return {
                 "subject":       tmpl.get("subject", ""),
-                "from_email":    tmpl.get("from_email", ""),
                 "intro":         tmpl.get("intro", ""),
                 "closing":       tmpl.get("closing", ""),
                 "custom_html":   tmpl.get("custom_html", ""),
@@ -429,10 +427,7 @@ def send_activity_confirmation_email(activity_id: str):
             f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
         )
         saved_style      = tmpl.get("style", {})
-        custom_from      = tmpl.get("from_email", "").strip()
-        if "@" not in custom_from:
-            custom_from = ""
-        from_email_addr  = custom_from or _workspace_from_email(workspace)
+        from_email_addr  = _workspace_from_email(workspace)
 
         _show_logo = tmpl.get("show_logo", True)
         _eff_logo_url = _logo_src(workspace) if _show_logo else ""
@@ -567,10 +562,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             f"Request reschedule: {reschedule_url}\n\n— {workspace.name}"
         )
         saved_style      = tmpl.get("style", {})
-        custom_from      = tmpl.get("from_email", "").strip()
-        if "@" not in custom_from:
-            custom_from = ""
-        from_email_addr  = custom_from or _workspace_from_email(workspace)
+        from_email_addr  = _workspace_from_email(workspace)
 
         _show_logo = tmpl.get("show_logo", True)
         _eff_logo_url = _logo_src(workspace) if _show_logo else ""
@@ -859,9 +851,6 @@ def send_invoice_email(invoice_id: str):
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
-        custom_from = tmpl.get("from_email", "").strip()
-        if "@" not in custom_from:
-            custom_from = ""
         _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
         tmpl_vars.update(dict(
             intro=custom_intro,
@@ -893,8 +882,7 @@ def send_invoice_email(invoice_id: str):
             owner_name=owner_name,
             style=tmpl.get("style", {}),
         )
-        from_addr = (f"{workspace.name} <{custom_from}>"
-                     if custom_from else _workspace_from_email(workspace))
+        from_addr = _workspace_from_email(workspace)
         pdf_bytes = b""
         try:
             from weasyprint import HTML as WeasyHTML
@@ -1381,10 +1369,7 @@ def send_portal_invite_email(client_id: str):
                          f"Your portal access is ready — {workspace.name}"
 
         saved_style   = tmpl.get("style", {})
-        custom_from   = tmpl.get("from_email", "").strip()
-        if "@" not in custom_from:
-            custom_from = ""
-        from_email_addr = custom_from or _workspace_from_email(workspace)
+        from_email_addr = _workspace_from_email(workspace)
 
         _show_logo = tmpl.get("show_logo", True)
         _eff_logo_url = _logo_src(workspace) if _show_logo else ""
