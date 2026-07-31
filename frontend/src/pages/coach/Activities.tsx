@@ -239,6 +239,30 @@ function NRow({ sent, sentAt, label, pending }: { sent: boolean; sentAt: string 
   )
 }
 
+const RSVP_DISPLAY: Record<string, { label: string; bg: string; fg: string }> = {
+  accepted:  { label: 'Confirmed', bg: '#e8f5e9', fg: '#2d6a2d' },
+  declined:  { label: 'Declined',  bg: '#fef2f2', fg: '#b91c1c' },
+  tentative: { label: 'Tentative', bg: '#fff8e1', fg: '#b8922e' },
+}
+
+function RsvpBadge({ activity }: { activity: any }) {
+  const status = activity.client_confirmed && activity.client_rsvp_status !== 'declined'
+    ? 'accepted'
+    : activity.client_rsvp_status
+  const display = RSVP_DISPLAY[status]
+  if (!display) {
+    return <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>Pending</span>
+  }
+  return (
+    <span style={{
+      padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+      background: display.bg, color: display.fg, whiteSpace: 'nowrap',
+    }}>
+      {display.label}
+    </span>
+  )
+}
+
 function NotificationStatus({ activity }: { activity: any }) {
   const isScheduled = activity.status === 'scheduled'
   const isCancelled = activity.status === 'cancelled'
@@ -272,6 +296,11 @@ function NotificationStatus({ activity }: { activity: any }) {
           label="Cancellation email"
         />
       )}
+      <NRow
+        sent={!!activity.google_cal_uid}
+        sentAt={activity.client_rsvp_synced_at}
+        label={activity.google_cal_uid ? 'Synced to Google Calendar' : 'Not synced (coach not connected)'}
+      />
     </div>
   )
 }
@@ -396,6 +425,9 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
       <div className="kv"><span className="kvl">Client</span><span className="kvv">{activity.client_name}</span></div>
       <div className="kv"><span className="kvl">Type</span><span className="kvv">{(activity.activity_type || '').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></div>
       <div className="kv"><span className="kvl">Status</span><span className="kvv"><StatusBadge status={activity.status} /></span></div>
+      {!isCommunicationLog && (
+        <div className="kv"><span className="kvl">Client Response</span><span className="kvv"><RsvpBadge activity={activity} /></span></div>
+      )}
       <div className="kv"><span className="kvl">Start</span><span className="kvv">{new Date(activity.start_at).toLocaleString()}</span></div>
       {activity.end_at && <div className="kv"><span className="kvl">End</span><span className="kvv">{new Date(activity.end_at).toLocaleString()}</span></div>}
       {activity.location && <div className="kv"><span className="kvl">Location</span><span className="kvv">{activity.location}</span></div>}
@@ -578,6 +610,7 @@ export default function Activities() {
                 <th>Title</th>
                 <th>Location</th>
                 <th>Status</th>
+                <th>Response</th>
                 <th></th>
               </tr>
             </thead>
@@ -620,6 +653,7 @@ export default function Activities() {
                     ) : <span style={{ color: 'var(--border)' }}>—</span>}
                   </td>
                   <td><StatusBadge status={a.status} /></td>
+                  <td>{a.activity_type !== 'client_communication' && <RsvpBadge activity={a} />}</td>
                   <td style={{ textAlign: 'right' }}>
                     <ChevronRight size={14} color="var(--border)" />
                   </td>
