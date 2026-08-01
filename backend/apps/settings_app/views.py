@@ -284,6 +284,13 @@ def email_preview(request):
         time_label="24 hours",
         invoice_number="INV-0042", amount="150.00",
         due_date="June 30, 2026",
+        # Team Invite placeholders — this preview endpoint is always called with
+        # type=client_communication from the Settings editor regardless of which use
+        # case the template is actually assigned to, and str.format() fails (and
+        # silently returns the raw unsubstituted text) if ANY placeholder in the text
+        # is missing from this dict — so every use case's placeholders must live here.
+        invited_by_name="Coach Mike", role="Coach", accept_url="#",
+        owner_name="Coach Mike", owner_email="owner@example.com",
     )
     if email_type == "client_communication":
         # Real client name (not the generic Jane Smith placeholder) — lets a coach
