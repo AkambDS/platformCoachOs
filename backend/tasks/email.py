@@ -52,11 +52,12 @@ def _get_invoice_template(invoice) -> dict:
     return (workspace.email_templates or {}).get("invoice", {})
 
 
-def _get_activity_confirmation_template(activity) -> dict:
-    """Resolve which template dict drives this activity's booking confirmation email —
-    mirrors _get_invoice_template. A per-activity override (activity.email_template_id,
-    set from the "Email template" picker on the schedule form) takes precedence over the
-    workspace's default "confirmation" slot (Settings > Generic Templates)."""
+def _get_activity_template(activity, use_case: str) -> dict:
+    """Resolve which template dict drives one of this activity's emails — mirrors
+    _get_invoice_template. A per-activity override (activity.email_template_id, set from
+    the "Email template" picker on the schedule/edit form — whichever was chosen most
+    recently) takes precedence over the workspace's default template for that use case
+    (Settings > Generic Templates), e.g. use_case="confirmation" or "reschedule"."""
     workspace = activity.workspace
     if activity.email_template_id:
         tmpl = next(
@@ -74,7 +75,36 @@ def _get_activity_confirmation_template(activity) -> dict:
                 "show_logo":     tmpl.get("show_logo", True),
                 "style":         tmpl.get("style", {}),
             }
-    return (workspace.email_templates or {}).get("confirmation", {})
+    return (workspace.email_templates or {}).get(use_case, {})
+
+
+def _get_activity_confirmation_template(activity) -> dict:
+    return _get_activity_template(activity, "confirmation")
+
+
+def _get_invite_template(invitation) -> dict:
+    """Resolve which template dict drives this team invite's email — mirrors
+    _get_invoice_template. A per-invite override (invitation.email_template_id, set from
+    the "Email template" picker on the Invite Team Member modal) takes precedence over
+    the workspace's default "team_invite" slot (Settings > Generic Templates)."""
+    workspace = invitation.workspace
+    if invitation.email_template_id:
+        tmpl = next(
+            (t for t in (workspace.generic_templates or [])
+             if isinstance(t, dict) and t.get("id") == invitation.email_template_id),
+            None,
+        )
+        if tmpl:
+            return {
+                "subject":       tmpl.get("subject", ""),
+                "intro":         tmpl.get("intro", ""),
+                "closing":       tmpl.get("closing", ""),
+                "custom_html":   tmpl.get("custom_html", ""),
+                "disable_style": tmpl.get("disable_style", False),
+                "show_logo":     tmpl.get("show_logo", True),
+                "style":         tmpl.get("style", {}),
+            }
+    return (workspace.email_templates or {}).get("team_invite", {})
 
 
 def _owner_info(workspace) -> tuple:
@@ -349,17 +379,34 @@ def send_invite_email(invitation_id: str):
             f"Accept here: {accept_url}\n\nThis link expires in 48 hours."
         )
         owner_email, owner_name = _owner_info(workspace)
-        html = build_invite_email(
-            invited_by_name=invite.invited_by.full_name,
-            workspace_name=workspace.name,
-            role_display=invite.get_role_display(),
+        tmpl = _get_invite_template(invite)
+        tmpl_vars = dict(
+            invited_by_name=invite.invited_by.full_name, workspace_name=workspace.name,
+            role=invite.get_role_display(), owner_email=owner_email, owner_name=owner_name or owner_email,
             accept_url=accept_url,
-            logo_url=_logo_src(workspace),
-            invited_email=invite.email,
-            owner_email=owner_email,
         )
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"You're invited to join {workspace.name} on CoachOS"
+        custom_html = tmpl.get("custom_html", "").strip()
+        if custom_html:
+            html = _apply_tmpl(custom_html, **tmpl_vars)
+        else:
+            custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+            custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+            html = build_invite_email(
+                invited_by_name=invite.invited_by.full_name,
+                workspace_name=workspace.name,
+                role_display=invite.get_role_display(),
+                accept_url=accept_url,
+                logo_url=_logo_src(workspace),
+                invited_email=invite.email,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=tmpl.get("style", {}),
+            )
         msg = EmailMultiAlternatives(
-            subject=f"You're invited to join {workspace.name} on CoachOS",
+            subject=subject,
             body=plain,
             from_email=_workspace_from_email(workspace),
             to=[invite.email],
@@ -692,14 +739,23 @@ def send_activity_reschedule_email(activity_id: str):
         owner_email, owner_name = _owner_info(workspace)
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
+        tmpl_vars = dict(
+            client_name=client.full_name, coach_name=coach_name,
+            session_title=activity.title, session_time=dt,
+            workspace_name=workspace.name,
+        )
+        tmpl = _get_activity_template(activity, "reschedule")
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Updated: {activity.title} with {coach_name}"
+
         google_connected = _coach_has_google_calendar(activity.coach)
 
         from apps.activities.tokens import make_session_token
         backend_url    = getattr(settings, "BACKEND_URL", "").rstrip("/")
         if google_connected:
-            confirm_url = cancel_url = reschedule_url = ""
+            cancel_url = reschedule_url = ""
         else:
-            confirm_url    = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
             cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
             reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
@@ -715,26 +771,59 @@ def send_activity_reschedule_email(activity_id: str):
                 f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
                 f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
                 f"A new calendar invite is attached. Open it to update your calendar.\n\n"
-                f"Confirm attendance: {confirm_url}\n"
                 f"Request reschedule: {reschedule_url}\n"
                 f"Cancel session:     {cancel_url}\n\n"
                 f"— {workspace.name}"
             )
-        html = build_reschedule_email(
-            activity=activity,
-            workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
-            coach_name=coach_name,
-            coach_email=coach_email,
-            dt_human=dt,
-            owner_email=owner_email,
-            owner_name=owner_name,
-            google_cal_url=_build_google_cal_url(activity),
-        )
+        saved_style     = tmpl.get("style", {})
+        _show_logo      = tmpl.get("show_logo", True)
+        _eff_logo_url   = _logo_src(workspace) if _show_logo else ""
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            _ds = tmpl.get("disable_style", True)
+            _bf = saved_style.get("body_font", "")
+            _hf = saved_style.get("heading_font", "")
+            _logo_img = (
+                f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+                f'<img src="{_eff_logo_url}" alt="{workspace.name}" '
+                f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+                f'</td></tr></table>'
+            ) if _eff_logo_url else ""
+            _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+            tmpl_vars.update(dict(
+                header_bg="#1a2f4e" if _ds else saved_style.get("header_bg", "#1a2f4e"),
+                accent_color="#b8922e" if _ds else saved_style.get("accent_color", "#b8922e"),
+                value_color="#1a1714" if _ds else saved_style.get("value_color", "#1a1714"),
+                body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if _ds else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+                heading_font_css="Georgia,'Times New Roman',serif" if _ds else (_hf or "Georgia,'Times New Roman',serif"),
+                logo_img=_logo_img,
+                intro=custom_intro, closing=custom_closing,
+                intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+                closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            ))
+            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html = build_reschedule_email(
+                activity=activity,
+                workspace_name=workspace.name,
+                logo_url=_eff_logo_url,
+                coach_name=coach_name,
+                coach_email=coach_email,
+                dt_human=dt,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                google_cal_url=_build_google_cal_url(activity),
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                cancel_url=cancel_url,
+                reschedule_url=reschedule_url,
+                style=saved_style,
+            )
         ics_bytes = _build_ics(activity, method="PUBLISH")
 
         msg = EmailMultiAlternatives(
-            subject=f"Updated: {activity.title} with {coach_name}",
+            subject=subject,
             body=plain,
             from_email=_workspace_from_email(workspace),
             to=[client.email],

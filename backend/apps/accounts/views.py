@@ -261,6 +261,7 @@ def invite_user(request):
         email=serializer.validated_data["email"],
         role=serializer.validated_data["role"],
         expires_at=timezone.now() + timedelta(hours=48),
+        email_template_id=(request.data.get("email_template_id") or "").strip(),
     )
 
     # Send invite email synchronously (no Celery worker needed)
@@ -282,30 +283,58 @@ def invite_user(request):
 @permission_classes([IsBusinessOwner])
 def invite_email_preview(request):
     """
-    GET /api/auth/invite-email-preview/?email=x&role=coach
-    Returns HTML preview of the invite email.
+    GET /api/auth/invite-email-preview/?email=x&role=coach&template_id=...
+    Returns HTML preview of the invite email. template_id previews a specific saved
+    generic template (falling back to the workspace's default "team_invite" slot, then
+    the hardcoded layout) — mirrors _get_invite_template but with no real Invitation row
+    to resolve from yet at preview time.
     """
-    from tasks.email import _logo_url, _owner_info
+    from tasks.email import _logo_url, _owner_info, _apply_tmpl
     from tasks.email_html import build_invite_email
     from django.conf import settings as dj_settings
 
     email = request.query_params.get("email", "colleague@example.com")
     role  = request.query_params.get("role", "coach")
+    template_id = request.query_params.get("template_id", "")
     workspace = request.user.workspace
 
-    role_labels = {"business_owner": "Business Owner", "coach": "Coach", "assistant": "Assistant"}
+    role_labels = {"business_owner": "Business Owner", "coach": "Coach", "assistant": "Assistant", "limited": "Limited"}
+    role_display = role_labels.get(role, role.capitalize())
     frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
     owner_email, owner_name = _owner_info(workspace)
+    accept_url = f"{frontend_url}/accept-invite?token=preview-token"
 
-    html = build_invite_email(
-        invited_by_name=request.user.full_name,
-        workspace_name=workspace.name,
-        role_display=role_labels.get(role, role.capitalize()),
-        accept_url=f"{frontend_url}/accept-invite?token=preview-token",
-        logo_url=_logo_url(workspace),
-        invited_email=email,
-        owner_email=owner_email,
+    tmpl = {}
+    if template_id:
+        tmpl = next(
+            (t for t in (workspace.generic_templates or [])
+             if isinstance(t, dict) and t.get("id") == template_id), {}
+        ) or {}
+    if not tmpl:
+        tmpl = (workspace.email_templates or {}).get("team_invite", {})
+
+    tmpl_vars = dict(
+        invited_by_name=request.user.full_name, workspace_name=workspace.name,
+        role=role_display, owner_email=owner_email, owner_name=owner_name or owner_email,
+        accept_url=accept_url,
     )
+    custom_html = (tmpl.get("custom_html") or "").strip()
+    if custom_html:
+        html = _apply_tmpl(custom_html, **tmpl_vars)
+    else:
+        html = build_invite_email(
+            invited_by_name=request.user.full_name,
+            workspace_name=workspace.name,
+            role_display=role_display,
+            accept_url=accept_url,
+            logo_url=_logo_url(workspace),
+            invited_email=email,
+            owner_email=owner_email,
+            owner_name=owner_name,
+            custom_intro=_apply_tmpl(tmpl.get("intro", ""), **tmpl_vars),
+            custom_closing=_apply_tmpl(tmpl.get("closing", ""), **tmpl_vars),
+            style=tmpl.get("style", {}),
+        )
     return Response({"html": html})
 
 
@@ -344,15 +373,28 @@ def accept_invite(request):
             )
         user = existing
     else:
+        # Created inactive — team members can set their password and land here, but
+        # can't actually log in (is_active gates both cookie-issuance below and every
+        # subsequent JWT-authenticated request, see CookieJWTAuthentication) until the
+        # workspace owner explicitly grants access from the Team page. Mirrors the
+        # Client portal's invite/revoke pattern.
         user = User.objects.create_user(
             email=invitation.email,
             password=serializer.validated_data["password"],
             full_name=serializer.validated_data["full_name"],
             workspace=invitation.workspace,
             role=invitation.role,
+            is_active=False,
         )
         invitation.accepted = True
         invitation.save()
+
+    if not user.is_active:
+        return Response({
+            "detail": "Password set. Your account is awaiting approval from your workspace owner "
+                       "before you can log in.",
+            "pending_approval": True,
+        }, status=status.HTTP_201_CREATED)
 
     from rest_framework_simplejwt.tokens import RefreshToken
     refresh = RefreshToken.for_user(user)
@@ -439,14 +481,18 @@ def team_member_detail(request, pk):
         update_fields = []
         role = request.data.get("role")
         if role is not None:
-            if role not in ("coach", "assistant"):
-                return Response({"detail": "Role must be 'coach' or 'assistant'."}, status=400)
+            if role not in ("coach", "assistant", "limited"):
+                return Response({"detail": "Role must be 'coach', 'assistant', or 'limited'."}, status=400)
             member.role = role
             update_fields.append("role")
         is_active = request.data.get("is_active")
         if is_active is not None:
             member.is_active = bool(is_active)
             update_fields.append("is_active")
+        for field in ("phone", "address", "city", "state", "zip_code"):
+            if field in request.data:
+                setattr(member, field, request.data.get(field) or "")
+                update_fields.append(field)
         if not update_fields:
             return Response({"detail": "No valid fields to update."}, status=400)
         member.save(update_fields=update_fields)
@@ -455,6 +501,48 @@ def team_member_detail(request, pk):
     # DELETE
     member.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+@api_view(["GET", "PUT"])
+@permission_classes([IsBusinessOwner])
+def team_member_permissions(request, pk):
+    """
+    GET /api/auth/team/<pk>/permissions/  — effective view/edit/delete access per tab
+        (role defaults merged with any saved overrides).
+    PUT /api/auth/team/<pk>/permissions/   — set explicit overrides. Body:
+        {"clients": {"view": true, "edit": false, "delete": false}, ...}
+        Only tabs included in the body are written; omitted tabs keep their current value.
+    Business Owner only. Business Owner/Platform Admin members can't be targeted — they
+    always have full access and never consult this table.
+    """
+    from .models import TabPermission
+    from .permissions import ALL_TABS, get_effective_tab_permissions
+
+    try:
+        member = User.objects.get(id=pk, workspace=request.user.workspace)
+    except User.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if member.role in ("business_owner", "platform_admin"):
+        return Response({"detail": "This member already has full access to every section."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    if request.method == "GET":
+        return Response(get_effective_tab_permissions(member))
+
+    # PUT
+    for tab, perms in (request.data or {}).items():
+        if tab not in ALL_TABS or not isinstance(perms, dict):
+            continue
+        TabPermission.objects.update_or_create(
+            workspace=request.user.workspace, user=member, tab=tab,
+            defaults={
+                "can_view":   bool(perms.get("view", False)),
+                "can_edit":   bool(perms.get("edit", False)),
+                "can_delete": bool(perms.get("delete", False)),
+            },
+        )
+    return Response(get_effective_tab_permissions(member))
 
 
 @api_view(["POST"])

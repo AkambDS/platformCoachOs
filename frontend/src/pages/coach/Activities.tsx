@@ -78,6 +78,11 @@ function ActivityFormModal({
   })
   const { workspace } = useAuthStore()
   const genericTemplates: any[] = (workspace as any)?.generic_templates || []
+  // Only offer templates actually assigned to the relevant slot — other use cases
+  // (Invoice, Portal Invite, Team Invite, …) use a different placeholder set, so picking
+  // one here would leave those placeholders literally unsubstituted in the sent email.
+  const confirmationTemplates = genericTemplates.filter((t: any) => t.use_cases?.includes('confirmation'))
+  const rescheduleTemplates   = genericTemplates.filter((t: any) => t.use_cases?.includes('reschedule'))
   const clients: any[] = clientsData?.results || clientsData || []
   const isEdit = !!initial?.id
 
@@ -92,6 +97,7 @@ function ActivityFormModal({
     notes:         initial?.notes         || '',
   })
   const [sendConfirmation, setSendConfirmation] = useState(!isEdit)
+  const [sendUpdate, setSendUpdate] = useState(true)
   const [emailTemplateId, setEmailTemplateId] = useState('')
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
@@ -104,7 +110,7 @@ function ActivityFormModal({
     const payload = { ...form, start_at: toUTC(form.start_at), end_at: form.end_at ? toUTC(form.end_at) : form.end_at }
     try {
       if (isEdit) {
-        await activitiesApi.patch(initial.id, payload)
+        await activitiesApi.patch(initial.id, { ...payload, send_update: sendUpdate, email_template_id: emailTemplateId })
         onSaved()
       } else {
         await activitiesApi.create({ ...payload, send_confirmation: sendConfirmation, email_template_id: emailTemplateId })
@@ -199,12 +205,57 @@ function ActivityFormModal({
           </label>
         </div>
       )}
-      {!isEdit && sendConfirmation && genericTemplates.length > 0 && (
+      {!isEdit && sendConfirmation && genericTemplates.length > 0 && confirmationTemplates.length === 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+          No saved template is assigned to Booking Confirmation yet — open Settings → Generic Templates,
+          edit (or create) one, and assign it to "Booking Confirmation" to make it selectable here.
+        </div>
+      )}
+      {!isEdit && sendConfirmation && confirmationTemplates.length > 0 && (
         <div className="fgroup" style={{ marginTop: 10 }}>
           <label className="flabel">Email template</label>
           <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
             <option value="">Default (Settings → Generic Templates → Booking Confirmation)</option>
-            {genericTemplates.map((t: any) => (
+            {confirmationTemplates.map((t: any) => (
+              <option key={t.id} value={t.id}>{t.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
+      {isEdit && (
+        <div style={{
+          marginTop: 16, padding: '12px 14px',
+          background: 'var(--paper)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center', gap: 12,
+        }}>
+          <input
+            id="send_update"
+            type="checkbox"
+            checked={sendUpdate}
+            onChange={e => setSendUpdate(e.target.checked)}
+            style={{ width: 16, height: 16, cursor: 'pointer', accentColor: 'var(--gold)' }}
+          />
+          <label htmlFor="send_update" style={{ fontSize: 13, cursor: 'pointer', lineHeight: 1.4 }}>
+            <span style={{ fontWeight: 500, color: 'var(--ink)' }}>Send reschedule email + updated calendar invite</span>
+            <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
+              Only sends if the date, time, title, or location actually changed.
+            </span>
+          </label>
+        </div>
+      )}
+      {isEdit && sendUpdate && genericTemplates.length > 0 && rescheduleTemplates.length === 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+          No saved template is assigned to Reschedule Notice yet — open Settings → Generic Templates,
+          edit (or create) one, and assign it to "Reschedule Notice" to make it selectable here.
+        </div>
+      )}
+      {isEdit && sendUpdate && rescheduleTemplates.length > 0 && (
+        <div className="fgroup" style={{ marginTop: 10 }}>
+          <label className="flabel">Email template</label>
+          <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
+            <option value="">Default (Settings → Generic Templates → Reschedule Notice)</option>
+            {rescheduleTemplates.map((t: any) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
@@ -324,6 +375,7 @@ function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }
 
   const EMAIL_TYPES = [
     { value: 'confirmation', label: 'Confirmation' },
+    { value: 'reschedule',   label: 'Reschedule' },
     { value: 'reminder',     label: 'Reminder (24h)' },
     { value: 'cancellation', label: 'Cancellation' },
   ]

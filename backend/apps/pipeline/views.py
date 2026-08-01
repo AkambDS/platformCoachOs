@@ -3,7 +3,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from .models import Deal, StageHistory, DealProgress
 from .serializers import DealSerializer, AdvanceStageSerializer
-from apps.accounts.permissions import IsAssistantOrAbove
+from apps.accounts.permissions import IsAssistantOrAbove, require_tab
 
 TRACKED_FIELDS = ["deal_value", "deal_type", "source", "notes", "tags",
                   "expected_close_date", "probability", "next_action", "next_action_date"]
@@ -18,6 +18,13 @@ class DealViewSet(viewsets.ModelViewSet):
     """
     serializer_class   = DealSerializer
     permission_classes = [IsAssistantOrAbove]
+
+    def get_permissions(self):
+        if self.action == "destroy":
+            return [IsAssistantOrAbove(), require_tab("pipeline", "delete")()]
+        if self.action in ("create", "update", "partial_update", "advance"):
+            return [IsAssistantOrAbove(), require_tab("pipeline", "edit")()]
+        return [IsAssistantOrAbove(), require_tab("pipeline", "view")()]
 
     def get_queryset(self):
         user = self.request.user

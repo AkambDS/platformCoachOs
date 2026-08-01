@@ -938,6 +938,10 @@ export default function InvoiceDetail() {
     queryKey: ['workspace'],
     queryFn: () => settingsApi.getWorkspace().then(r => r.data),
   })
+  // Only templates assigned to the Invoice slot — other use cases use a different
+  // placeholder set, so picking one here leaves those placeholders literal.
+  const invoiceTemplates = ((workspace as any)?.generic_templates || [])
+    .filter((t: any) => t.use_cases?.includes('invoice'))
 
   const handleSend = async () => {
     setSending(true)
@@ -1360,7 +1364,13 @@ ${el.innerHTML}
               <strong>{inv.client_name}</strong>
               {inv.client_email && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {inv.client_email}</span>}
             </div>
-            {(((workspace as any)?.generic_templates || []).length > 0) && (
+            {((workspace as any)?.generic_templates?.length > 0) && invoiceTemplates.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+                No saved template is assigned to Invoice yet — open Settings → Generic Templates,
+                edit (or create) one, and assign it to "Invoice" to make it selectable here.
+              </div>
+            )}
+            {invoiceTemplates.length > 0 && (
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12 }}>
                 <span style={{ fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', fontSize: 10, flexShrink: 0 }}>EMAIL TEMPLATE</span>
                 <select
@@ -1371,7 +1381,7 @@ ${el.innerHTML}
                   onChange={e => handleChangeTemplate(e.target.value)}
                 >
                   <option value="">Default (Settings → Generic Templates → Invoice)</option>
-                  {((workspace as any)?.generic_templates || []).map((t: any) => (
+                  {invoiceTemplates.map((t: any) => (
                     <option key={t.id} value={t.id}>{t.name}</option>
                   ))}
                 </select>

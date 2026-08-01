@@ -260,8 +260,8 @@ def email_preview(request):
     the user has typed in the editor, not what's committed to the DB.
     """
     from types import SimpleNamespace
-    from tasks.email_html import (build_confirmation_email, build_reminder_email, build_invoice_email,
-                                   build_portal_invite_email, build_client_communication_email)
+    from tasks.email_html import (build_confirmation_email, build_reschedule_email, build_reminder_email,
+                                   build_invoice_email, build_portal_invite_email, build_client_communication_email)
     from tasks.email import _logo_src, _owner_info
 
     email_type = request.query_params.get("type", "confirmation")
@@ -348,6 +348,21 @@ def email_preview(request):
             location="123 Main St", notes="", client=client,
         )
         html = build_confirmation_email(
+            activity=activity, workspace_name=workspace.name, logo_url=logo_url,
+            coach_name="Coach Mike", coach_email="",
+            dt_human="Wednesday, June 5 at 10:00 AM",
+            owner_email=owner_email, owner_name=owner_name,
+            google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
+        )
+
+    elif email_type == "reschedule":
+        client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        activity = SimpleNamespace(
+            title="Discovery Session", activity_type="session",
+            location="123 Main St", notes="", client=client,
+        )
+        html = build_reschedule_email(
             activity=activity, workspace_name=workspace.name, logo_url=logo_url,
             coach_name="Coach Mike", coach_email="",
             dt_human="Wednesday, June 5 at 10:00 AM",

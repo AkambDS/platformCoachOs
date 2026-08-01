@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from .models import Activity
 from .serializers import ActivitySerializer
-from apps.accounts.permissions import IsAssistantOrAbove
+from apps.accounts.permissions import IsAssistantOrAbove, require_tab
 
 
 class ActivityViewSet(viewsets.ModelViewSet):
@@ -19,6 +19,13 @@ class ActivityViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAssistantOrAbove]
     filter_backends    = [DjangoFilterBackend]
     filterset_fields   = ["activity_type", "status", "client", "coach"]
+
+    def get_permissions(self):
+        if self.action == "destroy":
+            return [IsAssistantOrAbove(), require_tab("activities", "delete")()]
+        if self.action in ("create", "update", "partial_update", "mark_missed", "cancel"):
+            return [IsAssistantOrAbove(), require_tab("activities", "edit")()]
+        return [IsAssistantOrAbove(), require_tab("activities", "view")()]
 
     def get_queryset(self):
         user = self.request.user
@@ -101,7 +108,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
         """
         from tasks.email import _logo_url, _fmt_dt_human, _owner_info
         from tasks.email_html import (
-            build_confirmation_email, build_reminder_email, build_cancellation_email
+            build_confirmation_email, build_reschedule_email, build_reminder_email, build_cancellation_email
         )
         activity   = self.get_object()
         email_type = request.query_params.get("type", "confirmation")
@@ -118,6 +125,12 @@ class ActivityViewSet(viewsets.ModelViewSet):
                 logo_url=logo_url, coach_name=coach_name, coach_email=coach_email,
                 dt_human=dt_human, time_label="24 hours",
                 owner_email=owner_email, owner_name=owner_name,
+            )
+        elif email_type == "reschedule":
+            html = build_reschedule_email(
+                activity=activity, workspace_name=workspace.name,
+                logo_url=logo_url, coach_name=coach_name, coach_email=coach_email,
+                dt_human=dt_human, owner_email=owner_email, owner_name=owner_name,
             )
         elif email_type == "cancellation":
             html = build_cancellation_email(

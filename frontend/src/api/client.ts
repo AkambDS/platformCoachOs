@@ -35,8 +35,8 @@ export const authApi = {
   me:                 ()       => api.get('/api/auth/me/'),
   updateMe:           (d: any) => api.patch('/api/auth/me/', d),
   invite:             (d: any) => api.post('/api/auth/invite/', d),
-  inviteEmailPreview: (email: string, role: string) =>
-    api.get('/api/auth/invite-email-preview/', { params: { email, role } }),
+  inviteEmailPreview: (email: string, role: string, templateId?: string) =>
+    api.get('/api/auth/invite-email-preview/', { params: { email, role, template_id: templateId || undefined } }),
   acceptInvite:          (d: any) => api.post('/api/auth/accept-invite/', d),
   passwordResetRequest:  (d: any) => api.post('/api/auth/password-reset/', d),
   passwordResetConfirm:  (d: any) => api.post('/api/auth/password-reset/confirm/', d),
@@ -45,6 +45,8 @@ export const authApi = {
   addCoach:           (d: any)             => api.post('/api/auth/team/add-coach/', d),
   updateMember:       (id: string, d: any) => api.patch(`/api/auth/team/${id}/`, d),
   deleteMember:       (id: string)         => api.delete(`/api/auth/team/${id}/`),
+  getMemberPermissions: (id: string)         => api.get(`/api/auth/team/${id}/permissions/`),
+  setMemberPermissions: (id: string, d: any) => api.put(`/api/auth/team/${id}/permissions/`, d),
 }
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),

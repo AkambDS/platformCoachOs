@@ -7,13 +7,21 @@ from rest_framework.response import Response
 from django.utils import timezone
 from .models import Invoice, Payment, ServiceCatalogItem
 from .serializers import InvoiceListSerializer, InvoiceDetailSerializer, PaymentSerializer
-from apps.accounts.permissions import IsCoachOrAbove
+from apps.accounts.permissions import IsCoachOrAbove, IsAssistantOrAbove, require_tab
 
 logger = logging.getLogger(__name__)
 
 
 class InvoiceViewSet(viewsets.ModelViewSet):
-    permission_classes = [IsCoachOrAbove]
+    permission_classes = [IsAssistantOrAbove]
+
+    def get_permissions(self):
+        if self.action == "destroy":
+            return [IsAssistantOrAbove(), require_tab("invoices", "delete")()]
+        if self.action in ("create", "update", "partial_update", "send_invoice",
+                            "record_payment", "void_invoice", "issue_refund", "send_reminder"):
+            return [IsAssistantOrAbove(), require_tab("invoices", "edit")()]
+        return [IsAssistantOrAbove(), require_tab("invoices", "view")()]
 
     def perform_create(self, serializer):
         workspace = self.request.user.workspace

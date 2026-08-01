@@ -418,336 +418,6 @@ function ProfileTab() {
   )
 }
 
-// ── Team Tab ───────────────────────────────────────────────────────────────────
-function TeamTab() {
-  const { user: currentUser } = useAuthStore()
-  const { show } = useToast()
-  const qc = useQueryClient()
-  const [showInvite, setShowInvite] = useState(false)
-  const [inviteForm, setInviteForm] = useState({ email: '', role: 'coach' })
-  const [inviting, setInviting] = useState(false)
-  const [inviteError, setInviteError] = useState('')
-  const [showEmailPreview, setShowEmailPreview] = useState(false)
-  const [previewHtml, setPreviewHtml] = useState('')
-  const [previewLoading, setPreviewLoading] = useState(false)
-
-  const [editTarget, setEditTarget] = useState<any | null>(null)
-  const [editRole, setEditRole] = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [deleteTarget, setDeleteTarget] = useState<any | null>(null)
-  const [deleting, setDeleting] = useState(false)
-
-  const handleEditSave = async () => {
-    if (!editTarget) return
-    setEditSaving(true)
-    try {
-      await authApi.updateMember(editTarget.id, { role: editRole })
-      qc.invalidateQueries({ queryKey: ['team'] })
-      setEditTarget(null)
-      show(`${editTarget.full_name}'s role updated to ${ROLE_LABELS[editRole]}`)
-    } catch (err: any) {
-      show(err.response?.data?.detail || 'Failed to update role', 'error')
-    } finally { setEditSaving(false) }
-  }
-
-  const handleDelete = async () => {
-    if (!deleteTarget) return
-    setDeleting(true)
-    try {
-      await authApi.deleteMember(deleteTarget.id)
-      qc.invalidateQueries({ queryKey: ['team'] })
-      setDeleteTarget(null)
-      show(`${deleteTarget.full_name} removed from team`)
-    } catch (err: any) {
-      show(err.response?.data?.detail || 'Failed to remove member', 'error')
-    } finally { setDeleting(false) }
-  }
-
-  const { data, isLoading } = useQuery({
-    queryKey: ['team'],
-    queryFn: () => authApi.team().then(r => r.data),
-  })
-  const members: any[] = data?.results || data || []
-
-  const handleInvite = async () => {
-    setInviteError('')
-    if (!inviteForm.email) return
-    setInviting(true)
-    try {
-      await authApi.invite(inviteForm)
-      qc.invalidateQueries({ queryKey: ['team'] })
-      setShowInvite(false)
-      setInviteForm({ email: '', role: 'coach' })
-      show(`Invitation sent to ${inviteForm.email}`)
-    } catch (err: any) {
-      setInviteError(err.response?.data?.email?.[0] || err.response?.data?.detail || 'Failed to send invite')
-    } finally { setInviting(false) }
-  }
-
-  const isOwner = currentUser?.role === 'business_owner'
-
-  return (
-    <div style={{ maxWidth: 640 }}>
-      <div className="card">
-        <div className="card-hdr" style={{ justifyContent: 'space-between' }}>
-          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Mail size={14} /> Team Members</span>
-          {isOwner && (
-            <button className="btn btn-dark btn-sm" onClick={() => setShowInvite(true)}>
-              <Plus size={12} /> Invite Member
-            </button>
-          )}
-        </div>
-        <div className="card-body" style={{ padding: 0 }}>
-          {isLoading ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
-          ) : members.length === 0 ? (
-            <div style={{ padding: 24, textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No team members yet.</div>
-          ) : members.map((m: any) => {
-            const isPending = m.is_active === false
-            return (
-            <div key={m.id} style={{
-              display: 'flex', alignItems: 'center', gap: 14, padding: '12px 18px',
-              borderBottom: '1px solid var(--border)',
-              background: isPending ? '#fafaf8' : 'transparent',
-            }}>
-              {/* Avatar circle */}
-              <div style={{
-                width: 36, height: 36, borderRadius: '50%',
-                background: isPending ? '#f0ede8' : (ROLE_COLORS[m.role] + '22'),
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, fontWeight: 600,
-                color: isPending ? '#b5afa6' : (ROLE_COLORS[m.role] || 'var(--muted)'),
-                flexShrink: 0, opacity: isPending ? 0.7 : 1,
-              }}>
-                {m.full_name?.charAt(0)?.toUpperCase() || '?'}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 500, color: isPending ? 'var(--muted)' : 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                  {m.full_name}
-                  {m.id === currentUser?.id && (
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontWeight: 400 }}>(you)</span>
-                  )}
-                  {isPending && (
-                    <span style={{
-                      fontSize: 10, fontWeight: 600, letterSpacing: '.06em', textTransform: 'uppercase',
-                      padding: '1px 7px', borderRadius: 10,
-                      background: '#fff3cd', color: '#856404', border: '1px solid #ffc10740',
-                    }}>
-                      Pending Login
-                    </span>
-                  )}
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{m.email}</div>
-              </div>
-              <span style={{
-                padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0,
-                background: isPending ? '#f0ede8' : ((ROLE_COLORS[m.role] || '#8c8279') + '18'),
-                color: isPending ? '#8c8279' : (ROLE_COLORS[m.role] || 'var(--muted)'),
-              }}>
-                {ROLE_LABELS[m.role] || m.role}
-              </span>
-              {isOwner && m.id !== currentUser?.id && m.role !== 'business_owner' && (
-                <div style={{ display: 'flex', gap: 4, marginLeft: 4, alignItems: 'center' }}>
-                  {isPending ? (
-                    <button
-                      onClick={async () => {
-                        try {
-                          await authApi.updateMember(m.id, { is_active: true })
-                          qc.invalidateQueries({ queryKey: ['team'] })
-                          show(`${m.full_name} activated`)
-                        } catch { show('Failed to activate', 'error') }
-                      }}
-                      title="Activate coach portal access"
-                      style={{
-                        padding: '4px 10px', borderRadius: 5, border: '1px solid #c9a84c',
-                        background: '#fffbf0', color: '#856404', fontSize: 10, fontWeight: 700,
-                        letterSpacing: '.06em', textTransform: 'uppercase', cursor: 'pointer',
-                      }}
-                    >
-                      Activate
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => { setEditTarget(m); setEditRole(m.role) }}
-                      title="Change role"
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
-                      onMouseEnter={e => (e.currentTarget.style.color = 'var(--ink)')}
-                      onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
-                    >
-                      <Pencil size={13} />
-                    </button>
-                  )}
-                  <button
-                    onClick={() => setDeleteTarget(m)}
-                    title="Remove from team"
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: 'var(--muted)', borderRadius: 'var(--radius-sm)', display: 'flex', alignItems: 'center' }}
-                    onMouseEnter={e => (e.currentTarget.style.color = '#b91c1c')}
-                    onMouseLeave={e => (e.currentTarget.style.color = 'var(--muted)')}
-                  >
-                    <Trash2 size={13} />
-                  </button>
-                </div>
-              )}
-            </div>
-            )
-          })}
-        </div>
-      </div>
-
-      {/* Role legend */}
-      <div style={{ marginTop: 16, padding: '14px 16px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)' }}>
-        <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Role Permissions</div>
-        {[
-          { role: 'business_owner', label: 'Business Owner', desc: 'Full access — clients, sessions, invoices, reports, billing, team invites.' },
-          { role: 'coach',          label: 'Coach',          desc: 'Manage clients, schedule sessions, create invoices. No billing or team settings.' },
-          { role: 'assistant',      label: 'Assistant',      desc: 'Schedule sessions and view data. Cannot create invoices or access reports.' },
-        ].map(r => (
-          <div key={r.role} style={{ display: 'flex', gap: 10, marginBottom: 8 }}>
-            <span style={{ padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600, flexShrink: 0, alignSelf: 'flex-start', background: ROLE_COLORS[r.role] + '18', color: ROLE_COLORS[r.role] }}>
-              {r.label}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>{r.desc}</span>
-          </div>
-        ))}
-      </div>
-
-      {/* Edit Role Modal */}
-      {editTarget && (
-        <Modal
-          title="Change Role"
-          onClose={() => setEditTarget(null)}
-          footer={
-            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
-              <button className="btn btn-dark btn-sm" onClick={handleEditSave} disabled={editSaving}>
-                {editSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          }
-        >
-          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
-            Updating role for <strong style={{ color: 'var(--ink)' }}>{editTarget.full_name}</strong>
-          </p>
-          <div className="fgroup">
-            <label className="flabel">Role</label>
-            <select className="fselect" value={editRole} onChange={e => setEditRole(e.target.value)}>
-              <option value="coach">Coach — manage clients &amp; sessions</option>
-              <option value="assistant">Assistant — scheduling &amp; view only</option>
-            </select>
-          </div>
-        </Modal>
-      )}
-
-      {/* Delete Confirmation Modal */}
-      {deleteTarget && (
-        <Modal
-          title="Remove Team Member"
-          onClose={() => setDeleteTarget(null)}
-          footer={
-            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
-              <button
-                className="btn btn-sm"
-                onClick={handleDelete}
-                disabled={deleting}
-                style={{ background: '#b91c1c', color: '#fff', border: 'none' }}
-              >
-                {deleting ? 'Removing…' : 'Remove'}
-              </button>
-            </div>
-          }
-        >
-          <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
-            Remove <strong style={{ color: 'var(--ink)' }}>{deleteTarget.full_name}</strong> ({deleteTarget.email}) from the workspace?
-            They will lose access immediately.
-          </p>
-        </Modal>
-      )}
-
-      {/* Invite Modal */}
-      {showInvite && (
-        <Modal
-          title="Invite Team Member"
-          onClose={() => { setShowInvite(false); setInviteError(''); setShowEmailPreview(false) }}
-          size="lg"
-          footer={
-            <div style={{ display: 'flex', gap: 8, width: '100%', justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setShowInvite(false)}>Cancel</button>
-              <button className="btn btn-dark btn-sm" onClick={handleInvite} disabled={inviting}>
-                {inviting ? 'Sending…' : 'Send Invite'}
-              </button>
-            </div>
-          }
-        >
-          {inviteError && (
-            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 'var(--radius-sm)', fontSize: 12, color: '#b91c1c' }}>
-              {inviteError}
-            </div>
-          )}
-
-          {/* Tabs: Form / Email Preview */}
-          <div style={{ display: 'flex', gap: 4, marginBottom: 20, borderBottom: '1px solid var(--border)' }}>
-            {(['form', 'email'] as const).map(t => (
-              <button key={t} onClick={() => {
-                setShowEmailPreview(t === 'email')
-                if (t === 'email' && !previewLoading) {
-                  setPreviewLoading(true)
-                  authApi.inviteEmailPreview(inviteForm.email || 'colleague@example.com', inviteForm.role)
-                    .then(r => setPreviewHtml(r.data.html || ''))
-                    .catch(() => setPreviewHtml(''))
-                    .finally(() => setPreviewLoading(false))
-                }
-              }}
-                style={{ padding: '8px 16px', background: 'none', border: 'none', cursor: 'pointer',
-                         borderBottom: (t === 'email' ? showEmailPreview : !showEmailPreview) ? '2px solid var(--ink)' : '2px solid transparent',
-                         fontWeight: (t === 'email' ? showEmailPreview : !showEmailPreview) ? 600 : 400,
-                         fontSize: 13, color: (t === 'email' ? showEmailPreview : !showEmailPreview) ? 'var(--ink)' : 'var(--muted)' }}>
-                {t === 'email' ? 'Email Preview' : 'Invite Details'}
-              </button>
-            ))}
-          </div>
-
-          {!showEmailPreview ? (
-            <>
-              <div className="fgroup">
-                <label className="flabel">Email Address</label>
-                <input
-                  className="finput"
-                  type="email"
-                  value={inviteForm.email}
-                  onChange={e => setInviteForm(f => ({ ...f, email: e.target.value }))}
-                  placeholder="colleague@example.com"
-                  autoFocus
-                />
-              </div>
-              <div className="fgroup">
-                <label className="flabel">Role</label>
-                <select className="fselect" value={inviteForm.role} onChange={e => setInviteForm(f => ({ ...f, role: e.target.value }))}>
-                  <option value="coach">Coach — manage clients &amp; sessions</option>
-                  <option value="assistant">Assistant — scheduling &amp; view only</option>
-                </select>
-              </div>
-              <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', fontSize: 12, color: 'var(--muted)' }}>
-                They will receive an email with a link to set their password and join your workspace.
-              </div>
-            </>
-          ) : (
-            previewLoading ? (
-              <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading preview…</div>
-            ) : previewHtml ? (
-              <iframe srcDoc={previewHtml} title="Invite Email Preview"
-                style={{ width: '100%', height: 560, border: '1px solid var(--border)', borderRadius: 4 }}
-                sandbox="allow-same-origin" />
-            ) : (
-              <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Preview not available</div>
-            )
-          )}
-        </Modal>
-      )}
-    </div>
-  )
-}
-
 // ── Pipeline Stages Tab ────────────────────────────────────────────────────────
 const STAGE_PRESET_COLORS = ['#8c8279','#2d6a9f','#2980b9','#c9a84c','#4a7c59','#1a1714','#7c4d9f','#c0392b','#16a085','#a0522d']
 
@@ -1703,22 +1373,24 @@ function generateSampleHtml(key: string): string {
 // to define and edit every outbound email in the product.
 const GENERIC_USE_CASES = [
   { key: 'confirmation',         label: 'Booking Confirmation' },
+  { key: 'reschedule',           label: 'Reschedule Notice' },
   { key: 'reminder_24h',         label: '24h Reminder' },
   { key: 'reminder_1h',          label: '1h Reminder' },
   { key: 'invoice',              label: 'Invoice' },
-  { key: 'portal_invite',        label: 'Portal Invite' },
   { key: 'client_communication', label: 'Client Communication' },
+  { key: 'team_invite',          label: 'Team Invite' },
 ]
 
 // Placeholders substituted at send time — differ per use case since each pulls from
 // a different backend context (a session, an invoice, a portal link, …).
 const PLACEHOLDER_HINTS: Record<string, string[]> = {
   confirmation:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  reschedule:           ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
   reminder_24h:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   reminder_1h:          ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   invoice:              ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
-  portal_invite:        ['{client_name}', '{coach_name}', '{workspace_name}', '{portal_url}'],
   client_communication: ['{client_name}', '{coach_name}', '{workspace_name}'],
+  team_invite:          ['{invited_by_name}', '{workspace_name}', '{role}', '{accept_url}', '{owner_name}', '{owner_email}'],
 }
 const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{workspace_name}', '{coach_name}']
 
@@ -1729,6 +1401,11 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     subject: 'Confirmed: your session with {coach_name}',
     intro:   'Hi {client_name}, your session with {coach_name} has been scheduled. We look forward to seeing you.',
     closing: 'Need to reschedule or have questions? Contact {coach_name} directly.',
+  },
+  reschedule: {
+    subject: 'Updated: your session with {coach_name}',
+    intro:   'Hi {client_name}, your session with {coach_name} has been updated. Here are your new session details.',
+    closing: 'Need to reschedule again or have questions? Contact {coach_name} directly.',
   },
   reminder_24h: {
     subject: 'Reminder: your session is in 24 hours',
@@ -1744,11 +1421,6 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     subject: 'Invoice from {workspace_name}',
     intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
     closing: 'Questions about this invoice? Just reply to this email.',
-  },
-  portal_invite: {
-    subject: 'Your portal access is ready — {workspace_name}',
-    intro:   'Hi {client_name}, {workspace_name} has set up a private portal for you where you can view your sessions, goals, and shared resources.',
-    closing: 'If you have any questions, reply to this email or contact us.',
   },
   client_communication: {
     subject: 'A quick note from {coach_name}',
@@ -2054,19 +1726,25 @@ function GenericTemplatesTab() {
               </fieldset>
             </div>
 
-            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Signature</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={!!editing.include_client_signature_line}
-                  onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
-                Include a client signature line
-              </label>
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, marginLeft: 22 }}>
-                Prints a blank "Client Signature: ____  Date: ____" line at the bottom — useful for
-                contracts. The coach's own signature is drawn per-message in Client Communication, not
-                set here.
+            {/* Signature line only makes sense for contract-style content — restrict it to
+                templates unassigned to a specific transactional use case (like the Contract
+                Agreement sample) or explicitly used for Client Communication. Confirmation,
+                reminder, invoice, and portal-invite emails never need a client signature. */}
+            {(editing.use_cases.length === 0 || editing.use_cases.includes('client_communication')) && (
+              <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Signature</div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={!!editing.include_client_signature_line}
+                    onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
+                  Include a client signature line
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, marginLeft: 22 }}>
+                  Prints a blank "Client Signature: ____  Date: ____" line at the bottom — useful for
+                  contracts. The coach's own signature is drawn per-message in Client Communication, not
+                  set here.
+                </div>
               </div>
-            </div>
+            )}
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
               <button className="btn btn-dark" onClick={handleSaveTemplate} disabled={saving}>{saving ? 'Saving…' : 'Save & Choose Where to Use'}</button>
@@ -2316,7 +1994,6 @@ export default function Settings() {
   const ALL_TABS = [
     { key: 'Workspace',        icon: <Building2 size={13} />,    ownerOnly: true  },
     { key: 'Profile',          icon: <User size={13} />,         ownerOnly: false },
-    { key: 'Team',             icon: <Mail size={13} />,         ownerOnly: true  },
     { key: 'Pipeline',         icon: <Kanban size={13} />,       ownerOnly: true  },
     { key: 'Activity Types',   icon: <CalendarDays size={13} />, ownerOnly: true  },
     { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
@@ -2351,7 +2028,6 @@ export default function Settings() {
       <div className="page-body">
         {tab === 'Workspace'      && isOwner && <WorkspaceTab />}
         {tab === 'Profile'        && <ProfileTab />}
-        {tab === 'Team'           && isOwner && <TeamTab />}
         {tab === 'Pipeline'       && isOwner && <PipelineTab />}
         {tab === 'Activity Types'  && isOwner && <ActivityTypesTab />}
         {tab === 'Client Statuses' && isOwner && <ClientStatusesTab />}

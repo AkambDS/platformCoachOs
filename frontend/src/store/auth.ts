@@ -1,6 +1,10 @@
 import { create } from 'zustand'
 
-export interface User { id: string; email: string; full_name: string; role: string; is_superuser?: boolean; phone?: string }
+export type TabPermissions = Record<string, { view: boolean; edit: boolean; delete: boolean }>
+export interface User {
+  id: string; email: string; full_name: string; role: string; is_superuser?: boolean; phone?: string
+  tab_permissions?: TabPermissions
+}
 
 interface AuthState {
   user: User | null

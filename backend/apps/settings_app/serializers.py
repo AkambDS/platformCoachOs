@@ -17,7 +17,7 @@ class SchedulingSerializer(serializers.ModelSerializer):
         fields = ["workspace_timezone", "buffer_minutes", "cancellation_hours"]
 
 
-SYNCABLE_USE_CASES = {"confirmation", "reminder_24h", "reminder_1h", "invoice", "portal_invite"}
+SYNCABLE_USE_CASES = {"confirmation", "reschedule", "reminder_24h", "reminder_1h", "invoice", "portal_invite", "team_invite"}
 
 
 class WorkspaceSerializer(serializers.ModelSerializer):

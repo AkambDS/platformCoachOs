@@ -5,13 +5,13 @@ from django.db.models.functions import TruncMonth
 from django.http import StreamingHttpResponse
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from apps.accounts.permissions import IsCoachOrAbove
+from apps.accounts.permissions import IsAssistantOrAbove, require_tab
 from apps.invoicing.models import Invoice
 
 
 class RevenueReportView(APIView):
     """GET /api/reports/revenue/?year=2026 — monthly revenue (FR-REP-01/02)"""
-    permission_classes = [IsCoachOrAbove]
+    permission_classes = [IsAssistantOrAbove, require_tab("reports", "view")]
 
     def get(self, request):
         year    = int(request.query_params.get("year", 2026))
@@ -40,7 +40,7 @@ class RevenueReportView(APIView):
 
 class OutstandingReportView(APIView):
     """GET /api/reports/outstanding/ — overdue + unpaid invoices (FR-REP-03)"""
-    permission_classes = [IsCoachOrAbove]
+    permission_classes = [IsAssistantOrAbove, require_tab("reports", "view")]
 
     def get(self, request):
         qs = Invoice.objects.filter(
@@ -65,7 +65,7 @@ class OutstandingReportView(APIView):
 
 class ExportCSVView(APIView):
     """GET /api/reports/export.csv — streaming CSV export (FR-REP-05)"""
-    permission_classes = [IsCoachOrAbove]
+    permission_classes = [IsAssistantOrAbove, require_tab("reports", "view")]
 
     def get(self, request):
         qs = Invoice.objects.filter(workspace=request.user.workspace) \

@@ -360,7 +360,21 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
 def build_reschedule_email(activity, workspace_name: str, logo_url: str,
                             coach_name: str, coach_email: str, dt_human: str,
                             owner_email: str = "", owner_name: str = "",
-                            google_cal_url: str = "") -> str:
+                            google_cal_url: str = "",
+                            custom_intro: str = "", custom_closing: str = "",
+                            cancel_url: str = "", reschedule_url: str = "",
+                            style: dict = None) -> str:
+    s              = style or {}
+    header_bg      = s.get("header_bg")      or "#1a2f4e"
+    accent_color   = s.get("accent_color")   or "#b8922e"
+    header_tagline = s.get("header_tagline", "")
+    show_header    = s.get("show_header", True)
+    show_footer    = s.get("show_footer", True)
+    footer_text    = s.get("footer_text", "")
+    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
+    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
+    value_color    = s.get("value_color")    or "#1a1714"
+
     location_row = ""
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
@@ -371,75 +385,97 @@ def build_reschedule_email(activity, workspace_name: str, logo_url: str,
         if coach_email else coach_name
     )
 
+    _default_intro   = (f"Hi {activity.client.first_name}, your session with "
+                        f"{coach_name} has been updated. Here are your new session details.")
+    _default_closing = (f"Need to reschedule again or have questions? Contact {coach_name} directly.")
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
+
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
               font-weight:600;">
       Session Updated
     </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       Your session has been updated
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {activity.client.first_name}, your session with
-      <strong style="color:#1a1714;">{coach_name}</strong> has been updated.
-      Here are your new session details.
+      {intro_html}
     </p>
 
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
            style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("What", activity.title)}
       {_divider()}
-      {_detail_row("When", f'<strong style="color:#b8922e;">{dt_human}</strong>')}
+      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
       {location_row}
       {_divider()}
       {_detail_row("Coach", coach_display)}
     </table>
 
+    {_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url)}
     {_calendar_block(google_cal_url)}
 
     <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Need to reschedule or have questions? Contact
-      <a href="mailto:{coach_email or owner_email}" style="color:#b8922e;text-decoration:none;font-weight:600;">
-        {coach_name}
-      </a> directly.
+      {closing_html}
     </p>
     <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
               font-size:15px;color:#9e9890;">
       &mdash; {workspace_name}
     </p>"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font,
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
 
 
 # ── Team invite email ────────────────────────────────────────────────────────────
 
 def build_invite_email(invited_by_name: str, workspace_name: str, role_display: str,
                        accept_url: str, logo_url: str, invited_email: str = "",
-                       owner_email: str = "") -> str:
+                       owner_email: str = "", owner_name: str = "",
+                       custom_intro: str = "", custom_closing: str = "",
+                       style: dict = None) -> str:
+    s              = style or {}
+    header_bg      = s.get("header_bg")      or "#1a2f4e"
+    accent_color   = s.get("accent_color")   or "#b8922e"
+    header_tagline = s.get("header_tagline", "")
+    show_header    = s.get("show_header", True)
+    show_footer    = s.get("show_footer", True)
+    footer_text    = s.get("footer_text", "")
+    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
+
     role_color = {
         "Business Owner": "#b8922e",
         "Coach":          "#2d6a9f",
         "Assistant":      "#4a7c59",
     }.get(role_display, "#6e6560")
 
+    _default_intro = (f"<strong style=\"color:#1a1714;\">{invited_by_name}</strong> has invited you to join "
+                      f"<strong style=\"color:#1a1714;\">{workspace_name}</strong> on CoachOS as a team member.")
+    intro_html   = custom_intro   or _default_intro
+    closing_html = (f'<p style="margin:24px 0 0;font-size:13px;color:#9e9890;line-height:1.7;'
+                    f'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">{custom_closing}</p>'
+                    if custom_closing.strip() else "")
+
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
               font-weight:600;">
       Team Invitation
     </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       You've been invited
     </h1>
     <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      <strong style="color:#1a1714;">{invited_by_name}</strong> has invited you to join
-      <strong style="color:#1a1714;">{workspace_name}</strong> on CoachOS as a team member.
+      {intro_html}
     </p>
 
     <!-- Role badge -->
@@ -491,9 +527,13 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
           </table>
         </td>
       </tr>
-    </table>"""
+    </table>
+    {closing_html}"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, invited_by_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name or invited_by_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, show_header=show_header,
+                        show_footer=show_footer, footer_text=footer_text)
 
 
 # ── Reminder email ───────────────────────────────────────────────────────────────

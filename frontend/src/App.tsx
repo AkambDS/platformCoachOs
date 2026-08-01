@@ -25,6 +25,7 @@ import InvoiceDetail from "./pages/coach/InvoiceDetail"
 import Reports        from "./pages/coach/Reports"
 import Settings       from "./pages/coach/Settings"
 import Library        from "./pages/coach/Library"
+import Team            from "./pages/coach/Team"
 import FeedbackList   from "./pages/coach/FeedbackList"
 import FeedbackDetail from "./pages/coach/FeedbackDetail"
 import AdminDashboard  from "./pages/superadmin/AdminDashboard"
@@ -41,6 +42,18 @@ function RoleRoute({ children, allow }: { children: JSX.Element; allow: string[]
   const user = useAuthStore((s) => s.user)
   if (!user) return <Navigate to="/login" replace />
   if (!allow.includes(user.role)) return <Navigate to="/dashboard" replace />
+  return children
+}
+
+/** Gates a page behind the current user's per-section tab_permissions (see
+ * apps.accounts.permissions.ALL_TABS) instead of a fixed role list — business_owner and
+ * platform_admin always pass; everyone else needs "view" granted for that tab, whether
+ * via their role's default or an owner-set override. */
+function TabRoute({ children, tab }: { children: JSX.Element; tab: string }) {
+  const user = useAuthStore((s) => s.user)
+  if (!user) return <Navigate to="/login" replace />
+  if (user.role === 'business_owner' || user.role === 'platform_admin') return children
+  if (!user.tab_permissions?.[tab]?.view) return <Navigate to="/dashboard" replace />
   return children
 }
 
@@ -138,19 +151,20 @@ export default function App() {
 
           {/* Coach App */}
           <Route path="/dashboard"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-          <Route path="/clients"        element={<PrivateRoute><Clients /></PrivateRoute>} />
-          <Route path="/clients/new"   element={<PrivateRoute><RoleRoute allow={["business_owner"]}><NewClient /></RoleRoute></PrivateRoute>} />
-          <Route path="/clients/:id"   element={<PrivateRoute><ClientDetail /></PrivateRoute>} />
-          <Route path="/pipeline"      element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Pipeline /></RoleRoute></PrivateRoute>} />
-          <Route path="/pipeline/new"  element={<PrivateRoute><RoleRoute allow={["business_owner"]}><NewDeal /></RoleRoute></PrivateRoute>} />
-          <Route path="/calendar"      element={<PrivateRoute><Calendar /></PrivateRoute>} />
-          <Route path="/activities"    element={<PrivateRoute><Activities /></PrivateRoute>} />
-          <Route path="/invoices"          element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><Invoices /></RoleRoute></PrivateRoute>} />
-          <Route path="/invoices/new"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><NewInvoice /></RoleRoute></PrivateRoute>} />
-          <Route path="/invoices/:id"      element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><InvoiceDetail /></RoleRoute></PrivateRoute>} />
-          <Route path="/invoices/:id/edit" element={<PrivateRoute><RoleRoute allow={["business_owner","coach"]}><NewInvoice /></RoleRoute></PrivateRoute>} />
-          <Route path="/reports"       element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Reports /></RoleRoute></PrivateRoute>} />
-          <Route path="/library"         element={<PrivateRoute><Library /></PrivateRoute>} />
+          <Route path="/clients"        element={<PrivateRoute><TabRoute tab="clients"><Clients /></TabRoute></PrivateRoute>} />
+          <Route path="/clients/new"   element={<PrivateRoute><TabRoute tab="clients"><NewClient /></TabRoute></PrivateRoute>} />
+          <Route path="/clients/:id"   element={<PrivateRoute><TabRoute tab="clients"><ClientDetail /></TabRoute></PrivateRoute>} />
+          <Route path="/pipeline"      element={<PrivateRoute><TabRoute tab="pipeline"><Pipeline /></TabRoute></PrivateRoute>} />
+          <Route path="/pipeline/new"  element={<PrivateRoute><TabRoute tab="pipeline"><NewDeal /></TabRoute></PrivateRoute>} />
+          <Route path="/calendar"      element={<PrivateRoute><TabRoute tab="activities"><Calendar /></TabRoute></PrivateRoute>} />
+          <Route path="/activities"    element={<PrivateRoute><TabRoute tab="activities"><Activities /></TabRoute></PrivateRoute>} />
+          <Route path="/invoices"          element={<PrivateRoute><TabRoute tab="invoices"><Invoices /></TabRoute></PrivateRoute>} />
+          <Route path="/invoices/new"      element={<PrivateRoute><TabRoute tab="invoices"><NewInvoice /></TabRoute></PrivateRoute>} />
+          <Route path="/invoices/:id"      element={<PrivateRoute><TabRoute tab="invoices"><InvoiceDetail /></TabRoute></PrivateRoute>} />
+          <Route path="/invoices/:id/edit" element={<PrivateRoute><TabRoute tab="invoices"><NewInvoice /></TabRoute></PrivateRoute>} />
+          <Route path="/reports"       element={<PrivateRoute><TabRoute tab="reports"><Reports /></TabRoute></PrivateRoute>} />
+          <Route path="/library"         element={<PrivateRoute><TabRoute tab="library"><Library /></TabRoute></PrivateRoute>} />
+          <Route path="/team"            element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Team /></RoleRoute></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"          element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />
           <Route path="/client-portal"   element={<ClientPortal />} />

@@ -5,27 +5,32 @@ import { queryClient } from '../../lib/queryClient'
 import {
   LayoutDashboard, Users, Kanban, CalendarDays, CheckSquare,
   Receipt, BookOpen, BarChart3, Settings, LogOut,
-  MessageSquarePlus, Building2, KeyRound, Bell,
+  MessageSquarePlus, Building2, KeyRound, Bell, UserCog,
 } from 'lucide-react'
 
 type NavItem =
   | { section: string; roles?: string[] }
-  | { to: string; Icon: React.ElementType; label: string; roles?: string[]; tour?: string }
+  | { to: string; Icon: React.ElementType; label: string; roles?: string[]; tab?: string; tour?: string }
 
+// `tab` maps a nav item to its entry in the current user's tab_permissions (see
+// apps.accounts.permissions.ALL_TABS on the backend) — the owner always passes, everyone
+// else is hidden unless granted "view" on that tab. Items with no `tab` (Dashboard,
+// Settings, Feedback, Team) aren't part of the granular permission system.
 const COACH_NAV: NavItem[] = [
   { section: 'Workspace' },
   { to: '/dashboard',  Icon: LayoutDashboard,  label: 'Dashboard',  tour: 'dashboard'  },
-  { to: '/clients',    Icon: Users,             label: 'Clients',    tour: 'clients'    },
-  { to: '/pipeline',   Icon: Kanban,            label: 'Pipeline',   roles: ['business_owner'], tour: 'pipeline' },
+  { to: '/clients',    Icon: Users,             label: 'Clients',    tab: 'clients',    tour: 'clients'    },
+  { to: '/pipeline',   Icon: Kanban,            label: 'Pipeline',   tab: 'pipeline',   tour: 'pipeline' },
   { section: 'Schedule' },
-  { to: '/calendar',   Icon: CalendarDays,      label: 'Calendar'   },
-  { to: '/activities', Icon: CheckSquare,       label: 'Activities', tour: 'activities' },
+  { to: '/calendar',   Icon: CalendarDays,      label: 'Calendar',   tab: 'activities'  },
+  { to: '/activities', Icon: CheckSquare,       label: 'Activities', tab: 'activities', tour: 'activities' },
   { section: 'Finance' },
-  { to: '/invoices',   Icon: Receipt,           label: 'Invoices',   tour: 'invoices'   },
+  { to: '/invoices',   Icon: Receipt,           label: 'Invoices',   tab: 'invoices',   tour: 'invoices'   },
   { section: 'Content' },
-  { to: '/library',    Icon: BookOpen,          label: 'Library'    },
-  { to: '/reports',    Icon: BarChart3,         label: 'Reports',    roles: ['business_owner'], tour: 'reports' },
+  { to: '/library',    Icon: BookOpen,          label: 'Library',    tab: 'library'    },
+  { to: '/reports',    Icon: BarChart3,         label: 'Reports',    tab: 'reports',    tour: 'reports' },
   { section: 'System' },
+  { to: '/team',       Icon: UserCog,           label: 'Team Management', roles: ['business_owner'] },
   { to: '/feedback',   Icon: MessageSquarePlus, label: 'Feedback'   },
   { to: '/settings',   Icon: Settings,          label: 'Settings',   tour: 'settings'  },
 ]
@@ -81,6 +86,8 @@ export default function Sidebar() {
             return <div key={i} className="nav-label">{item.section}</div>
           }
           if (item.roles && !item.roles.includes(user?.role || '')) return null
+          if (item.tab && user?.role !== 'business_owner' && user?.role !== 'platform_admin'
+              && !user?.tab_permissions?.[item.tab]?.view) return null
           const { Icon } = item
           const itemHash = item.to.includes('#') ? '#' + item.to.split('#')[1] : ''
           const hashActive = itemHash === ''

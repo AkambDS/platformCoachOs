@@ -13,6 +13,7 @@ urlpatterns = [
     path("team/",          views.TeamView.as_view(),        name="auth-team"),
     path("team/add-coach/",          views.add_pending_coach,       name="auth-add-coach"),
     path("team/<uuid:pk>/",          views.team_member_detail,      name="auth-team-member"),
+    path("team/<uuid:pk>/permissions/", views.team_member_permissions, name="auth-team-member-permissions"),
     path("password-reset/",          views.password_reset_request,  name="auth-password-reset"),
     path("password-reset/confirm/",  views.password_reset_confirm,  name="auth-password-reset-confirm"),
     path("token-info/",              views.token_info,              name="auth-token-info"),

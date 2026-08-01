@@ -55,11 +55,21 @@ class WorkspaceSerializer(serializers.ModelSerializer):
 
 
 class UserSerializer(serializers.ModelSerializer):
+    # Effective per-section view/edit/delete access (role default merged with any
+    # owner-set overrides) — lets the frontend show/hide nav items and gate actions
+    # without a separate round-trip. Always full access for business_owner/platform_admin.
+    tab_permissions = serializers.SerializerMethodField()
+
     class Meta:
         model  = User
         fields = ["id", "email", "full_name", "role", "user_timezone", "phone",
-                  "avatar_url", "is_active", "is_superuser", "date_joined"]
+                  "address", "city", "state", "zip_code",
+                  "avatar_url", "is_active", "is_superuser", "date_joined", "tab_permissions"]
         read_only_fields = ["id", "is_superuser", "date_joined"]
+
+    def get_tab_permissions(self, obj):
+        from .permissions import get_effective_tab_permissions
+        return get_effective_tab_permissions(obj)
 
 
 class RegisterWorkspaceSerializer(serializers.Serializer):

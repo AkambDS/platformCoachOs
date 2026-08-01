@@ -82,11 +82,15 @@ class UserManager(BaseUserManager):
         return user
 
     def create_superuser(self, email, password=None, **extra):
+        """
+        `createsuperuser` accounts are for Django-admin/ops access, not a real tenant —
+        default to platform_admin (workspace-independent, per LoginView's own exemption
+        for that role) rather than silently making them a business_owner of whatever
+        workspace happens to be Workspace.objects.first() in the database.
+        """
         extra.setdefault("is_staff", True)
         extra.setdefault("is_superuser", True)
-        extra.setdefault("role", "business_owner")
-        if "workspace" not in extra and extra.get("role") != "platform_admin":
-            extra["workspace"] = Workspace.objects.first()
+        extra.setdefault("role", "platform_admin")
         return self.create_user(email, password, **extra)
 
 
@@ -96,6 +100,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         BUSINESS_OWNER = "business_owner", "Business Owner"
         COACH          = "coach",          "Coach"
         ASSISTANT      = "assistant",      "Assistant"
+        LIMITED        = "limited",        "Limited"
 
     id            = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace     = models.ForeignKey(
@@ -106,7 +111,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     full_name     = models.CharField(max_length=200)
     role          = models.CharField(max_length=20, choices=Role.choices, default=Role.COACH)
     user_timezone = models.CharField(max_length=64, default="America/New_York")  # renamed
-    phone         = models.CharField(max_length=30, blank=True)
+    phone         = models.CharField(max_length=30,  blank=True)
+    address       = models.CharField(max_length=300, blank=True)
+    city          = models.CharField(max_length=100, blank=True)
+    state         = models.CharField(max_length=100, blank=True)
+    zip_code      = models.CharField(max_length=20,  blank=True)
     avatar_url    = models.URLField(blank=True)
     is_active     = models.BooleanField(default=True)
     is_staff      = models.BooleanField(default=False)
@@ -136,6 +145,36 @@ class User(AbstractBaseUser, PermissionsMixin):
         return self.role in (self.Role.BUSINESS_OWNER, self.Role.COACH)
 
 
+class TabPermission(models.Model):
+    """Per-member, per-section view/edit/delete override — lets the workspace owner grant
+    or restrict access to individual coaches/assistants/limited members beyond their role's
+    baseline defaults (see apps.accounts.permissions.ROLE_TAB_DEFAULTS). A missing row for
+    a given (user, tab) means "use the role default", not "no access" — rows only exist
+    where the owner has explicitly customized something."""
+    class Tab(models.TextChoices):
+        CLIENTS    = "clients",    "Clients"
+        PIPELINE   = "pipeline",   "Pipeline"
+        ACTIVITIES = "activities", "Activities"
+        INVOICES   = "invoices",   "Invoices"
+        REPORTS    = "reports",    "Reports"
+        LIBRARY    = "library",    "Library"
+
+    id         = models.BigAutoField(primary_key=True)
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="tab_permissions")
+    user       = models.ForeignKey(User, on_delete=models.CASCADE, related_name="tab_permissions")
+    tab        = models.CharField(max_length=20, choices=Tab.choices)
+    can_view   = models.BooleanField(default=True)
+    can_edit   = models.BooleanField(default=False)
+    can_delete = models.BooleanField(default=False)
+
+    class Meta:
+        db_table        = "user_tab_permissions"
+        unique_together  = ["user", "tab"]
+
+    def __str__(self):
+        return f"{self.user} / {self.tab}"
+
+
 class WorkspaceInvitation(models.Model):
     id         = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name="invitations")
@@ -147,6 +186,9 @@ class WorkspaceInvitation(models.Model):
     email_sent = models.BooleanField(default=False)
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # Overrides the workspace's default "team_invite" generic template for this
+    # invite's email. Blank = use the workspace default.
+    email_template_id = models.CharField(max_length=100, blank=True)
 
     class Meta:
         db_table = "workspace_invitations"

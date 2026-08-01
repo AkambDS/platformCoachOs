@@ -11,7 +11,7 @@ from django.core.files.storage import default_storage
 from django.shortcuts import get_object_or_404
 from .models import KnowledgeFolder, KnowledgeItem
 from .serializers import FolderSerializer, KnowledgeItemSerializer
-from apps.accounts.permissions import IsAssistantOrAbove
+from apps.accounts.permissions import IsAssistantOrAbove, require_tab
 
 FILE_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MB
 
@@ -75,6 +75,16 @@ class FolderViewSet(viewsets.ModelViewSet):
 class KnowledgeItemViewSet(viewsets.ModelViewSet):
     serializer_class   = KnowledgeItemSerializer
     permission_classes = [IsAssistantOrAbove]
+
+    def get_permissions(self):
+        if self.action in ("onlyoffice_file", "onlyoffice_callback"):
+            return [AllowAny()]
+        if self.action == "destroy":
+            return [IsAssistantOrAbove(), require_tab("library", "delete")()]
+        if self.action in ("create", "update", "partial_update", "upload",
+                            "replace_file", "convert_to_pdf"):
+            return [IsAssistantOrAbove(), require_tab("library", "edit")()]
+        return [IsAssistantOrAbove(), require_tab("library", "view")()]
 
     def get_queryset(self):
         from django.db.models import Q

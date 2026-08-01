@@ -28,7 +28,7 @@ from .serializers import (ClientListSerializer, ClientDetailSerializer,
                           AssessmentSerializer, ClientGoalSerializer,
                           CommitmentSerializer, GoalProgressSerializer,
                           ClientNoteSerializer, ClientMessageDraftSerializer)
-from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser
+from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser, require_tab
 
 
 def _log(request, client, action, **metadata):
@@ -74,9 +74,11 @@ class ClientViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "destroy":
             return [IsBusinessOwnerOrSuperuser()]
-        if self.action in ("create", "update", "partial_update", "csv_import", "csv_export"):
-            return [IsCoachOrAbove()]
-        return [IsAssistantOrAbove()]
+        if self.action in ("create", "update", "partial_update"):
+            return [IsAssistantOrAbove(), require_tab("clients", "edit")()]
+        if self.action in ("csv_import", "csv_export"):
+            return [IsCoachOrAbove(), require_tab("clients", "view")()]
+        return [IsAssistantOrAbove(), require_tab("clients", "view")()]
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields   = ["active_flag", "status", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]

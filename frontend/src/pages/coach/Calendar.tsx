@@ -169,6 +169,9 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const [sendConfirmation, setSendConfirmation] = useState(true)
   const [emailTemplateId, setEmailTemplateId] = useState('')
   const genericTemplates: any[] = (workspace as any)?.generic_templates || []
+  // Only templates assigned to the Booking Confirmation slot — other use cases use a
+  // different placeholder set, so picking one here leaves those placeholders literal.
+  const confirmationTemplates = genericTemplates.filter((t: any) => t.use_cases?.includes('confirmation'))
   const [repeat, setRepeat]         = useState<'none'|'daily'|'weekly'|'biweekly'|'monthly'|'yearly'>('none')
   const [repeatEnd, setRepeatEnd]   = useState<'never'|'date'>('never')
   const [repeatUntil, setRepeatUntil] = useState('')
@@ -346,12 +349,18 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
           <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
         </div>
       </div>
-      {sendConfirmation && genericTemplates.length > 0 && (
+      {sendConfirmation && genericTemplates.length > 0 && confirmationTemplates.length === 0 && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
+          No saved template is assigned to Booking Confirmation yet — open Settings → Generic Templates,
+          edit (or create) one, and assign it to "Booking Confirmation" to make it selectable here.
+        </div>
+      )}
+      {sendConfirmation && confirmationTemplates.length > 0 && (
         <div className="fgroup" style={{ marginTop: 10 }}>
           <label className="flabel">Email template</label>
           <select className="fselect" value={emailTemplateId} onChange={e => setEmailTemplateId(e.target.value)}>
             <option value="">Default (Settings → Generic Templates → Booking Confirmation)</option>
-            {genericTemplates.map((t: any) => (
+            {confirmationTemplates.map((t: any) => (
               <option key={t.id} value={t.id}>{t.name}</option>
             ))}
           </select>
