@@ -32,7 +32,11 @@ class ActivityViewSet(viewsets.ModelViewSet):
         qs = Activity.objects.filter(workspace=user.workspace) \
                              .select_related("client", "coach")
         if user.role != "business_owner":
-            qs = qs.filter(client__coach=user)
+            # Scope to activities this person is actually assigned to run — not every
+            # activity belonging to a client who happens to be nominally "theirs".
+            # A client can have activities run by more than one coach over time; using
+            # client__coach here would leak other coaches' sessions for a shared client.
+            qs = qs.filter(coach=user)
         # Calendar range filter
         start = self.request.query_params.get("start")
         end   = self.request.query_params.get("end")
