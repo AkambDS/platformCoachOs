@@ -1422,10 +1422,15 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
     closing: 'Questions about this invoice? Just reply to this email.',
   },
+  team_invite: {
+    subject: "You're invited to join {workspace_name}",
+    intro:   'Hi, {invited_by_name} has invited you to join {workspace_name} on CoachOS as a {role}.',
+    closing: 'Accept the invitation below to get started.',
+  },
   client_communication: {
-    subject: 'A quick note from {coach_name}',
-    intro:   'Hi {client_name}, ',
-    closing: 'Talk soon,',
+    subject: 'Welcome to LMT Consulting Coaching!',
+    intro: `Welcome to LMT Consulting Coaching! I am honored to be working with you.<br><br>Let's get started - all coaching sessions begin with our DISC and Driving Forces assessment debrief.<br><br>What are DISC and Driving Forces?  The DISC is an assessment that measures observable behavior to create self-awareness around our actions.  Basically, it helps explain how we behave and how that behavior impacts our communication with others.  The Driving Forces Assessment shows us what motivates our decisions, essentially why we do what we do.  It is important to know when taking these assessments there are no right or wrong answers and one behavioral style or motivator is NOT better than another.  Each one of us is born with intrinsic gifts and when we use our natural talents, we find greater success and increased happiness.  Our use of these assessments is to help you understand your natural talents and how to capitalize on them in business and in life.  So relax, have fun and answer the questions based on the first thought that comes to your mind; try not to over-think or over-analyze your answers.  The assessments are simple to take, but be sure to set aside 15-20 minutes in a quiet place to complete the assessments.<br><br><a href="https://www.ttisurvey.com/465190CWY?locale=en_US" style="color:#b8922e;text-decoration:none;font-weight:600;">Click here to take your assessment now!</a>`,
+    closing: 'The report will be sent directly to LMT Consulting. Upon receipt of your results, we will contact you via email to schedule your debrief.  Please know the session will run approximately 1 hour.  It will be important to set aside the appropriate time to review your results.  I look forward to speaking to you!',
   },
 }
 
