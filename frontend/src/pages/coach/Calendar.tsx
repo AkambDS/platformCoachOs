@@ -992,6 +992,16 @@ export default function Calendar() {
                 const clientFirst = (a.client_name || '').split(' ')[0]
                 const startTime   = new Date(a.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
                 const endTime     = a.end_at ? new Date(a.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''
+                // Status shown on the event itself — status takes priority (cancelled/
+                // rescheduled), otherwise the client's RSVP response (confirmed via
+                // either the tokenized link or Google Calendar accept/decline).
+                let statusLabel = ''
+                let statusColor = ''
+                if (a.status === 'cancelled') { statusLabel = 'Cancelled'; statusColor = '#b91c1c' }
+                else if (a.status === 'rescheduled') { statusLabel = 'Rescheduled'; statusColor = '#2d6a9f' }
+                else if (a.client_rsvp_status === 'declined') { statusLabel = 'Declined'; statusColor = '#b91c1c' }
+                else if (a.client_rsvp_status === 'tentative') { statusLabel = 'Tentative'; statusColor = '#b8922e' }
+                else if (a.client_confirmed || a.client_rsvp_status === 'accepted') { statusLabel = 'Confirmed'; statusColor = '#2d6a2d' }
                 return (
                   <div style={{
                     padding: '5px 8px', height: '100%', overflow: 'hidden',
@@ -1009,6 +1019,15 @@ export default function Calendar() {
                     }}>
                       {clientFirst} · {startTime}{endTime ? `–${endTime}` : ''}
                     </div>
+                    {statusLabel && (
+                      <div style={{
+                        fontSize: 10, fontWeight: 700, color: faded ? '#bbb' : statusColor,
+                        marginTop: 2, textTransform: 'uppercase', letterSpacing: '.04em',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }}>
+                        {statusLabel}
+                      </div>
+                    )}
                   </div>
                 )
               }}
