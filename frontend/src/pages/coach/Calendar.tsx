@@ -23,6 +23,18 @@ function typeConfig(type: string) {
   return TYPE_CONFIG[type] || TYPE_CONFIG.custom
 }
 
+// Status shown alongside an activity — status takes priority (cancelled/rescheduled),
+// otherwise the client's RSVP response (confirmed via either the tokenized link or
+// Google Calendar accept/decline). Shared between the calendar cell and detail modal.
+function rsvpStatus(a: any): { label: string; color: string } | null {
+  if (a.status === 'cancelled')   return { label: 'Cancelled',   color: '#b91c1c' }
+  if (a.status === 'rescheduled') return { label: 'Rescheduled', color: '#2d6a9f' }
+  if (a.client_rsvp_status === 'declined')  return { label: 'Declined',  color: '#b91c1c' }
+  if (a.client_rsvp_status === 'tentative') return { label: 'Tentative', color: '#b8922e' }
+  if (a.client_confirmed || a.client_rsvp_status === 'accepted') return { label: 'Confirmed', color: '#2d6a2d' }
+  return null
+}
+
 function toLocalInput(utc: string) {
   if (!utc) return ''
   const d = new Date(utc)
@@ -669,6 +681,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
 function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
   const canAct = ['scheduled', 'rescheduled', 'late'].includes(activity.status)
   const cfg = typeConfig(activity.activity_type)
+  const rsvp = rsvpStatus(activity)
   return (
     <Modal title={activity.title} onClose={onClose} footer={
       <div style={{ display: 'flex', gap: 8, width: '100%' }}>
@@ -683,6 +696,19 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
         <span style={{ fontSize: 12, textTransform: 'capitalize', color: cfg.text, fontWeight: 600 }}>{activity.activity_type}</span>
         <StatusBadge status={activity.status} />
       </div>
+      {rsvp && (
+        <div className="kv">
+          <span className="kvl">Response</span>
+          <span className="kvv">
+            <span style={{
+              padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+              background: rsvp.color + '18', color: rsvp.color,
+            }}>
+              {rsvp.label}
+            </span>
+          </span>
+        </div>
+      )}
       {[
         { label: 'Client', value: activity.client_name || activity.client?.first_name },
         { label: 'Start',  value: new Date(activity.start_at).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) },
@@ -992,16 +1018,7 @@ export default function Calendar() {
                 const clientFirst = (a.client_name || '').split(' ')[0]
                 const startTime   = new Date(a.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
                 const endTime     = a.end_at ? new Date(a.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''
-                // Status shown on the event itself — status takes priority (cancelled/
-                // rescheduled), otherwise the client's RSVP response (confirmed via
-                // either the tokenized link or Google Calendar accept/decline).
-                let statusLabel = ''
-                let statusColor = ''
-                if (a.status === 'cancelled') { statusLabel = 'Cancelled'; statusColor = '#b91c1c' }
-                else if (a.status === 'rescheduled') { statusLabel = 'Rescheduled'; statusColor = '#2d6a9f' }
-                else if (a.client_rsvp_status === 'declined') { statusLabel = 'Declined'; statusColor = '#b91c1c' }
-                else if (a.client_rsvp_status === 'tentative') { statusLabel = 'Tentative'; statusColor = '#b8922e' }
-                else if (a.client_confirmed || a.client_rsvp_status === 'accepted') { statusLabel = 'Confirmed'; statusColor = '#2d6a2d' }
+                const rsvp = rsvpStatus(a)
                 return (
                   <div style={{
                     padding: '5px 8px', height: '100%', overflow: 'hidden',
@@ -1019,13 +1036,13 @@ export default function Calendar() {
                     }}>
                       {clientFirst} · {startTime}{endTime ? `–${endTime}` : ''}
                     </div>
-                    {statusLabel && (
+                    {rsvp && (
                       <div style={{
-                        fontSize: 10, fontWeight: 700, color: faded ? '#bbb' : statusColor,
+                        fontSize: 10, fontWeight: 700, color: faded ? '#bbb' : rsvp.color,
                         marginTop: 2, textTransform: 'uppercase', letterSpacing: '.04em',
                         overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                       }}>
-                        {statusLabel}
+                        {rsvp.label}
                       </div>
                     )}
                   </div>

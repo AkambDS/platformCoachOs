@@ -107,6 +107,13 @@ def _get_invite_template(invitation) -> dict:
     return (workspace.email_templates or {}).get("team_invite", {})
 
 
+def _get_pipeline_template(workspace) -> dict:
+    """Resolve the workspace's default "pipeline" template (Settings > Generic Templates).
+    Pipeline alerts are dispatched automatically off the stage-tracking cron, not reviewed
+    per-deal before sending, so — like reminders — there's no per-record override to check."""
+    return (workspace.email_templates or {}).get("pipeline", {})
+
+
 def _owner_info(workspace) -> tuple:
     """Return (owner_email, owner_name) for the business owner of the workspace."""
     try:
@@ -250,12 +257,7 @@ _DEFAULT_INVOICE_HTML = (
     '        </td>\n'
     '      </tr>\n'
     '\n'
-    '      <!-- Footer -->\n'
-    '      <tr>\n'
-    '        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">\n'
-    '          Sent by {workspace_name} &middot; Invoice #{invoice_number}\n'
-    '        </td>\n'
-    '      </tr>\n'
+    '      {footer_block}\n'
     '\n'
     '    </table>\n'
     '  </td></tr>\n'
@@ -263,6 +265,33 @@ _DEFAULT_INVOICE_HTML = (
     '</body>\n'
     '</html>'
 )
+
+
+def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email: str,
+                           owner_name: str, accent_color: str, workspace_name: str,
+                           invoice_number: str) -> str:
+    """The invoice email's footer — unlike every other email type (which goes through
+    _email_shell and already respects show_footer), the invoice template is its own
+    hand-rolled HTML string, so it needs the same conditional handled separately.
+    Values are interpolated directly here (not left as {placeholders}) because the
+    caller substitutes the surrounding template in a single str.format() pass, which
+    would leave any nested {placeholders} in this string un-substituted."""
+    if not show_footer:
+        return ""
+    return (
+        '<tr>\n'
+        f'  <td style="padding:28px 20px 20px;text-align:center;">\n'
+        f'    <p style="margin:0 0 8px;font-size:13px;color:#9e9890;font-family:{body_font_css};line-height:1.7;">\n'
+        f'      Questions? Contact us at <a href="mailto:{owner_email}" style="color:{accent_color};text-decoration:none;font-weight:600;">{owner_name}</a>\n'
+        f'      &mdash; <a href="mailto:{owner_email}" style="color:#b5afa6;text-decoration:none;font-size:11px;">{owner_email}</a>\n'
+        '    </p>\n'
+        f'    <p style="margin:0;font-size:11px;color:#b5afa6;font-family:{body_font_css};">\n'
+        f'      Sent by {workspace_name} &middot; Invoice #{invoice_number}\n'
+        '    </p>\n'
+        '  </td>\n'
+        '</tr>'
+    )
+
 
 # Maps a workspace owner's email address to the SES-verified sending domain for that workspace.
 # Any workspace whose owner is not listed here defaults to rass-consulting.com.
@@ -973,6 +1002,8 @@ def send_invoice_email(invoice_id: str):
         ) if _logo_url else ""
         _bf = tmpl_style.get("body_font", "")
         _hf = tmpl_style.get("heading_font", "")
+        _body_font_css = "'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif")
+        _accent_color  = "#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e")
         tmpl_vars = dict(
             client_name=invoice.client.full_name, workspace_name=workspace.name,
             invoice_number=invoice.number, amount=str(invoice.total), due_date=due_str,
@@ -990,10 +1021,16 @@ def send_invoice_email(invoice_id: str):
             intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
             closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
             header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
-            accent_color="#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e"),
+            accent_color=_accent_color,
             value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
-            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            body_font_css=_body_font_css,
             heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+            footer_block=_invoice_footer_block(
+                tmpl_style.get("show_footer", True) and not disable_style,
+                body_font_css=_body_font_css, owner_email=owner_email,
+                owner_name=owner_name or owner_email, accent_color=_accent_color,
+                workspace_name=workspace.name, invoice_number=invoice.number,
+            ),
         ))
 
         plain = (
@@ -1039,27 +1076,50 @@ def send_invoice_email(invoice_id: str):
 
 def send_payment_receipt_email(invoice_id: str):
     from apps.invoicing.models import Invoice
-    from tasks.email_html import build_invoice_email
+    from tasks.email_html import build_payment_receipt_email
     try:
         invoice   = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
         workspace = invoice.workspace
         owner_email, owner_name = _owner_info(workspace)
-        due_str = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+
+        last_payment = invoice.payments.order_by("-paid_at").first()
+        payment_date = (last_payment.paid_at if last_payment else timezone.now()).strftime("%B %d, %Y")
+        amount_paid  = f"{invoice.amount_paid:,.2f}"
+
+        tmpl = (workspace.email_templates or {}).get("payment_receipt", {})
+        tmpl_vars = dict(
+            client_name=invoice.client.full_name, workspace_name=workspace.name,
+            invoice_number=invoice.number, amount=amount_paid, payment_date=payment_date,
+            owner_email=owner_email, owner_name=owner_name or owner_email,
+        )
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Receipt: Invoice #{invoice.number} — Payment Received"
+
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            html = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html = build_payment_receipt_email(
+                invoice=invoice,
+                workspace_name=workspace.name,
+                logo_url=_logo_src(workspace),
+                amount_paid=amount_paid,
+                payment_date=payment_date,
+                owner_email=owner_email,
+                owner_name=owner_name,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=tmpl.get("style", {}),
+            )
+
         plain = (
             f"Hi {invoice.client.first_name},\n\n"
-            f"Thank you — payment of ${invoice.total} for invoice #{invoice.number} has been received.\n\n"
+            f"Thank you — payment of ${amount_paid} for invoice #{invoice.number} has been received.\n\n"
             f"— {workspace.name}"
         )
-        html = build_invoice_email(
-            invoice=invoice,
-            workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
-            due_str=due_str,
-            owner_email=owner_email,
-            owner_name=owner_name,
-        )
         msg = EmailMultiAlternatives(
-            subject=f"Receipt: Invoice #{invoice.number} — Payment Received",
+            subject=subject,
             body=plain,
             from_email=_workspace_from_email(workspace),
             to=[invoice.client.email],
@@ -1255,7 +1315,17 @@ def send_pipeline_alert(deal_id: str):
         logo_url      = _logo_src(workspace)
         pipeline_url  = f"{getattr(settings, 'FRONTEND_URL', '').rstrip('/')}/pipeline"
 
-        subject = f"Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)"
+        tmpl_vars = dict(
+            owner_name=owner_name, client_name=client_name, stage_label=stage_label,
+            days_in_stage=days_in_stage, follow_up_days=cfg.follow_up_days,
+            deal_value=deal_value, stage_entered=stage_entered, workspace_name=workspace.name,
+        )
+        tmpl = _get_pipeline_template(workspace)
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or (
+            f"Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)"
+        )
 
         plain_body = (
             f"Hi {owner_name},\n\n"
@@ -1267,20 +1337,53 @@ def send_pipeline_alert(deal_id: str):
             f"— {workspace.name}"
         )
 
-        html_body = build_pipeline_alert_email(
-            workspace_name=workspace.name,
-            logo_url=logo_url,
-            owner_name=owner_name,
-            owner_email=owner_email,
-            client_name=client_name,
-            stage_label=stage_label,
-            stage_color=stage_color,
-            days_in_stage=days_in_stage,
-            follow_up_days=cfg.follow_up_days,
-            deal_value=deal_value,
-            stage_entered=stage_entered,
-            pipeline_url=pipeline_url,
-        )
+        _show_logo = tmpl.get("show_logo", True)
+        _eff_logo_url = logo_url if _show_logo else ""
+        saved_style = tmpl.get("style", {})
+        custom_html_tmpl = tmpl.get("custom_html", "").strip()
+        if custom_html_tmpl:
+            _ds = tmpl.get("disable_style", True)
+            _bf = saved_style.get("body_font", "")
+            _hf = saved_style.get("heading_font", "")
+            _logo_img = (
+                f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
+                f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
+                f'<img src="{_eff_logo_url}" alt="{workspace.name}" '
+                f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
+                f'</td></tr></table>'
+            ) if _eff_logo_url else ""
+            _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+            tmpl_vars.update(dict(
+                header_bg="#1a2f4e" if _ds else saved_style.get("header_bg", "#1a2f4e"),
+                accent_color="#b8922e" if _ds else saved_style.get("accent_color", "#b8922e"),
+                value_color="#1a1714" if _ds else saved_style.get("value_color", "#1a1714"),
+                body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if _ds else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+                heading_font_css="Georgia,'Times New Roman',serif" if _ds else (_hf or "Georgia,'Times New Roman',serif"),
+                logo_img=_logo_img,
+                intro=custom_intro, closing=custom_closing,
+                intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
+                closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+                pipeline_url=pipeline_url,
+            ))
+            html_body = _apply_tmpl(custom_html_tmpl, **tmpl_vars)
+        else:
+            html_body = build_pipeline_alert_email(
+                workspace_name=workspace.name,
+                logo_url=_eff_logo_url,
+                owner_name=owner_name,
+                owner_email=owner_email,
+                client_name=client_name,
+                stage_label=stage_label,
+                stage_color=stage_color,
+                days_in_stage=days_in_stage,
+                follow_up_days=cfg.follow_up_days,
+                deal_value=deal_value,
+                stage_entered=stage_entered,
+                pipeline_url=pipeline_url,
+                custom_intro=custom_intro,
+                custom_closing=custom_closing,
+                style=saved_style,
+            )
 
         recipients = [owner_email]
         if cfg.notify_client and client.email:

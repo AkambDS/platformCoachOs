@@ -923,9 +923,8 @@ export default function InvoiceDetail() {
   const [showRefund,     setShowRefund]     = useState(false)
   const [showEmailEdit,  setShowEmailEdit]  = useState(false)
   const [showSendReview, setShowSendReview] = useState(false)
+  const [sendMode, setSendMode] = useState<'send' | 'remind'>('send')
   const [sending,        setSending]        = useState(false)
-  const [payLink,        setPayLink]        = useState('')
-  const [savingLink,     setSavingLink]     = useState(false)
   const [changingTemplate, setChangingTemplate] = useState(false)
 
   const { data: inv, isLoading } = useQuery({
@@ -946,12 +945,17 @@ export default function InvoiceDetail() {
   const handleSend = async () => {
     setSending(true)
     try {
-      await invoicesApi.send(id!)
+      if (sendMode === 'remind') {
+        await invoicesApi.remind(id!)
+        showToast('Reminder sent to client')
+      } else {
+        await invoicesApi.send(id!)
+        showToast('Invoice sent to client')
+      }
       qc.invalidateQueries({ queryKey: ['invoice', id] })
       qc.invalidateQueries({ queryKey: ['invoices'] })
       setShowSendReview(false)
-      showToast('Invoice sent to client')
-    } catch { showToast('Failed to send', 'error') }
+    } catch { showToast(sendMode === 'remind' ? 'Failed to send reminder' : 'Failed to send', 'error') }
     finally { setSending(false) }
   }
 
@@ -972,26 +976,6 @@ export default function InvoiceDetail() {
       qc.invalidateQueries({ queryKey: ['invoices'] })
       showToast('Invoice voided')
     } catch { showToast('Failed to void', 'error') }
-  }
-
-  const handleRemind = async () => {
-    try {
-      await invoicesApi.remind(id!)
-      showToast('Reminder sent to client')
-    } catch { showToast('Failed to send reminder', 'error') }
-  }
-
-  // Must be before any early return to satisfy Rules of Hooks
-  useEffect(() => { setPayLink(inv?.stripe_payment_link || '') }, [inv?.stripe_payment_link])
-
-  const handleSavePayLink = async () => {
-    setSavingLink(true)
-    try {
-      await api.patch(`/api/invoices/${id}/`, { stripe_payment_link: payLink.trim() })
-      qc.invalidateQueries({ queryKey: ['invoice', id] })
-      showToast('Payment link saved')
-    } catch { showToast('Failed to save', 'error') }
-    finally { setSavingLink(false) }
   }
 
   const handlePrint = () => {
@@ -1107,7 +1091,7 @@ ${el.innerHTML}
               </button>
             )}
             {canSend && (
-              <button className="btn btn-dark" onClick={() => setShowSendReview(true)}
+              <button className="btn btn-dark" onClick={() => { setSendMode('send'); setShowSendReview(true) }}
                 style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.05em' }}>
                 SEND INVOICE →
               </button>
@@ -1159,7 +1143,7 @@ ${el.innerHTML}
               cursor: 'pointer', letterSpacing: '.04em',
             }}>↓ Download PDF</button>
             {canRemind && (
-              <button onClick={handleRemind} style={{
+              <button onClick={() => { setSendMode('remind'); setShowSendReview(true) }} style={{
                 padding: '7px 16px', borderRadius: 6, border: `1px solid ${isOverdue ? '#e67e22' : 'var(--border)'}`,
                 background: isOverdue ? '#fff8f0' : '#fff', color: isOverdue ? '#e67e22' : 'var(--muted)',
                 fontSize: 11, fontWeight: 600, cursor: 'pointer', letterSpacing: '.04em',
@@ -1223,51 +1207,6 @@ ${el.innerHTML}
                   </div>
                 )}
               </div>
-            </div>
-
-            {/* Payment Link */}
-            <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 8 }}>PAYMENT LINK</div>
-              <input
-                type="url"
-                value={payLink}
-                onChange={e => setPayLink(e.target.value)}
-                placeholder="https://buy.stripe.com/..."
-                style={{
-                  width: '100%', padding: '7px 10px', fontSize: 12,
-                  border: '1px solid var(--border)', borderRadius: 5,
-                  fontFamily: 'inherit', color: 'var(--ink)', outline: 'none',
-                  boxSizing: 'border-box', marginBottom: 8,
-                }}
-              />
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button
-                  onClick={handleSavePayLink}
-                  disabled={savingLink}
-                  style={{
-                    flex: 1, padding: '6px 10px', borderRadius: 5, border: 'none',
-                    background: '#1a2f4e', color: '#fff', fontSize: 11, fontWeight: 600,
-                    cursor: 'pointer', letterSpacing: '.04em',
-                  }}
-                >
-                  {savingLink ? 'Saving…' : 'Save Link'}
-                </button>
-                {payLink && (
-                  <button
-                    onClick={() => { setPayLink(''); }}
-                    style={{
-                      padding: '6px 10px', borderRadius: 5, border: '1px solid var(--border)',
-                      background: '#fff', color: 'var(--muted)', fontSize: 11, cursor: 'pointer',
-                    }}
-                    title="Clear payment link"
-                  >✕</button>
-                )}
-              </div>
-              {inv.stripe_payment_link && (
-                <div style={{ marginTop: 6, fontSize: 10, color: 'var(--muted)' }}>
-                  Included in invoice email when sent.
-                </div>
-              )}
             </div>
 
             {/* Payment History — compact */}
@@ -1346,14 +1285,14 @@ ${el.innerHTML}
 
       {showSendReview && (
         <Modal
-          title="Review before sending"
+          title={sendMode === 'remind' ? 'Review before sending reminder' : 'Review before sending'}
           size="lg"
           onClose={() => setShowSendReview(false)}
           footer={
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-outline btn-sm" onClick={() => setShowSendReview(false)} style={{ letterSpacing: '.06em' }}>CANCEL</button>
               <button className="btn btn-dark btn-sm" onClick={handleSend} disabled={sending} style={{ letterSpacing: '.06em' }}>
-                {sending ? 'SENDING…' : 'CONFIRM & SEND →'}
+                {sending ? 'SENDING…' : sendMode === 'remind' ? 'CONFIRM & SEND REMINDER →' : 'CONFIRM & SEND →'}
               </button>
             </div>
           }
@@ -1364,6 +1303,12 @@ ${el.innerHTML}
               <strong>{inv.client_name}</strong>
               {inv.client_email && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {inv.client_email}</span>}
             </div>
+            {sendMode === 'remind' && (
+              <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
+                A reminder re-sends this exact invoice email (same template and content below) — it isn't
+                a separate "reminder" message. Switch the template below if you'd like different wording.
+              </div>
+            )}
             {((workspace as any)?.generic_templates?.length > 0) && invoiceTemplates.length === 0 && (
               <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: 'italic' }}>
                 No saved template is assigned to Invoice yet — open Settings → Generic Templates,

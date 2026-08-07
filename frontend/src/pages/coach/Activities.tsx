@@ -301,17 +301,24 @@ function RsvpBadge({ activity }: { activity: any }) {
     ? 'accepted'
     : activity.client_rsvp_status
   const display = RSVP_DISPLAY[status]
-  if (!display) {
-    return <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>Pending</span>
+  if (display) {
+    return (
+      <span style={{
+        padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
+        background: display.bg, color: display.fg, whiteSpace: 'nowrap',
+      }}>
+        {display.label}
+      </span>
+    )
   }
-  return (
-    <span style={{
-      padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-      background: display.bg, color: display.fg, whiteSpace: 'nowrap',
-    }}>
-      {display.label}
-    </span>
-  )
+  // No response was ever recorded. "Pending" only makes sense while a response is
+  // still possible — for a session that's already cancelled/completed/missed, showing
+  // "Pending" wrongly implies one is still expected.
+  const isActive = ['scheduled', 'rescheduled', 'late'].includes(activity.status)
+  if (!isActive) {
+    return <span style={{ fontSize: 11, color: 'var(--border)' }}>—</span>
+  }
+  return <span style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>Pending</span>
 }
 
 function NotificationStatus({ activity }: { activity: any }) {

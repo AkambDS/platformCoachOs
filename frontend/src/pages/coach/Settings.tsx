@@ -4,7 +4,7 @@ import { api, authApi, settingsApi, invoicesApi, auditApi } from '../../api/clie
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
-import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays, ClipboardList } from 'lucide-react'
+import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays, ClipboardList, Copy } from 'lucide-react'
 
 const TIMEZONES = [
   'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
@@ -737,7 +737,7 @@ function ActivityTypesTab() {
           <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ width: 12, height: 12, borderRadius: '50%', background: t.color, flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: t.is_active ? 'var(--ink)' : 'var(--muted)' }}>
-              {t.name}
+              {t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
               {t.is_builtin && (
                 <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 6, fontWeight: 400, letterSpacing: '.04em' }}>built-in</span>
               )}
@@ -885,13 +885,13 @@ function ClientStatusesTab() {
           <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
             <div style={{ width: 12, height: 12, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
             <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>
-              {s.label}
+              {s.label.replace(/[-_]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}
               {s.is_builtin && <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 6, fontWeight: 400 }}>built-in</span>}
             </div>
             <span style={{
               fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 12,
               background: s.color + '20', color: s.color, border: `1px solid ${s.color}40`,
-            }}>{s.label}</span>
+            }}>{s.label.replace(/[-_]/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span>
             <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color }) }} style={{ padding: '2px 6px' }}>
               <Pencil size={13} />
             </button>
@@ -1377,8 +1377,10 @@ const GENERIC_USE_CASES = [
   { key: 'reminder_24h',         label: '24h Reminder' },
   { key: 'reminder_1h',          label: '1h Reminder' },
   { key: 'invoice',              label: 'Invoice' },
+  { key: 'payment_receipt',      label: 'Payment Receipt' },
   { key: 'client_communication', label: 'Client Communication' },
   { key: 'team_invite',          label: 'Team Invite' },
+  { key: 'pipeline',             label: 'Pipeline Follow-up Alert' },
 ]
 
 // Placeholders substituted at send time — differ per use case since each pulls from
@@ -1389,8 +1391,10 @@ const PLACEHOLDER_HINTS: Record<string, string[]> = {
   reminder_24h:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   reminder_1h:          ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   invoice:              ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+  payment_receipt:      ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{payment_date}', '{owner_name}', '{owner_email}'],
   client_communication: ['{client_name}', '{coach_name}', '{workspace_name}'],
   team_invite:          ['{invited_by_name}', '{workspace_name}', '{role}', '{accept_url}', '{owner_name}', '{owner_email}'],
+  pipeline:             ['{owner_name}', '{client_name}', '{workspace_name}', '{stage_label}', '{days_in_stage}', '{follow_up_days}', '{deal_value}', '{stage_entered}'],
 }
 const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{workspace_name}', '{coach_name}']
 
@@ -1422,6 +1426,11 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
     closing: 'Questions about this invoice? Just reply to this email.',
   },
+  payment_receipt: {
+    subject: 'Receipt: Invoice {invoice_number} — Payment Received',
+    intro:   "Hi {client_name}, thank you — we've received your payment of ${amount} for invoice {invoice_number}. A copy of your receipt is attached.",
+    closing: 'Questions about this payment? Just reply to this email.',
+  },
   team_invite: {
     subject: "You're invited to join {workspace_name}",
     intro:   'Hi, {invited_by_name} has invited you to join {workspace_name} on CoachOS as a {role}.',
@@ -1431,6 +1440,11 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     subject: 'Welcome to LMT Consulting Coaching!',
     intro: `Welcome to LMT Consulting Coaching! I am honored to be working with you.<br><br>Let's get started - all coaching sessions begin with our DISC and Driving Forces assessment debrief.<br><br>What are DISC and Driving Forces?  The DISC is an assessment that measures observable behavior to create self-awareness around our actions.  Basically, it helps explain how we behave and how that behavior impacts our communication with others.  The Driving Forces Assessment shows us what motivates our decisions, essentially why we do what we do.  It is important to know when taking these assessments there are no right or wrong answers and one behavioral style or motivator is NOT better than another.  Each one of us is born with intrinsic gifts and when we use our natural talents, we find greater success and increased happiness.  Our use of these assessments is to help you understand your natural talents and how to capitalize on them in business and in life.  So relax, have fun and answer the questions based on the first thought that comes to your mind; try not to over-think or over-analyze your answers.  The assessments are simple to take, but be sure to set aside 15-20 minutes in a quiet place to complete the assessments.<br><br><a href="https://www.ttisurvey.com/465190CWY?locale=en_US" style="color:#b8922e;text-decoration:none;font-weight:600;">Click here to take your assessment now!</a>`,
     closing: 'The report will be sent directly to LMT Consulting. Upon receipt of your results, we will contact you via email to schedule your debrief.  Please know the session will run approximately 1 hour.  It will be important to set aside the appropriate time to review your results.  I look forward to speaking to you!',
+  },
+  pipeline: {
+    subject: 'Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)',
+    intro:   'Hi {owner_name}, this deal has been sitting in {stage_label} for {days_in_stage} days — past your follow-up threshold of {follow_up_days} days.',
+    closing: 'Once the deal moves to a new stage, this alert resets automatically.',
   },
 }
 
@@ -1460,7 +1474,7 @@ const blankGenericTemplate = () => ({
   id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   name: '', subject: '', intro: '', closing: '',
   custom_html: '', disable_style: false, show_logo: true,
-  style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '' } as Record<string, any>,
+  style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true } as Record<string, any>,
   use_cases: [] as string[],
   include_client_signature_line: false,
 })
@@ -1487,30 +1501,10 @@ function GenericTemplatesTab() {
     setUseCaseMap(data.template_use_case_map || nextMap)
   }
 
-  const missingUseCases = GENERIC_USE_CASES.filter(u => !useCaseMap[u.key])
 
-  const handleAddSample = async (useCaseKey: string) => {
-    const uc = GENERIC_USE_CASES.find(u => u.key === useCaseKey)
-    const sample = USE_CASE_SAMPLES[useCaseKey]
-    if (!uc || !sample) return
-    setAddingSample(useCaseKey)
-    try {
-      const newTmpl = {
-        ...blankGenericTemplate(),
-        name: uc.label,
-        subject: sample.subject, intro: sample.intro, closing: sample.closing,
-        use_cases: [useCaseKey],
-      }
-      const nextTemplates = [...templates, newTmpl]
-      const nextMap = { ...useCaseMap, [useCaseKey]: newTmpl.id }
-      await persist(nextTemplates, nextMap)
-      show(`${uc.label} sample added — edit it any time`)
-    } catch (e: any) {
-      show(e?.response?.data?.detail || 'Failed to add sample', 'error')
-    } finally { setAddingSample(null) }
-  }
 
   const hasContractSample = templates.some(t => t.name === CONTRACT_SAMPLE.name)
+  const unusedUseCases = GENERIC_USE_CASES.filter(uc => !useCaseMap[uc.key])
 
   const handleAddContractSample = async () => {
     setAddingSample('contract')
@@ -1533,8 +1527,14 @@ function GenericTemplatesTab() {
   const renderPreview = async (t: any) => {
     setPreviewLoading(true)
     try {
+      // Preview using whichever use case this template is actually assigned to — not
+      // always client_communication — so the preview matches what will really be sent
+      // (correct fixed heading, correct footer, correct available placeholders).
+      // Unassigned templates (e.g. a fresh draft, or Contract Agreement) have no way to
+      // know their eventual use case, so client_communication remains a sane fallback.
+      const previewType = (t.use_cases && t.use_cases.length > 0) ? t.use_cases[0] : 'client_communication'
       const params: Record<string, string> = {
-        type: 'client_communication', client_name: 'Jane Smith',
+        type: previewType, client_name: 'Jane Smith',
         subject: t.subject || 'Your subject line',
         intro: t.intro, closing: t.closing, _t: String(Date.now()),
       }
@@ -1545,6 +1545,7 @@ function GenericTemplatesTab() {
       if (!t.show_logo) params.hide_logo = '1'
       params.show_header = t.style.show_header === false ? '0' : '1'
       params.show_footer = t.style.show_footer === false ? '0' : '1'
+      params.show_contact_line = t.style.show_contact_line === false ? '0' : '1'
       params.include_client_signature_line = t.include_client_signature_line ? '1' : '0'
       const { data } = await api.get('/api/settings/email-preview/', { params })
       setPreviewHtml(data.html)
@@ -1559,11 +1560,11 @@ function GenericTemplatesTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing?.subject, editing?.intro, editing?.closing, editing?.style?.header_bg,
       editing?.style?.accent_color, editing?.style?.header_tagline, editing?.style?.show_header,
-      editing?.style?.show_footer, editing?.style?.footer_text, editing?.show_logo,
-      editing?.include_client_signature_line])
+      editing?.style?.show_footer, editing?.style?.footer_text, editing?.style?.show_contact_line,
+      editing?.show_logo, editing?.include_client_signature_line])
 
   const openNew  = () => setEditing(blankGenericTemplate())
-  const openEdit = (t: any) => setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', ...t.style } })
+  const openEdit = (t: any) => setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } })
   const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
   const handleDelete = async (id: string) => {
@@ -1575,6 +1576,72 @@ function GenericTemplatesTab() {
     show('Template deleted')
   }
 
+  // Clone a template's current content into a new, independently-editable copy — the
+  // original stays exactly as-is (including remaining "the" active default, since
+  // useCaseMap isn't touched here), so a coach can freely experiment on the copy
+  // without losing the original. The copy keeps the same use case(s) as its source, so
+  // it's immediately selectable as an alternative in that use case's picker (e.g. next
+  // to "Invoice" in the invoice send screen) — not just sitting unused until manually
+  // re-assigned.
+  const handleDuplicate = async (t: any) => {
+    const copy = {
+      ...t,
+      id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: `${t.name || 'Untitled'} (Copy)`,
+      use_cases: [...(t.use_cases || [])],
+    }
+    await persist([...templates, copy], useCaseMap)
+    show(`Duplicated "${t.name}" — edit the copy any time`)
+  }
+
+  // The "effective" default for a use case — whichever template is currently assigned
+  // to it, or (if none) the built-in starter content — as a template-shaped object.
+  const getEffectiveDefault = (ucKey: string) => {
+    const assignedId = useCaseMap[ucKey]
+    const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
+    if (assigned) return assigned
+    const sample = USE_CASE_SAMPLES[ucKey]
+    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
+    return {
+      ...blankGenericTemplate(),
+      name: uc?.label || ucKey,
+      subject: sample?.subject || '', intro: sample?.intro || '', closing: sample?.closing || '',
+    }
+  }
+
+  // "Edit" on a Default card — if something's already assigned to this slot, edit that
+  // template directly (editing it is what changes the default). If nothing's assigned
+  // yet, open a new editor pre-filled with the built-in starter content, pre-assigned to
+  // this use case — saving it is what actually creates and activates the default.
+  const openDefaultEditor = (ucKey: string) => {
+    const assignedId = useCaseMap[ucKey]
+    const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
+    if (assigned) { openEdit(assigned); return }
+    const sample = USE_CASE_SAMPLES[ucKey]
+    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
+    setEditing({
+      ...blankGenericTemplate(),
+      name: uc?.label || ucKey,
+      subject: sample?.subject || '', intro: sample?.intro || '', closing: sample?.closing || '',
+      use_cases: [ucKey],
+    })
+  }
+
+  const handleDuplicateDefault = async (ucKey: string) => {
+    const src = getEffectiveDefault(ucKey)
+    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
+    const copy = {
+      ...src,
+      id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name: `${uc?.label || ucKey} (Copy)`,
+      // Tagged for this use case so it's immediately selectable as an alternative —
+      // not "the" active default (useCaseMap still points at whatever it did before).
+      use_cases: [ucKey],
+    }
+    await persist([...templates, copy], useCaseMap)
+    show(`Duplicated the ${uc?.label || ucKey} default — edit the copy any time`)
+  }
+
   const handleSaveTemplate = async () => {
     if (!editing.name.trim()) { show('Give this template a name', 'error'); return }
     setSaving(true)
@@ -1582,8 +1649,12 @@ function GenericTemplatesTab() {
       const exists = templates.some(t => t.id === editing.id)
       const nextTemplates = exists ? templates.map(t => t.id === editing.id ? editing : t) : [...templates, editing]
       await persist(nextTemplates, useCaseMap)
+      // Pre-check based on this template's own use_cases tags, not just whichever one
+      // happens to be "the" active default — otherwise a template that's tagged as a
+      // selectable alternative (but not currently active) would show every box
+      // unchecked here, and saving would wipe its tags right back out.
       const checks: Record<string, boolean> = {}
-      GENERIC_USE_CASES.forEach(u => { checks[u.key] = useCaseMap[u.key] === editing.id })
+      GENERIC_USE_CASES.forEach(u => { checks[u.key] = (editing.use_cases || []).includes(u.key) })
       setAssignChecks(checks)
       setAssigning(true)
     } catch (e: any) {
@@ -1599,9 +1670,16 @@ function GenericTemplatesTab() {
         if (assignChecks[u.key]) nextMap[u.key] = editing.id
         else if (nextMap[u.key] === editing.id) delete nextMap[u.key]
       })
-      const nextTemplates = templates.map(t => t.id === editing.id ? editing : t).map(t => ({
-        ...t, use_cases: GENERIC_USE_CASES.filter(u => nextMap[u.key] === t.id).map(u => u.key),
-      }))
+      // Only update THIS template's own use_cases (from its checked boxes) — don't
+      // touch any other template's use_cases. Checking a box here makes this template
+      // "the" active default for that slot (nextMap), but other templates already
+      // tagged for the same use case (e.g. a duplicate kept as a selectable
+      // alternative) must keep their own tags; recomputing everyone's use_cases from
+      // nextMap would silently strip every non-active template back to unassigned.
+      const nextTemplates = templates.map(t => t.id === editing.id
+        ? { ...t, use_cases: GENERIC_USE_CASES.filter(u => assignChecks[u.key]).map(u => u.key) }
+        : t
+      )
       await persist(nextTemplates, nextMap)
       show('Saved')
       setAssigning(false)
@@ -1719,6 +1797,15 @@ function GenericTemplatesTab() {
                 </label>
               </div>
               <fieldset disabled={editing.style.show_footer === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_footer === false ? 0.5 : 1 }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 12 }}>
+                  <input type="checkbox" checked={editing.style.show_contact_line !== false}
+                    onChange={e => setStyle('show_contact_line', e.target.checked)} />
+                  Show "Questions? Contact us at…" line
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: -8, marginBottom: 12 }}>
+                  Shows your workspace owner's name and email as the reply contact. Turn off if you'd
+                  rather not surface a personal email address in this email.
+                </div>
                 <div className="fgroup">
                   <label className="flabel">Footer Text</label>
                   <textarea className="ftextarea" rows={2} value={editing.style.footer_text ?? ''}
@@ -1731,11 +1818,12 @@ function GenericTemplatesTab() {
               </fieldset>
             </div>
 
-            {/* Signature line only makes sense for contract-style content — restrict it to
-                templates unassigned to a specific transactional use case (like the Contract
-                Agreement sample) or explicitly used for Client Communication. Confirmation,
-                reminder, invoice, and portal-invite emails never need a client signature. */}
-            {(editing.use_cases.length === 0 || editing.use_cases.includes('client_communication')) && (
+            {/* Signature line only makes sense for contract-style content — show it for the
+                Contract Agreement sample (by name), brand-new unassigned templates (someone
+                might be building their own contract from scratch), or a template that already
+                has it enabled. NOT for every Client Communication template — most of those
+                (e.g. an assessment invite) have nothing to do with a signed agreement. */}
+            {(editing.use_cases.length === 0 || editing.name === CONTRACT_SAMPLE.name || editing.include_client_signature_line) && (
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>Signature</div>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
@@ -1777,49 +1865,79 @@ function GenericTemplatesTab() {
         <button className="btn btn-dark btn-sm" onClick={openNew}>+ New Template</button>
       </div>
 
-      {(missingUseCases.length > 0 || !hasContractSample) && (
+      {unusedUseCases.length > 0 && (
         <div className="card" style={{ padding: 14, marginBottom: 16, background: '#faf6ed', border: '1px solid #e8dcc0' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Quick start — add an editable sample</div>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Still on built-in defaults</div>
           <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
-            One click adds a ready-to-edit template pre-filled with sensible copy. Edit or delete it any time.
+            These use cases haven't been customized yet. Edit to activate and personalize; duplicate to
+            start a copy without touching the built-in content.
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {missingUseCases.map(u => (
-              <button key={u.key} className="btn btn-outline btn-sm" disabled={addingSample === u.key}
-                onClick={() => handleAddSample(u.key)}>
-                {addingSample === u.key ? 'Adding…' : `+ ${u.label}`}
-              </button>
+            {unusedUseCases.map(uc => (
+              <div key={uc.key} style={{
+                display: 'flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 12px',
+                border: '1px solid var(--border)', borderRadius: 20, background: '#fff', fontSize: 12,
+              }}>
+                <span>{uc.label}</span>
+                <button className="btn btn-outline btn-sm" style={{ padding: '3px 8px', borderRadius: 14 }}
+                  onClick={() => openDefaultEditor(uc.key)}><Pencil size={11} /></button>
+                <button className="btn btn-outline btn-sm" style={{ padding: '3px 8px', borderRadius: 14 }}
+                  title="Duplicate — creates an independently-editable copy"
+                  onClick={() => handleDuplicateDefault(uc.key)}><Copy size={11} /></button>
+              </div>
             ))}
-            {!hasContractSample && (
-              <button className="btn btn-outline btn-sm" disabled={addingSample === 'contract'}
-                onClick={handleAddContractSample}>
-                {addingSample === 'contract' ? 'Adding…' : '+ Contract Agreement'}
-              </button>
-            )}
           </div>
         </div>
       )}
 
+      {!hasContractSample && (
+        <div className="card" style={{ padding: 14, marginBottom: 16, background: '#faf6ed', border: '1px solid #e8dcc0' }}>
+          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Quick start</div>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
+            Contract Agreement is a standalone sample, not tied to a single use case — add it as a starting point.
+          </div>
+          <button className="btn btn-outline btn-sm" disabled={addingSample === 'contract'}
+            onClick={handleAddContractSample}>
+            {addingSample === 'contract' ? 'Adding…' : '+ Contract Agreement'}
+          </button>
+        </div>
+      )}
+
+      {templates.length > 0 && (
+        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>All Saved Templates</div>
+      )}
       {templates.length === 0 ? (
         <div className="card"><div className="card-body" style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
           No generic templates yet — add a sample above, or create one from scratch to reuse across invoices, reminders, and client messages.
         </div></div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-          {templates.map(t => (
+          {templates.map(t => {
+            const activeFor = GENERIC_USE_CASES.filter(uc => useCaseMap[uc.key] === t.id).map(uc => uc.label)
+            return (
             <div key={t.id} className="card" style={{ padding: 16 }}>
               <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t.name || 'Untitled'}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, minHeight: 32 }}>
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, minHeight: 32 }}>
                 {(t.use_cases || []).length
                   ? (t.use_cases || []).map((uc: string) => GENERIC_USE_CASES.find(u => u.key === uc)?.label || uc).join(', ')
                   : 'Not assigned to any use yet'}
               </div>
+              {activeFor.length > 0 && (
+                <div style={{
+                  display: 'inline-block', marginBottom: 10, padding: '2px 10px', borderRadius: 20,
+                  fontSize: 11, fontWeight: 600, background: '#e8f5e9', color: '#2d6a2d',
+                }}>
+                  ✓ Active default for {activeFor.join(', ')}
+                </div>
+              )}
               <div style={{ display: 'flex', gap: 6 }}>
                 <button className="btn btn-outline btn-sm" onClick={() => openEdit(t)} style={{ flex: 1, justifyContent: 'center' }}><Pencil size={12} /> Edit</button>
+                <button className="btn btn-outline btn-sm" onClick={() => handleDuplicate(t)} title="Duplicate — creates an independently-editable copy"><Copy size={12} /></button>
                 <button className="btn btn-outline btn-sm" onClick={() => handleDelete(t.id)} style={{ color: '#c0392b', borderColor: '#f5c6c2' }}><Trash2 size={12} /></button>
               </div>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

@@ -261,7 +261,8 @@ def email_preview(request):
     """
     from types import SimpleNamespace
     from tasks.email_html import (build_confirmation_email, build_reschedule_email, build_reminder_email,
-                                   build_invoice_email, build_portal_invite_email, build_client_communication_email)
+                                   build_invoice_email, build_payment_receipt_email, build_portal_invite_email,
+                                   build_client_communication_email, build_invite_email, build_pipeline_alert_email)
     from tasks.email import _logo_src, _owner_info
 
     email_type = request.query_params.get("type", "confirmation")
@@ -283,7 +284,7 @@ def email_preview(request):
         workspace_name=workspace.name,
         time_label="24 hours",
         invoice_number="INV-0042", amount="150.00",
-        due_date="June 30, 2026",
+        due_date="June 30, 2026", payment_date="June 30, 2026",
         # Team Invite placeholders — this preview endpoint is always called with
         # type=client_communication from the Settings editor regardless of which use
         # case the template is actually assigned to, and str.format() fails (and
@@ -291,6 +292,9 @@ def email_preview(request):
         # is missing from this dict — so every use case's placeholders must live here.
         invited_by_name="Coach Mike", role="Coach", accept_url="#",
         owner_name="Coach Mike", owner_email="owner@example.com",
+        # Pipeline alert placeholders
+        stage_label="Proposal Sent", days_in_stage="9", follow_up_days="5",
+        deal_value="$2,400", stage_entered="June 12, 2026",
     )
     if email_type == "client_communication":
         # Real client name (not the generic Jane Smith placeholder) — lets a coach
@@ -347,6 +351,12 @@ def email_preview(request):
     style["footer_text"] = request.query_params.get(
         "footer_text", saved_style.get("footer_text", "")
     )
+
+    raw_show_contact = request.query_params.get("show_contact_line")
+    if raw_show_contact is not None:
+        style["show_contact_line"] = raw_show_contact not in ("0", "false", "False")
+    else:
+        style["show_contact_line"] = saved_style.get("show_contact_line", True)
 
     if email_type == "confirmation":
         client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
@@ -406,7 +416,7 @@ def email_preview(request):
         # disable_style only applies when custom HTML is actually being used
         using_custom = custom_html_tmpl and not skip_custom
         disable_style = using_custom and tmpl.get("disable_style", False)
-        from tasks.email import _apply_tmpl, _DEFAULT_INVOICE_HTML
+        from tasks.email import _apply_tmpl, _DEFAULT_INVOICE_HTML, _invoice_footer_block
         _show_logo = tmpl.get("show_logo", True) and not disable_style
         logo_img_tag = (
             f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
@@ -418,6 +428,8 @@ def email_preview(request):
         _bf = style.get("body_font", "")
         _hf = style.get("heading_font", "")
         _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+        _body_font_css = "'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif")
+        _accent_color  = "#b8922e" if disable_style else style.get("accent_color", "#b8922e")
         # Allow callers (e.g. new-invoice preview) to pass real values instead of dummy ones
         _preview_amount      = request.query_params.get("amount",      "150.00")
         _preview_due_date    = request.query_params.get("due_date",    "June 30, 2026")
@@ -434,11 +446,28 @@ def email_preview(request):
             header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
             accent_color="#b8922e" if disable_style else style.get("accent_color", "#b8922e"),
             value_color="#1a1714" if disable_style else style.get("value_color", "#1a1714"),
-            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            body_font_css=_body_font_css,
             heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+            footer_block=_invoice_footer_block(
+                style.get("show_footer", True) and not disable_style,
+                body_font_css=_body_font_css, owner_email=owner_email,
+                owner_name=owner_name or owner_email, accent_color=_accent_color,
+                workspace_name=workspace.name, invoice_number="INV-0042",
+            ),
         )
         effective_tmpl = (custom_html_tmpl if not skip_custom else "") or _DEFAULT_INVOICE_HTML
         html = _apply_tmpl(effective_tmpl, **preview_vars)
+
+    elif email_type == "payment_receipt":
+        client  = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        invoice = SimpleNamespace(number="INV-0042", total=150.00, amount_paid=150.00, currency="USD", client=client)
+        html = build_payment_receipt_email(
+            invoice=invoice, workspace_name=workspace.name, logo_url=logo_url,
+            amount_paid="150.00", payment_date="June 30, 2026",
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
+        )
 
     elif email_type == "portal_invite":
         frontend_url = getattr(__import__('django.conf', fromlist=['settings']).settings, 'FRONTEND_URL', '').rstrip('/')
@@ -469,6 +498,39 @@ def email_preview(request):
             style=style,
             coach_signature=request.query_params.get("coach_signature", ""),
             include_client_signature_line=request.query_params.get("include_client_signature_line") == "1",
+        )
+
+    elif email_type == "team_invite":
+        html = build_invite_email(
+            invited_by_name=request.query_params.get("invited_by_name") or owner_name or "Coach Mike",
+            workspace_name=workspace.name,
+            role_display=request.query_params.get("role") or "Coach",
+            accept_url="#",
+            logo_url=logo_url,
+            invited_email="colleague@example.com",
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
+        )
+
+    elif email_type == "pipeline":
+        from django.conf import settings as dj_settings
+        frontend_url = getattr(dj_settings, 'FRONTEND_URL', '').rstrip('/')
+        html = build_pipeline_alert_email(
+            workspace_name=workspace.name,
+            logo_url=logo_url,
+            owner_name=owner_name,
+            owner_email=owner_email,
+            client_name="Jane Smith",
+            stage_label=DUMMY["stage_label"],
+            stage_color="#1a2f4e",
+            days_in_stage=int(DUMMY["days_in_stage"]),
+            follow_up_days=int(DUMMY["follow_up_days"]),
+            deal_value=DUMMY["deal_value"],
+            stage_entered=DUMMY["stage_entered"],
+            pipeline_url=f"{frontend_url}/pipeline",
+            custom_intro=custom_intro, custom_closing=custom_closing,
+            style=style,
         )
 
     else:

@@ -398,7 +398,19 @@ export default function Invoices() {
                     <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: 'pointer' }}>
                       <td>
                         <div style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{fmtDate(inv.created_at)}</div>
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
+                          {fmtDate(inv.created_at)}
+                          <span style={{
+                            fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
+                            padding: '1px 6px', borderRadius: 8,
+                            background: inv.invoice_type === 'subscription' ? '#2d6a9f18' : '#8c827918',
+                            color: inv.invoice_type === 'subscription' ? '#2d6a9f' : '#8c8279',
+                          }}>
+                            {inv.invoice_type === 'subscription'
+                              ? (inv.billing_cycle ? inv.billing_cycle.charAt(0).toUpperCase() + inv.billing_cycle.slice(1) : 'Subscription')
+                              : 'One-Time'}
+                          </span>
+                        </div>
                       </td>
                       <td>
                         <div

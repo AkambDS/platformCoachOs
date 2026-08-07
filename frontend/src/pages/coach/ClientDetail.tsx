@@ -1250,11 +1250,17 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
   const clientFiles: any[] = clientFilesData?.results || clientFilesData || []
 
   const genericTemplates: any[] = (workspace as any)?.generic_templates || []
-  // Show every saved template as a starting point here, not just whichever one is
-  // currently "live" for the Client Communication slot — template_use_case_map only
+  // Show every template assigned to Client Communication as a starting point here, not
+  // just whichever one is currently "live" for the slot — template_use_case_map only
   // holds one active template per use case, but a coach may have several saved
-  // (e.g. a friendly note AND a contract) they'd reasonably want to start from.
-  const commTemplates = genericTemplates
+  // (e.g. a friendly note AND a contract) they'd reasonably want to start from. Also
+  // include unassigned templates (like a fresh Contract Agreement draft) since those
+  // don't know their use case yet — but exclude templates tagged for a different,
+  // incompatible use case (Booking Confirmation, Invoice, etc.), whose placeholders
+  // wouldn't resolve in a free-form client message anyway.
+  const commTemplates = genericTemplates.filter((t: any) =>
+    !t.use_cases || t.use_cases.length === 0 || t.use_cases.includes('client_communication')
+  )
 
   const renderPreview = async (d: any) => {
     setPreviewLoading(true)

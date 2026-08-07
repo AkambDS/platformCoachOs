@@ -14,7 +14,8 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
                  body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif",
                  show_header: bool = True,
                  show_footer: bool = True,
-                 footer_text: str = "") -> str:
+                 footer_text: str = "",
+                 show_contact_line: bool = True) -> str:
     if logo_url:
         brand = (
             f'<table role="presentation" cellpadding="0" cellspacing="0">'
@@ -74,14 +75,18 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
 
     disclaimer = footer_text.strip() or "This is an automated notification &mdash; please do not reply directly to this email."
 
+    contact_row = (
+        f"""<p style="margin:0 0 8px;font-size:13px;color:#9e9890;
+                  font-family:{body_font};line-height:1.7;">
+          {contact_line}
+        </p>""" if show_contact_line else ""
+    )
+
     footer_row = f"""
     <!-- ── Footer ── -->
     <tr>
       <td style="padding:28px 0 0;text-align:center;">
-        <p style="margin:0 0 8px;font-size:13px;color:#9e9890;
-                  font-family:{body_font};line-height:1.7;">
-          {contact_line}
-        </p>
+        {contact_row}
         <p style="margin:0 0 6px;font-size:11px;color:#b5afa6;
                   font-family:{body_font};">
           {disclaimer}
@@ -281,6 +286,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     header_tagline = s.get("header_tagline", "")
     show_header    = s.get("show_header", True)
     show_footer    = s.get("show_footer", True)
+    show_contact_line = s.get("show_contact_line", True)
     footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
@@ -352,7 +358,8 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
                         header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
+                        show_contact_line=show_contact_line)
 
 
 # ── Reschedule / update email ────────────────────────────────────────────────────
@@ -370,6 +377,7 @@ def build_reschedule_email(activity, workspace_name: str, logo_url: str,
     header_tagline = s.get("header_tagline", "")
     show_header    = s.get("show_header", True)
     show_footer    = s.get("show_footer", True)
+    show_contact_line = s.get("show_contact_line", True)
     footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
@@ -431,7 +439,8 @@ def build_reschedule_email(activity, workspace_name: str, logo_url: str,
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
                         header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
+                        show_contact_line=show_contact_line)
 
 
 # ── Team invite email ────────────────────────────────────────────────────────────
@@ -447,6 +456,7 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
     header_tagline = s.get("header_tagline", "")
     show_header    = s.get("show_header", True)
     show_footer    = s.get("show_footer", True)
+    show_contact_line = s.get("show_contact_line", True)
     footer_text    = s.get("footer_text", "")
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
 
@@ -533,7 +543,7 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name or invited_by_name,
                         header_bg=header_bg, accent_color=accent_color,
                         header_tagline=header_tagline, show_header=show_header,
-                        show_footer=show_footer, footer_text=footer_text)
+                        show_footer=show_footer, footer_text=footer_text, show_contact_line=show_contact_line)
 
 
 # ── Reminder email ───────────────────────────────────────────────────────────────
@@ -551,6 +561,7 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     header_tagline = s.get("header_tagline", "")
     show_header    = s.get("show_header", True)
     show_footer    = s.get("show_footer", True)
+    show_contact_line = s.get("show_contact_line", True)
     footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     value_color    = s.get("value_color")    or "#1a1714"
@@ -615,7 +626,8 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
                         header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text)
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
+                        show_contact_line=show_contact_line)
 
 
 # ── Cancellation email ───────────────────────────────────────────────────────────
@@ -752,6 +764,74 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,
                         header_tagline=header_tagline, body_font=body_font)
+
+
+# ── Payment receipt email ──────────────────────────────────────────────────────
+
+def build_payment_receipt_email(invoice, workspace_name: str, logo_url: str,
+                                 amount_paid: str, payment_date: str,
+                                 owner_email: str = "", owner_name: str = "",
+                                 custom_intro: str = "", custom_closing: str = "",
+                                 style: dict = None) -> str:
+    """Sent when an invoice is recorded as fully paid (InvoiceViewSet.record_payment).
+    Deliberately a separate builder from build_invoice_email rather than reusing it with
+    different copy — a receipt should read "Payment Received", not "Invoice", as its
+    heading, and show what was paid/when rather than what's owed."""
+    s = style or {}
+    header_bg      = s.get("header_bg")      or "#1a2f4e"
+    accent_color   = s.get("accent_color")   or "#b8922e"
+    header_tagline = s.get("header_tagline", "")
+    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
+    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
+    value_color    = s.get("value_color")    or "#1a1714"
+    show_header       = s.get("show_header", True)
+    show_footer       = s.get("show_footer", True)
+    footer_text       = s.get("footer_text", "")
+    show_contact_line = s.get("show_contact_line", True)
+
+    _default_intro   = f"Hi {invoice.client.first_name}, thank you — we've received your payment for invoice #{invoice.number}."
+    _default_closing = (f"Questions about this payment? Contact us at {owner_name or owner_email}."
+                        if owner_email else "")
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:{body_font};
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
+              font-weight:600;">
+      Payment Received
+    </p>
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
+               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      ${amount_paid}
+    </h1>
+    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:{body_font};">
+      {intro_html}
+    </p>
+
+    <!-- Receipt details -->
+    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
+           style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
+      {_detail_row("Invoice #", invoice.number)}
+      {_divider()}
+      {_detail_row("Amount Paid", f'<strong style="color:{value_color};font-size:18px;">${amount_paid}</strong>')}
+      {_divider()}
+      {_detail_row("Paid On", payment_date)}
+    </table>
+
+    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:{body_font};">{closing_html}</p>' if closing_html else ''}
+
+    <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:{heading_font};
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font,
+                        show_header=show_header, show_footer=show_footer,
+                        footer_text=footer_text, show_contact_line=show_contact_line)
 
 
 # ── Proper invoice PDF document (with line items) ────────────────────────────────
@@ -912,15 +992,39 @@ def build_pipeline_alert_email(
     deal_value: str,
     stage_entered: str,
     pipeline_url: str = "",
+    custom_intro: str = "",
+    custom_closing: str = "",
+    style: dict = None,
 ) -> str:
+    s              = style or {}
+    header_bg      = s.get("header_bg")      or "#1a2f4e"
+    accent_color   = s.get("accent_color")   or "#b8922e"
+    header_tagline = s.get("header_tagline", "")
+    show_header    = s.get("show_header", True)
+    show_footer    = s.get("show_footer", True)
+    show_contact_line = s.get("show_contact_line", True)
+    footer_text    = s.get("footer_text", "")
+    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
+    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
+
     overdue_days = days_in_stage - follow_up_days
 
     cta = ""
     if pipeline_url:
         cta = f"""
     <div style="margin:32px 0;text-align:center;">
-      {_cta_button("View Pipeline", pipeline_url, "#1a2f4e")}
+      {_cta_button("View Pipeline", pipeline_url, header_bg)}
     </div>"""
+
+    _default_intro = (
+        f"Hi {owner_name}, this deal has been sitting in "
+        f"<strong style=\"color:#1a1714;\">{stage_label}</strong> for "
+        f"<strong style=\"color:#c0392b;\">{days_in_stage} days</strong> "
+        f"&mdash; {overdue_days} day{'s' if overdue_days != 1 else ''} past your follow-up threshold."
+    )
+    _default_closing = "Once the deal moves to a new stage, this alert resets automatically."
+    intro_html   = custom_intro   or _default_intro
+    closing_html = custom_closing or _default_closing
 
     body = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
@@ -928,16 +1032,13 @@ def build_pipeline_alert_email(
               color:#c0392b;font-weight:600;">
       Follow-up required &middot; {overdue_days} day{'s' if overdue_days != 1 else ''} overdue
     </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+    <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       {client_name} needs attention
     </h1>
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {owner_name}, this deal has been sitting in
-      <strong style="color:#1a1714;">{stage_label}</strong> for
-      <strong style="color:#c0392b;">{days_in_stage} days</strong>
-      &mdash; {overdue_days} day{'s' if overdue_days != 1 else ''} past your follow-up threshold.
+      {intro_html}
     </p>
 
     <!-- Stage badge -->
@@ -976,14 +1077,18 @@ def build_pipeline_alert_email(
 
     <p style="margin:{'0' if cta else '28px'} 0 0;font-size:13px;color:#9e9890;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Once the deal moves to a new stage, this alert resets automatically.
+      {closing_html}
     </p>
     <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
               font-size:15px;color:#9e9890;">
       &mdash; {workspace_name}
     </p>"""
 
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg=header_bg, accent_color=accent_color,
+                        header_tagline=header_tagline, body_font=body_font,
+                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
+                        show_contact_line=show_contact_line)
 
 
 def build_client_communication_email(
@@ -1110,7 +1215,8 @@ def build_client_communication_email(
                         header_tagline=s.get("header_tagline", ""),
                         body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
                         show_header=s.get("show_header", True),
-                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""))
+                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""),
+                        show_contact_line=s.get("show_contact_line", True))
 
 
 def build_portal_invite_email(
@@ -1179,4 +1285,5 @@ def build_portal_invite_email(
                         header_tagline=s.get("header_tagline", ""),
                         body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
                         show_header=s.get("show_header", True),
-                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""))
+                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""),
+                        show_contact_line=s.get("show_contact_line", True))

@@ -17,7 +17,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Invoice
-        fields = ["id", "number", "status", "invoice_type", "total",
+        fields = ["id", "number", "status", "invoice_type", "billing_cycle", "total",
                   "amount_paid", "refund_amount", "due_date", "client_name",
                   "client_company", "created_at", "email_html"]
 
@@ -125,6 +125,8 @@ def _build_email_html(invoice: Invoice) -> str:
         disable_style = custom_html and tmpl.get("disable_style", False)
         _bf = tmpl_style.get("body_font", "")
         _hf = tmpl_style.get("heading_font", "")
+        _body_font_css = "'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif")
+        _accent_color  = "#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e")
         _show_logo = tmpl.get("show_logo", True) and not disable_style
         _logo_img = (
             f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
@@ -148,21 +150,27 @@ def _build_email_html(invoice: Invoice) -> str:
             header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
             accent_color="#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e"),
             value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
-            body_font_css="'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif"),
+            body_font_css=_body_font_css,
             heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
         )
 
         custom_intro   = _apply_tmpl(tmpl.get("intro",   ""), **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
+        from tasks.email import _DEFAULT_INVOICE_HTML, _invoice_footer_block
         tmpl_vars.update(dict(
             intro=custom_intro,
             closing=custom_closing,
             intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
             closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            footer_block=_invoice_footer_block(
+                tmpl_style.get("show_footer", True) and not disable_style,
+                body_font_css=_body_font_css, owner_email=owner_email,
+                owner_name=owner_name or owner_email, accent_color=_accent_color,
+                workspace_name=workspace.name, invoice_number=invoice.number,
+            ),
         ))
 
-        from tasks.email import _DEFAULT_INVOICE_HTML
         effective_tmpl = custom_html or _DEFAULT_INVOICE_HTML
         return _apply_tmpl(effective_tmpl, **tmpl_vars)
     except Exception:
