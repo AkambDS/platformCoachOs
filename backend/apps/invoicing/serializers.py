@@ -17,9 +17,9 @@ class InvoiceListSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = Invoice
-        fields = ["id", "number", "status", "invoice_type", "billing_cycle", "total",
-                  "amount_paid", "refund_amount", "due_date", "client_name",
-                  "client_company", "created_at", "email_html"]
+        fields = ["id", "number", "status", "invoice_type", "billing_cycle", "next_invoice_date",
+                  "subscription_auto_send", "total", "amount_paid", "refund_amount", "due_date",
+                  "sent_at", "archived", "client_name", "client_company", "created_at", "email_html"]
 
     def get_email_html(self, obj):
         return _build_email_html(obj)
@@ -40,7 +40,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "workspace", "number", "total", "subtotal",
                             "amount_paid", "stripe_invoice_id",
                             "stripe_subscription_id", "pdf_s3_key",
-                            "next_invoice_date",
+                            "next_invoice_date", "archived", "archived_at",
                             "created_at", "updated_at"]
 
     def get_payments(self, obj):
@@ -59,8 +59,31 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
         invoice.save()
         return invoice
 
+    # Once an invoice has actually been sent, what the client was billed shouldn't
+    # silently change — items/amounts/currency stay locked. Due date, notes, and which
+    # template drives its email stay editable, plus (for subscriptions) the recurring
+    # schedule itself — billing cycle/day/end/auto-send — since a coach adjusting when
+    # future invoices go out doesn't touch what's already been billed.
+    EDITABLE_AFTER_SEND = {
+        "due_date", "notes", "email_template_id",
+        "billing_cycle", "billing_day", "subscription_end", "subscription_auto_send",
+    }
+
     def update(self, instance, validated_data):
         items_data = validated_data.pop("items", None)
+        if instance.status != Invoice.Status.DRAFT:
+            if items_data is not None:
+                raise serializers.ValidationError(
+                    {"items": "Line items can't be changed once an invoice has been sent. Void it and create a new one instead."}
+                )
+            locked = [
+                f for f in validated_data
+                if f not in self.EDITABLE_AFTER_SEND and validated_data[f] != getattr(instance, f)
+            ]
+            if locked:
+                raise serializers.ValidationError(
+                    {f: "This field is locked once the invoice has been sent." for f in locked}
+                )
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         if items_data is not None:

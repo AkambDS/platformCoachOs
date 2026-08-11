@@ -6,13 +6,21 @@ import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
 
+// Date-only fields (due_date, next_invoice_date, etc.) come back as "YYYY-MM-DD" with no
+// time/timezone — `new Date(...)` parses that as UTC midnight, which renders as the
+// PREVIOUS day in any timezone behind UTC. Appending a local-time suffix parses it as
+// local midnight instead; datetime fields (sent_at, paid_at, etc.) already carry a
+// timezone and pass through unchanged.
+function parseDate(d: string) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(d) ? new Date(d + 'T00:00:00') : new Date(d)
+}
 function fmtDate(d: string | null | undefined) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return parseDate(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 function fmtDateShort(d: string | null | undefined) {
   if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  return parseDate(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 function fmt$(n: number | string) {
   return Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -226,6 +234,137 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
         </div>
       )}
     </div>
+  )
+}
+
+// ── Edit Details Modal — for invoices that have already been sent. Line items/amounts
+// are locked server-side (see EDITABLE_AFTER_SEND in InvoiceDetailSerializer); due date
+// and notes are always editable, and for subscriptions the recurring schedule itself
+// (billing cycle/day/end/auto-send) can also be adjusted — that only changes what
+// happens going forward, not anything already billed. ───────────────────────────
+function EditDetailsModal({ inv, onClose, onSaved }: {
+  inv: any; onClose: () => void; onSaved: () => void
+}) {
+  const isSubscription = inv.invoice_type === 'subscription'
+  const [dueDate, setDueDate] = useState(inv.due_date || '')
+  const [notes, setNotes]     = useState(inv.notes || '')
+  const [billingCycle, setBillingCycle] = useState(inv.billing_cycle || 'monthly')
+  const [billingDay, setBillingDay]     = useState(String(inv.billing_day ?? '1'))
+  const [subEnd, setSubEnd]             = useState(inv.subscription_end || '')
+  const [autoSend, setAutoSend]         = useState(inv.subscription_auto_send ?? true)
+  const [saving, setSaving]   = useState(false)
+  const [error, setError]     = useState('')
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError('')
+    try {
+      const payload: Record<string, any> = { due_date: dueDate || null, notes }
+      if (isSubscription) {
+        Object.assign(payload, {
+          billing_cycle: billingCycle,
+          billing_day: Number(billingDay),
+          subscription_end: subEnd || null,
+          subscription_auto_send: autoSend,
+        })
+      }
+      await invoicesApi.patch(inv.id, payload)
+      onSaved()
+    } catch (e: any) {
+      setError(e?.response?.data?.detail || 'Failed to save changes')
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <Modal
+      title="Edit Details"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn btn-outline btn-sm" onClick={onClose} style={{ letterSpacing: '.06em' }}>CANCEL</button>
+          <button className="btn btn-dark btn-sm" onClick={handleSave} disabled={saving} style={{ letterSpacing: '.06em' }}>
+            {saving ? 'SAVING…' : 'SAVE CHANGES'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.5 }}>
+        {inv.number} has already been sent — line items and amounts are locked so what the
+        client was billed can't silently change. Due date, notes{isSubscription ? ', and the recurring billing schedule' : ''} can still be updated.
+      </div>
+      {error && (
+        <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 6, fontSize: 12, color: '#b91c1c' }}>
+          {error}
+        </div>
+      )}
+      <div className="fgroup">
+        <label className="flabel">Due Date</label>
+        <input className="finput" type="date" value={dueDate} onChange={e => setDueDate(e.target.value)} />
+      </div>
+      <div className="fgroup">
+        <label className="flabel">Notes (internal)</label>
+        <textarea className="ftextarea" rows={3} value={notes} onChange={e => setNotes(e.target.value)} />
+      </div>
+
+      {isSubscription && (
+        <>
+          <div style={{ borderTop: '1px solid var(--border)', margin: '4px 0 14px' }} />
+          <div style={{ fontSize: 10, letterSpacing: '.1em', fontWeight: 600, color: 'var(--muted)', marginBottom: 10 }}>
+            RECURRING BILLING SCHEDULE
+          </div>
+          {inv.next_invoice_date && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
+              Next invoice currently scheduled for <strong>{fmtDate(inv.next_invoice_date)}</strong> — changes below apply from the next cycle onward.
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 16px', marginBottom: 14 }}>
+            <div className="fgroup" style={{ marginBottom: 0 }}>
+              <label className="flabel">Billing Cycle</label>
+              <select className="fselect" value={billingCycle} onChange={e => setBillingCycle(e.target.value)}>
+                <option value="monthly">Monthly</option>
+                <option value="quarterly">Quarterly</option>
+                <option value="yearly">Yearly</option>
+              </select>
+            </div>
+            <div className="fgroup" style={{ marginBottom: 0 }}>
+              <label className="flabel">Billing Day</label>
+              <select className="fselect" value={billingDay} onChange={e => setBillingDay(e.target.value)}>
+                {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+                  <option key={d} value={d}>{d}{d === 1 ? 'st' : d === 2 ? 'nd' : d === 3 ? 'rd' : 'th'} of the month</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 10, letterSpacing: '.1em', fontWeight: 600, color: 'var(--muted)', marginBottom: 8 }}>END DATE</div>
+            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="radio" name="edit_sub_end" checked={!subEnd} onChange={() => setSubEnd('')} style={{ accentColor: 'var(--ink)' }} />
+                Until manually stopped
+              </label>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
+                <input type="radio" name="edit_sub_end" checked={!!subEnd} onChange={() => setSubEnd(dueDate || new Date().toISOString().slice(0, 10))} style={{ accentColor: 'var(--ink)' }} />
+                End on date
+              </label>
+              {subEnd && (
+                <input className="finput" type="date" value={subEnd} onChange={e => setSubEnd(e.target.value)} style={{ marginBottom: 0, width: 160 }} />
+              )}
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label style={{ position: 'relative', display: 'inline-block', width: 40, height: 22, flexShrink: 0 }}>
+              <input type="checkbox" checked={autoSend} onChange={e => setAutoSend(e.target.checked)} style={{ opacity: 0, width: 0, height: 0 }} />
+              <span style={{ position: 'absolute', cursor: 'pointer', inset: 0, background: autoSend ? 'var(--ink)' : 'var(--border)', borderRadius: 11, transition: 'background .2s' }}>
+                <span style={{ position: 'absolute', top: 3, left: autoSend ? 21 : 3, width: 16, height: 16, background: '#fff', borderRadius: '50%', transition: 'left .2s' }} />
+              </span>
+            </label>
+            <span style={{ fontSize: 13, color: 'var(--ink)' }}>Automatically send invoice email each billing period</span>
+          </div>
+        </>
+      )}
+    </Modal>
   )
 }
 
@@ -926,6 +1065,7 @@ export default function InvoiceDetail() {
   const [sendMode, setSendMode] = useState<'send' | 'remind'>('send')
   const [sending,        setSending]        = useState(false)
   const [changingTemplate, setChangingTemplate] = useState(false)
+  const [showEditDetails, setShowEditDetails] = useState(false)
 
   const { data: inv, isLoading } = useQuery({
     queryKey: ['invoice', id],
@@ -976,6 +1116,44 @@ export default function InvoiceDetail() {
       qc.invalidateQueries({ queryKey: ['invoices'] })
       showToast('Invoice voided')
     } catch { showToast('Failed to void', 'error') }
+  }
+
+  const handleCancelSubscription = async () => {
+    if (!confirm('Stop recurring billing for this client? This invoice stays as-is — no future invoices will be auto-generated or sent.')) return
+    try {
+      await invoicesApi.cancelSubscription(id!)
+      qc.invalidateQueries({ queryKey: ['invoice', id] })
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      showToast('Recurring billing stopped')
+    } catch (e: any) { showToast(e?.response?.data?.detail || 'Failed to cancel subscription', 'error') }
+  }
+
+  const handleDelete = async () => {
+    if (!confirm(`Permanently delete draft invoice ${inv.number}? This cannot be undone.`)) return
+    try {
+      await invoicesApi.delete(id!)
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      showToast('Draft invoice deleted')
+      navigate('/invoices')
+    } catch (e: any) { showToast(e?.response?.data?.detail || 'Failed to delete', 'error') }
+  }
+
+  const handleArchive = async () => {
+    try {
+      await invoicesApi.archive(id!)
+      qc.invalidateQueries({ queryKey: ['invoice', id] })
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      showToast('Invoice archived')
+    } catch (e: any) { showToast(e?.response?.data?.detail || 'Failed to archive', 'error') }
+  }
+
+  const handleUnarchive = async () => {
+    try {
+      await invoicesApi.unarchive(id!)
+      qc.invalidateQueries({ queryKey: ['invoice', id] })
+      qc.invalidateQueries({ queryKey: ['invoices'] })
+      showToast('Invoice unarchived')
+    } catch (e: any) { showToast(e?.response?.data?.detail || 'Failed to unarchive', 'error') }
   }
 
   const handlePrint = () => {
@@ -1047,6 +1225,9 @@ ${el.innerHTML}
   const canPay    = ['sent', 'overdue', 'partially_paid'].includes(inv.status)
   const canVoid   = !['paid', 'void', 'refunded'].includes(inv.status)
   const canRefund = ['paid', 'partially_paid', 'partially_refunded'].includes(inv.status)
+  const canCancelSubscription = inv.invoice_type === 'subscription' && (inv.next_invoice_date || inv.subscription_auto_send)
+  const canDelete  = inv.status === 'draft'
+  const canArchive = ['paid', 'void', 'refunded', 'partially_refunded'].includes(inv.status) && !inv.archived
   const canEdit   = inv.status === 'draft'
   const canRemind = ['sent', 'overdue', 'partially_paid'].includes(inv.status)
 
@@ -1084,10 +1265,18 @@ ${el.innerHTML}
 
           {/* Header quick actions */}
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {canEdit && (
+            {canEdit ? (
               <button className="btn btn-outline" onClick={() => navigate(`/invoices/${id}/edit`)}
                 style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.04em' }}>
                 EDIT INVOICE
+              </button>
+            ) : (
+              <button className="btn btn-outline" onClick={() => setShowEditDetails(true)}
+                title={inv.invoice_type === 'subscription'
+                  ? 'Line items are locked once sent — but due date, notes, and the recurring billing schedule can still be updated'
+                  : 'Line items are locked once sent — but due date and notes can still be updated'}
+                style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.04em' }}>
+                EDIT DETAILS
               </button>
             )}
             {canSend && (
@@ -1258,6 +1447,34 @@ ${el.innerHTML}
                     fontSize: 11, cursor: 'pointer',
                   }}>Void</button>
                 )}
+                {canCancelSubscription && (
+                  <button onClick={handleCancelSubscription} style={{
+                    flex: '1 1 100%', minWidth: 120, padding: '7px 10px', borderRadius: 6,
+                    background: 'none', color: '#b91c1c', border: '1px solid #f5c6c2',
+                    fontSize: 11, fontWeight: 600, cursor: 'pointer',
+                  }}>Stop Recurring Billing (Client Left)</button>
+                )}
+                {canDelete && (
+                  <button onClick={handleDelete} style={{
+                    flex: 1, minWidth: 80, padding: '7px 10px', borderRadius: 6,
+                    background: 'none', color: '#b91c1c', border: '1px solid #f5c6c2',
+                    fontSize: 11, cursor: 'pointer',
+                  }}>Delete Draft</button>
+                )}
+                {canArchive && (
+                  <button onClick={handleArchive} style={{
+                    flex: 1, minWidth: 80, padding: '7px 10px', borderRadius: 6,
+                    background: 'none', color: 'var(--muted)', border: '1px solid var(--border)',
+                    fontSize: 11, cursor: 'pointer',
+                  }}>Archive</button>
+                )}
+                {inv.archived && (
+                  <button onClick={handleUnarchive} style={{
+                    flex: 1, minWidth: 80, padding: '7px 10px', borderRadius: 6,
+                    background: 'none', color: 'var(--muted)', border: '1px solid var(--border)',
+                    fontSize: 11, cursor: 'pointer',
+                  }}>Unarchive</button>
+                )}
               </div>
             </div>
 
@@ -1265,6 +1482,18 @@ ${el.innerHTML}
         </div>
       </div>
 
+      {showEditDetails && (
+        <EditDetailsModal
+          inv={inv}
+          onClose={() => setShowEditDetails(false)}
+          onSaved={() => {
+            setShowEditDetails(false)
+            qc.invalidateQueries({ queryKey: ['invoice', id] })
+            qc.invalidateQueries({ queryKey: ['invoices'] })
+            showToast('Invoice details updated')
+          }}
+        />
+      )}
       {showPayment && (
         <RecordPaymentModal
           inv={inv}

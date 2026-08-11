@@ -23,12 +23,12 @@ ONLYOFFICE_DOC_TYPES = {
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from django.utils import timezone
-from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote, ClientMessageDraft
+from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote, ClientMessageDraft, EmailLog
 from .serializers import (ClientListSerializer, ClientDetailSerializer,
                           AssessmentSerializer, ClientGoalSerializer,
                           CommitmentSerializer, GoalProgressSerializer,
                           ClientNoteSerializer, ClientMessageDraftSerializer)
-from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser, require_tab
+from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser, IsBusinessOwner, require_tab
 
 
 def _log(request, client, action, **metadata):
@@ -787,3 +787,135 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
         client = get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
         serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)
+
+
+# ── Email Communication tab ─────────────────────────────────────────────────────
+# Two read-only endpoints powering the Email Communication page: what's actually gone
+# out (EmailLog, written by tasks.email.send_* on every client-facing send) and what's
+# expected to go out next (computed live from subscription billing schedules + pending
+# session reminders — nothing "scheduled" is persisted, it's a projection).
+
+from rest_framework.decorators import api_view, permission_classes as _pc
+from datetime import timedelta
+
+
+@api_view(["GET"])
+@_pc([IsBusinessOwner])
+def email_log_sent(request):
+    """GET /api/clients/email-log/?days=30&client=&category= — emails actually sent."""
+    try:
+        days = int(request.query_params.get("days", 30))
+    except ValueError:
+        days = 30
+    since = timezone.now() - timedelta(days=days)
+    qs = (EmailLog.objects
+          .filter(workspace=request.user.workspace, sent_at__gte=since)
+          .select_related("client"))
+    client_id = request.query_params.get("client")
+    if client_id:
+        qs = qs.filter(client_id=client_id)
+    category = request.query_params.get("category")
+    if category:
+        qs = qs.filter(category=category)
+
+    data = [{
+        "id": str(e.id),
+        "category": e.category,
+        "category_label": e.get_category_display(),
+        "subject": e.subject,
+        "recipient_email": e.recipient_email,
+        "client_id": str(e.client_id) if e.client_id else None,
+        "client_name": e.client.full_name if e.client_id else "",
+        "sent_at": e.sent_at.isoformat(),
+        "related_id": e.related_id,
+    } for e in qs[:500]]
+    return Response(data)
+
+
+@api_view(["GET"])
+@_pc([IsBusinessOwner])
+def email_log_detail(request, pk):
+    """GET /api/clients/email-log/<id>/ — full detail for one sent email, including the
+    body_html snapshot captured at send time (what the client actually saw, not a live
+    re-render — templates/branding may have changed since)."""
+    try:
+        e = EmailLog.objects.select_related("client").get(pk=pk, workspace=request.user.workspace)
+    except EmailLog.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+    return Response({
+        "id": str(e.id),
+        "category": e.category,
+        "category_label": e.get_category_display(),
+        "subject": e.subject,
+        "recipient_email": e.recipient_email,
+        "client_id": str(e.client_id) if e.client_id else None,
+        "client_name": e.client.full_name if e.client_id else "",
+        "sent_at": e.sent_at.isoformat(),
+        "related_id": e.related_id,
+        "body_html": e.body_html,
+    })
+
+
+@api_view(["GET"])
+@_pc([IsBusinessOwner])
+def email_log_scheduled(request):
+    """GET /api/clients/email-log/scheduled/?days=30 — emails expected to go out in the
+    next N days: upcoming subscription invoice emails (Invoice.next_invoice_date) and
+    pending session reminders (Activity.reminder_24h_sent / reminder_1h_sent)."""
+    try:
+        days = int(request.query_params.get("days", 30))
+    except ValueError:
+        days = 30
+    now = timezone.now()
+    horizon_date = now.date() + timedelta(days=days)
+    horizon_dt   = now + timedelta(days=days)
+    workspace = request.user.workspace
+    items = []
+
+    from apps.invoicing.models import Invoice
+    inv_qs = Invoice.objects.filter(
+        workspace=workspace, invoice_type=Invoice.InvoiceType.SUBSCRIPTION,
+        subscription_auto_send=True, next_invoice_date__isnull=False,
+        next_invoice_date__lte=horizon_date,
+    ).select_related("client")
+    for inv in inv_qs:
+        items.append({
+            "id": f"invoice-{inv.id}",
+            "category": "invoice",
+            "category_label": "Invoice",
+            "subject": f"Invoice #{inv.number}",
+            "client_id": str(inv.client_id),
+            "client_name": inv.client.full_name,
+            "scheduled_for": inv.next_invoice_date.isoformat(),
+            "related_id": str(inv.id),
+        })
+
+    from apps.activities.models import Activity
+    act_qs = Activity.objects.filter(
+        workspace=workspace, status="scheduled",
+        start_at__gte=now, start_at__lte=horizon_dt,
+    ).select_related("client")
+    for act in act_qs:
+        if not act.client or not act.client.email:
+            continue
+        if not act.reminder_24h_sent:
+            reminder_at = act.start_at - timedelta(hours=24)
+        elif not act.reminder_1h_sent:
+            reminder_at = act.start_at - timedelta(hours=1)
+        else:
+            continue
+        if reminder_at > horizon_dt:
+            continue
+        items.append({
+            "id": f"activity-{act.id}",
+            "category": "activity_reminder",
+            "category_label": "Session Reminder",
+            "subject": f"Reminder: {act.title}",
+            "client_id": str(act.client_id),
+            "client_name": act.client.full_name,
+            "scheduled_for": reminder_at.date().isoformat(),
+            "related_id": str(act.id),
+        })
+
+    items.sort(key=lambda x: x["scheduled_for"])
+    return Response(items)

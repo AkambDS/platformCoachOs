@@ -3,23 +3,10 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { invoicesApi, clientsApi, activitiesApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { StatusBadge, EmptyState, useToast } from '../../components/ui'
+import { EmptyState, useToast } from '../../components/ui'
+import { parseDate, fmtDate, fmtDateTime, fmt$, PaymentBar, InvoiceTables } from '../../components/InvoiceTables'
 
 // ── helpers ───────────────────────────────────────────────────────────────────
-
-function fmtDate(d: string) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function fmtDateTime(d: string) {
-  if (!d) return '—'
-  return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-}
-
-function fmt$(n: number) {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
-}
 
 function exportCSV(invoices: any[]) {
   const headers = ['Invoice #', 'Issue Date', 'Client', 'Company', 'Amount', 'Paid', 'Status', 'Due Date']
@@ -40,44 +27,6 @@ function exportCSV(invoices: any[]) {
   a.click()
 }
 
-// ── Payment progress bar ──────────────────────────────────────────────────────
-
-function PaymentBar({ paid, total, status }: { paid: number; total: number; status: string }) {
-  const pct = total > 0 ? Math.min(100, (paid / total) * 100) : 0
-  const isOverdue   = status === 'overdue'
-  const isPaid      = status === 'paid'
-  const isPartial   = status === 'partially_paid'
-  const isRefunded  = ['refunded', 'partially_refunded'].includes(status)
-  const isDraft     = status === 'draft'
-
-  const textColor = isPaid ? '#3d6e4a'
-    : isOverdue   ? '#c0392b'
-    : isPartial   ? '#b8922e'
-    : isRefunded  ? '#8b5cf6'
-    : 'var(--muted)'
-
-  const barColor = isPaid ? '#3d6e4a'
-    : isOverdue   ? '#c0392b'
-    : isPartial   ? '#b8922e'
-    : '#d1ccc4'
-
-  const label = isPaid     ? `$${fmt$(paid)} paid`
-    : isRefunded            ? `−$${fmt$(paid)} refunded`
-    : isDraft               ? '—'
-    : `$${fmt$(paid)} of $${fmt$(total)}`
-
-  return (
-    <div>
-      <div style={{ fontSize: 12, color: textColor, fontWeight: 500, marginBottom: 3 }}>{label}</div>
-      {!isDraft && (
-        <div style={{ height: 4, background: '#e9e5df', borderRadius: 2, width: 120 }}>
-          <div style={{ height: '100%', width: `${pct}%`, background: barColor, borderRadius: 2, transition: 'width .3s' }} />
-        </div>
-      )}
-    </div>
-  )
-}
-
 // ── Client hub (shown when a client is selected) ──────────────────────────────
 
 const STAGE_COLOURS: Record<string, string> = {
@@ -85,7 +34,10 @@ const STAGE_COLOURS: Record<string, string> = {
   negotiation: '#a0522d', closed_won: '#3d6e4a', closed_lost: '#c0392b',
 }
 
-function ClientHub({ client, statusFilter, search }: { client: any; statusFilter: string; search: string }) {
+function ClientHub({ client, statusFilter, search, handleRemind, reminding }: {
+  client: any; statusFilter: string; search: string
+  handleRemind: (e: React.MouseEvent, invId: string) => void; reminding: string | null
+}) {
   const navigate = useNavigate()
 
   const { data: invData } = useQuery({
@@ -183,34 +135,22 @@ function ClientHub({ client, statusFilter, search }: { client: any; statusFilter
         </div>
       </div>
 
-      {/* Invoices table */}
-      <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-        <div style={{ padding: '14px 24px 12px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      {/* Invoices — same drafts/actionable tables as the all-clients view */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600 }}>INVOICES ({invoices.length})</div>
           <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new')} style={{ fontSize: 11 }}>+ New Invoice</button>
         </div>
         {invoices.length === 0 ? (
-          <div style={{ padding: '32px 24px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>No invoices for this client</div>
+          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '32px 24px', textAlign: 'center', color: 'var(--muted)', fontSize: 13 }}>
+            No invoices for this client
+          </div>
         ) : (
-          <table className="tbl" style={{ margin: 0 }}>
-            <thead><tr><th>INVOICE</th><th>STATUS</th><th>AMOUNT</th><th>PAYMENT</th><th>DUE DATE</th></tr></thead>
-            <tbody>
-              {invoices.map((inv: any) => (
-                <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: 'pointer' }}>
-                  <td>
-                    <div style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{fmtDate(inv.created_at)}</div>
-                  </td>
-                  <td><StatusBadge status={inv.status} /></td>
-                  <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
-                  <td><PaymentBar paid={Number(inv.amount_paid || 0)} total={Number(inv.total)} status={inv.status} /></td>
-                  <td style={{ fontSize: 13, color: inv.status === 'overdue' ? 'var(--warn)' : 'inherit', fontWeight: inv.status === 'overdue' ? 600 : 400 }}>
-                    {fmtDate(inv.due_date)}{inv.status === 'overdue' ? ' ⚠' : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <InvoiceTables
+            invoices={invoices} clients={[]} navigate={navigate}
+            handleRemind={handleRemind} reminding={reminding}
+            showClientColumn={false}
+          />
         )}
       </div>
     </div>
@@ -226,6 +166,7 @@ export default function Invoices() {
   const [statusFilter, setStatusFilter] = useState('')
   const [search, setSearch] = useState('')
   const [reminding, setReminding] = useState<string | null>(null)
+  const [showArchived, setShowArchived] = useState(false)
 
   const handleRemind = async (e: React.MouseEvent, invId: string) => {
     e.stopPropagation()
@@ -245,8 +186,8 @@ export default function Invoices() {
   const selectedClient = clients.find((c: any) => String(c.id) === selectedClientId) || null
 
   const { data: allData, isLoading } = useQuery({
-    queryKey: ['invoices', statusFilter],
-    queryFn: () => invoicesApi.list({ status: statusFilter || undefined }).then(r => r.data),
+    queryKey: ['invoices', statusFilter, showArchived],
+    queryFn: () => invoicesApi.list({ status: statusFilter || undefined, archived: showArchived ? '1' : undefined }).then(r => r.data),
     enabled: !selectedClientId,
   })
   const allInvoices: any[] = allData?.results || allData || []
@@ -322,8 +263,12 @@ export default function Invoices() {
           ))}
         </div>
 
-        {/* ── Filters bar ── */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
+        {/* ── Filters bar — sticky so it stays visible while the table below scrolls ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20, flexWrap: 'wrap',
+          position: 'sticky', top: 0, zIndex: 5, background: '#f7f4ef',
+          padding: '10px 0', borderBottom: '1px solid var(--border)',
+        }}>
           {/* Search */}
           <div style={{ position: 'relative', flex: 1, minWidth: 220, maxWidth: 420 }}>
             <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--muted)', fontSize: 14 }}>🔍</span>
@@ -349,17 +294,20 @@ export default function Invoices() {
             ))}
           </select>
 
-          {/* Status pills */}
+          {/* Status pills — archived invoices are always paid/void/refunded, so viewing
+              Archived and filtering by an open status (Unpaid/Overdue/etc.) can never
+              both match anything at once. Keep the two mutually exclusive so picking
+              one always clears the other, instead of silently combining into 0 results. */}
           <div style={{ display: 'flex', gap: 4 }}>
             {STATUS_PILLS.map(s => (
               <button
                 key={s}
-                onClick={() => setStatusFilter(s)}
+                onClick={() => { setStatusFilter(s); setShowArchived(false) }}
                 style={{
                   padding: '6px 14px', borderRadius: 20, border: '1px solid var(--border)',
-                  background: statusFilter === s ? 'var(--ink)' : '#fff',
-                  color: statusFilter === s ? '#fff' : 'var(--muted)',
-                  cursor: 'pointer', fontSize: 12, fontWeight: statusFilter === s ? 600 : 400,
+                  background: !showArchived && statusFilter === s ? 'var(--ink)' : '#fff',
+                  color: !showArchived && statusFilter === s ? '#fff' : 'var(--muted)',
+                  cursor: 'pointer', fontSize: 12, fontWeight: !showArchived && statusFilter === s ? 600 : 400,
                   transition: 'all .15s',
                 }}
               >
@@ -367,106 +315,35 @@ export default function Invoices() {
               </button>
             ))}
           </div>
+
+          {/* Archived toggle */}
+          <button
+            onClick={() => { setShowArchived(a => !a); setStatusFilter('') }}
+            title={showArchived ? 'Showing archived invoices — click to go back to active ones' : 'Show archived invoices (paid/void/refunded ones you\'ve tucked away)'}
+            style={{
+              padding: '6px 14px', borderRadius: 20, border: '1px solid var(--border)',
+              background: showArchived ? '#8c8279' : '#fff',
+              color: showArchived ? '#fff' : 'var(--muted)',
+              cursor: 'pointer', fontSize: 12, fontWeight: showArchived ? 600 : 400,
+            }}
+          >
+            🗄 {showArchived ? 'Archived' : 'Archive'}
+          </button>
         </div>
 
         {/* ── Client hub OR all-invoices table ── */}
         {selectedClient ? (
-          <ClientHub client={selectedClient} statusFilter={statusFilter} search={search} />
+          <ClientHub client={selectedClient} statusFilter={statusFilter} search={search} handleRemind={handleRemind} reminding={reminding} />
         ) : isLoading ? (
           <div style={{ textAlign: 'center', padding: 60, color: 'var(--muted)' }}>Loading…</div>
         ) : filtered.length === 0 ? (
           <EmptyState icon="$" title="No invoices" message={search || statusFilter ? 'No invoices match your filters' : 'Create your first invoice'} />
         ) : (
-          <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-            <table className="tbl" style={{ margin: 0 }}>
-              <thead>
-                <tr>
-                  <th>INVOICE</th>
-                  <th>CLIENT</th>
-                  <th>AMOUNT</th>
-                  <th>STATUS</th>
-                  <th>PAYMENT</th>
-                  <th>DUE DATE</th>
-                  <th>ACTIONS</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((inv: any) => {
-                  const isOverdue = inv.status === 'overdue'
-                  const client = clients.find((c: any) => `${c.first_name} ${c.last_name}` === inv.client_name)
-                  return (
-                    <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)} style={{ cursor: 'pointer' }}>
-                      <td>
-                        <div style={{ fontWeight: 600, fontFamily: 'Cormorant Garamond, serif', fontSize: 15 }}>{inv.number}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1, display: 'flex', alignItems: 'center', gap: 5 }}>
-                          {fmtDate(inv.created_at)}
-                          <span style={{
-                            fontSize: 9.5, fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase',
-                            padding: '1px 6px', borderRadius: 8,
-                            background: inv.invoice_type === 'subscription' ? '#2d6a9f18' : '#8c827918',
-                            color: inv.invoice_type === 'subscription' ? '#2d6a9f' : '#8c8279',
-                          }}>
-                            {inv.invoice_type === 'subscription'
-                              ? (inv.billing_cycle ? inv.billing_cycle.charAt(0).toUpperCase() + inv.billing_cycle.slice(1) : 'Subscription')
-                              : 'One-Time'}
-                          </span>
-                        </div>
-                      </td>
-                      <td>
-                        <div
-                          style={{ fontWeight: 500, color: 'var(--ink)', cursor: 'pointer' }}
-                          onClick={e => { e.stopPropagation(); if (client) setSelectedClientId(String(client.id)) }}
-                        >
-                          {inv.client_name || '—'}
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{inv.client_company || ''}</div>
-                      </td>
-                      <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16, fontWeight: 600 }}>${Number(inv.total).toFixed(2)}</td>
-                      <td><StatusBadge status={inv.status} /></td>
-                      <td><PaymentBar paid={Number(inv.amount_paid || 0)} total={Number(inv.total)} status={inv.status} /></td>
-                      <td style={{ whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const daysLeft = inv.due_date ? Math.ceil((new Date(inv.due_date).getTime() - Date.now()) / 86400000) : null
-                          const isDueSoon = daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !isOverdue
-                          const color = isOverdue ? '#c0392b' : isDueSoon ? '#e67e22' : 'inherit'
-                          const suffix = isOverdue ? ' ✕' : isDueSoon ? ' ⚠' : ''
-                          return (
-                            <span style={{ fontSize: 13, color, fontWeight: isOverdue || isDueSoon ? 600 : 400 }}>
-                              {fmtDate(inv.due_date)}{suffix}
-                            </span>
-                          )
-                        })()}
-                      </td>
-                      <td onClick={e => e.stopPropagation()} style={{ whiteSpace: 'nowrap' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                          {['sent', 'overdue', 'partially_paid'].includes(inv.status) && (() => {
-                            const daysLeft = inv.due_date ? Math.ceil((new Date(inv.due_date).getTime() - Date.now()) / 86400000) : null
-                            const isDueSoon = daysLeft !== null && daysLeft >= 0 && daysLeft <= 7 && !isOverdue
-                            const reminderColor = isOverdue ? '#c0392b' : isDueSoon ? '#e67e22' : 'var(--muted)'
-                            return (
-                              <span
-                                onClick={e => handleRemind(e, String(inv.id))}
-                                style={{
-                                  color: reminderColor,
-                                  fontSize: 13, fontWeight: 600, cursor: reminding === String(inv.id) ? 'default' : 'pointer',
-                                  opacity: reminding === String(inv.id) ? 0.5 : 1,
-                                }}
-                              >
-                                {reminding === String(inv.id) ? 'Sending…' : 'Send Reminder →'}
-                              </span>
-                            )
-                          })()}
-                          <span style={{ color: 'var(--gold)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
-                            View →
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+          <InvoiceTables
+            invoices={filtered} clients={clients} navigate={navigate}
+            handleRemind={handleRemind} reminding={reminding}
+            showClientColumn onClientClick={id => setSelectedClientId(id)}
+          />
         )}
       </div>
       {toastEl}

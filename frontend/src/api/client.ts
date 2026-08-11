@@ -144,10 +144,19 @@ export const invoicesApi = {
   void:          (id: string)         => api.post(`/api/invoices/${id}/void/`),
   refund:        (id: string, d: any) => api.post(`/api/invoices/${id}/refund/`, d),
   remind:        (id: string)         => api.post(`/api/invoices/${id}/remind/`),
+  cancelSubscription: (id: string)    => api.post(`/api/invoices/${id}/cancel-subscription/`),
+  delete:        (id: string)         => api.delete(`/api/invoices/${id}/`),
+  archive:       (id: string)         => api.post(`/api/invoices/${id}/archive/`),
+  unarchive:     (id: string)         => api.post(`/api/invoices/${id}/unarchive/`),
   catalogItems:  ()                   => api.get('/api/invoices/service-catalog/'),
   catalogCreate: (d: any)             => api.post('/api/invoices/service-catalog/', d),
   catalogUpdate: (id: string, d: any) => api.patch(`/api/invoices/service-catalog/${id}/`, d),
   catalogDelete: (id: string)         => api.delete(`/api/invoices/service-catalog/${id}/`),
+}
+export const emailCommApi = {
+  sent:      (p?: any)       => api.get('/api/clients/email-log/', { params: p }),
+  scheduled: (p?: any)       => api.get('/api/clients/email-log/scheduled/', { params: p }),
+  detail:    (id: string)    => api.get(`/api/clients/email-log/${id}/`),
 }
 export const pipelineApi = {
   deals:   (p?: any)               => api.get('/api/pipeline/deals/', { params: p }),

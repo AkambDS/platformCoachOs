@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { InvoiceTables, parseDate as parseInvoiceDate } from '../../components/InvoiceTables'
 import { EDITABLE_OFFICE_EXTS, OfficeEditorModal, InlineOfficeViewer } from '../../components/OfficeEditor'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuthStore } from '../../store/auth'
@@ -1723,6 +1724,17 @@ export default function ClientDetail() {
   const [showInviteConfirm, setShowInviteConfirm] = useState(false)
   const [showRevokeConfirm, setShowRevokeConfirm] = useState(false)
   const [portalLoading, setPortalLoading] = useState(false)
+  const [reminding, setReminding] = useState<string | null>(null)
+
+  const handleRemind = async (e: React.MouseEvent, invId: string) => {
+    e.stopPropagation()
+    setReminding(invId)
+    try {
+      await invoicesApi.remind(invId)
+      showToast('Reminder sent')
+    } catch { showToast('Failed to send reminder', 'error') }
+    finally { setReminding(null) }
+  }
 
   const { data: client, isLoading } = useQuery<Client, Error>({
     queryKey: ['client', id],
@@ -1873,6 +1885,11 @@ export default function ClientDetail() {
   const actList: any[]  = activities?.results || activities || []
   const goalList: any[] = goals?.results || goals || []
   const invList: any[]  = invoices?.results || invoices || []
+  // Overview widget is a compact summary card, not the full ledger — show only the
+  // 5 most recently created invoices (mixed statuses), with a link to the full list.
+  const top5Invoices: any[] = [...invList]
+    .sort((a, b) => parseInvoiceDate(b.created_at).getTime() - parseInvoiceDate(a.created_at).getTime())
+    .slice(0, 5)
   const noteList: any[] = notesData?.results || notesData || []
   const fileList: any[] = filesData?.results || filesData || []
   const deal: any = dealData?.results?.[0] || dealData?.[0] || null
@@ -2239,31 +2256,29 @@ export default function ClientDetail() {
               {/* INVOICES — row 2, col 1 */}
               <div className="card" style={{ gridColumn: 1, gridRow: 2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Invoices</span>
-                  <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices')}>+ New</button>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Invoices{invList.length > 5 ? ` (${top5Invoices.length} of ${invList.length})` : ''}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {invList.length > 5 && (
+                      <button onClick={() => setTab('Invoices')}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
+                        View all →
+                      </button>
+                    )}
+                    <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>+ New</button>
+                  </div>
                 </div>
                 {invList.length === 0 ? (
                   <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>No invoices yet.</div>
                 ) : (
-                  <table className="tbl">
-                    <thead><tr><th>Invoice</th><th>Date</th><th>Amount</th><th>Status</th></tr></thead>
-                    <tbody>
-                      {invList.map((inv: any) => (
-                        <tr key={inv.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/invoices/${inv.id}`)}>
-                          <td style={{ fontWeight: 500 }}>{inv.number}</td>
-                          <td>{fmtDate(inv.issue_date || inv.created_at)}</td>
-                          <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16 }}>
-                            {inv.total ? `$${parseFloat(inv.total).toLocaleString()}` : '—'}
-                          </td>
-                          <td>
-                            <span className={`pill ${inv.status === 'paid' ? 'pill-green' : inv.status === 'overdue' ? 'pill-red' : 'pill-grey'}`} style={{ fontSize: 10 }}>
-                              {inv.status}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                  <div style={{ padding: 16, overflowX: 'auto' }}>
+                    <InvoiceTables
+                      invoices={top5Invoices} clients={[]} navigate={navigate}
+                      handleRemind={handleRemind} reminding={reminding}
+                      showClientColumn={false}
+                    />
+                  </div>
                 )}
               </div>
 
@@ -2396,20 +2411,11 @@ export default function ClientDetail() {
             {invList.length === 0
               ? <EmptyState icon="$" title="No invoices" message="Create the first invoice for this client" />
               : (
-                <table className="tbl">
-                  <thead><tr><th>Invoice</th><th>Status</th><th>Total</th><th>Due</th><th></th></tr></thead>
-                  <tbody>
-                    {invList.map((inv: any) => (
-                      <tr key={inv.id} onClick={() => navigate(`/invoices/${inv.id}`)}>
-                        <td style={{ fontWeight: 600 }}>{inv.number}</td>
-                        <td><StatusBadge status={inv.status} /></td>
-                        <td style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 16 }}>${inv.total}</td>
-                        <td style={{ color: inv.status === 'overdue' ? 'var(--warn)' : 'inherit' }}>{fmtDate(inv.due_date)}</td>
-                        <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <InvoiceTables
+                  invoices={invList} clients={[]} navigate={navigate}
+                  handleRemind={handleRemind} reminding={reminding}
+                  showClientColumn={false}
+                />
               )
             }
           </>

@@ -85,6 +85,10 @@ class Invoice(WorkspaceModel):
     refunded_at       = models.DateTimeField(null=True, blank=True)
     # PDF
     pdf_s3_key        = models.CharField(max_length=500, blank=True)
+    # Hides a closed-out invoice (paid/void/refunded) from the default list without
+    # touching its financial state — purely a view filter, always reversible.
+    archived          = models.BooleanField(default=False)
+    archived_at       = models.DateTimeField(null=True, blank=True)
     # Overrides the workspace's default "invoice" generic template (Settings > Generic
     # Templates) for this invoice's send/reminder emails — e.g. a separate "Monthly"
     # template vs the default "Daily"/one-time one. Blank = use the workspace default.

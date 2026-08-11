@@ -19,7 +19,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if self.action == "destroy":
             return [IsAssistantOrAbove(), require_tab("invoices", "delete")()]
         if self.action in ("create", "update", "partial_update", "send_invoice",
-                            "record_payment", "void_invoice", "issue_refund", "send_reminder"):
+                            "record_payment", "void_invoice", "issue_refund", "send_reminder",
+                            "cancel_subscription", "archive", "unarchive"):
             return [IsAssistantOrAbove(), require_tab("invoices", "edit")()]
         return [IsAssistantOrAbove(), require_tab("invoices", "view")()]
 
@@ -62,10 +63,28 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         client_filter = self.request.query_params.get("client")
         if client_filter:
             qs = qs.filter(client__id=client_filter)
+        # Archived invoices are hidden from the default LIST view only — pass ?archived=1
+        # to see only archived ones, or ?archived=all to see everything. Detail actions
+        # (retrieve/void/archive/unarchive/etc.) must still be able to find an already-
+        # archived invoice by id, so this filter never applies outside of "list".
+        if self.action == "list":
+            archived_param = self.request.query_params.get("archived")
+            if archived_param in ("1", "true", "True"):
+                qs = qs.filter(archived=True)
+            elif archived_param != "all":
+                qs = qs.filter(archived=False)
         return qs
 
     def get_serializer_class(self):
         return InvoiceListSerializer if self.action == "list" else InvoiceDetailSerializer
+
+    def perform_destroy(self, instance):
+        # Matches every mainstream invoicing tool: once sent, an invoice is permanent
+        # record — Void it instead. Only an unsent draft can actually be deleted.
+        if instance.status != Invoice.Status.DRAFT:
+            from rest_framework.exceptions import ValidationError
+            raise ValidationError({"detail": "Only draft invoices can be deleted. Void a sent invoice instead."})
+        instance.delete()
 
     @action(detail=True, methods=["post"], url_path="send")
     def send_invoice(self, request, pk=None):
@@ -145,6 +164,45 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         from tasks.email import send_invoice_email
         send_invoice_email(str(invoice.id))
         return Response({"detail": "Reminder sent."})
+
+    @action(detail=True, methods=["post"], url_path="cancel-subscription")
+    def cancel_subscription(self, request, pk=None):
+        """POST /api/invoices/{id}/cancel-subscription/ — stop future recurring billing
+        (e.g. a client leaves mid-subscription). Only affects what happens going forward:
+        does NOT void or change the status of this invoice — whatever's already been sent
+        stays as-is, it just won't auto-generate a next one."""
+        invoice = self.get_object()
+        if invoice.invoice_type != Invoice.InvoiceType.SUBSCRIPTION:
+            return Response({"detail": "Only subscription invoices can be cancelled."}, status=400)
+        if not invoice.next_invoice_date and not invoice.subscription_auto_send:
+            return Response({"detail": "Recurring billing is already stopped for this invoice."}, status=400)
+        invoice.subscription_auto_send = False
+        invoice.next_invoice_date = None
+        invoice.save(update_fields=["subscription_auto_send", "next_invoice_date"])
+        return Response(InvoiceDetailSerializer(invoice).data)
+
+    @action(detail=True, methods=["post"], url_path="archive")
+    def archive(self, request, pk=None):
+        """POST /api/invoices/{id}/archive/ — hide a closed-out invoice from the default
+        list. Purely a view filter: doesn't touch status, amounts, or anything else, and
+        is always reversible via unarchive. Only for invoices that are actually done
+        (paid/void/refunded) — an open invoice still needing action shouldn't disappear."""
+        invoice = self.get_object()
+        if invoice.status not in (Invoice.Status.PAID, Invoice.Status.VOID,
+                                   Invoice.Status.REFUNDED, Invoice.Status.PARTIALLY_REFUNDED):
+            return Response({"detail": "Only paid, void, or refunded invoices can be archived."}, status=400)
+        invoice.archived = True
+        invoice.archived_at = timezone.now()
+        invoice.save(update_fields=["archived", "archived_at"])
+        return Response(InvoiceDetailSerializer(invoice).data)
+
+    @action(detail=True, methods=["post"], url_path="unarchive")
+    def unarchive(self, request, pk=None):
+        invoice = self.get_object()
+        invoice.archived = False
+        invoice.archived_at = None
+        invoice.save(update_fields=["archived", "archived_at"])
+        return Response(InvoiceDetailSerializer(invoice).data)
 
 
 # ── Stripe webhook handlers — disabled (Stripe removed from INSTALLED_APPS)

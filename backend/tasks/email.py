@@ -592,6 +592,11 @@ def send_activity_confirmation_email(activity_id: str):
         msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
         msg.send()
 
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_CONFIRMATION,
+                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
+                     body_html=html)
+
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
             frontend_url  = getattr(settings, "FRONTEND_URL", "").rstrip("/")
@@ -723,6 +728,11 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
+
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_REMINDER,
+                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
+                     body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
@@ -862,6 +872,11 @@ def send_activity_reschedule_email(activity_id: str):
         msg.send()
         logger.info(f"Reschedule email sent to {client.email} for activity {activity_id}")
 
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_RESCHEDULE,
+                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
+                     body_html=html)
+
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
             coach_first   = activity.coach.first_name if activity.coach else coach_name
@@ -932,6 +947,11 @@ def send_activity_cancellation_email(activity_id: str):
         msg.attach_alternative(html, "text/html")
         msg.attach("cancel.ics", ics_bytes, "text/calendar")
         msg.send()
+
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_CANCELLATION,
+                     client=client, subject=f"Cancelled: {activity.title}", recipient_email=client.email,
+                     related_id=activity_id, body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         notify_email = coach_email or owner_email
@@ -1070,6 +1090,11 @@ def send_invoice_email(invoice_id: str):
         )
         msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")
+
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.INVOICE,
+                     client=invoice.client, subject=subject, recipient_email=invoice.client.email,
+                     related_id=invoice_id, body_html=html)
     except Exception as e:
         logger.error(f"send_invoice_email failed: {e}")
 
@@ -1133,6 +1158,11 @@ def send_payment_receipt_email(invoice_id: str):
             logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
         msg.send()
         logger.info(f"Receipt email sent for {invoice.number}")
+
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.PAYMENT_RECEIPT,
+                     client=invoice.client, subject=subject, recipient_email=invoice.client.email,
+                     related_id=invoice_id, body_html=html)
     except Exception as e:
         logger.error(f"send_payment_receipt_email failed: {e}")
 
@@ -1664,6 +1694,11 @@ def send_portal_invite_email(client_id: str):
         msg.attach_alternative(html, "text/html")
         msg.send()
         logger.info(f"Portal invite sent to {client.email} for client {client_id}")
+
+        from apps.clients.models import EmailLog
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.PORTAL_INVITE,
+                     client=client, subject=subject, recipient_email=client.email, related_id=client_id,
+                     body_html=html)
     except Exception as e:
         logger.error(f"send_portal_invite_email failed: {e}")
 
@@ -1768,6 +1803,11 @@ def send_client_communication_email(draft_id: str):
     draft.sent_at = timezone.now()
     draft.save(update_fields=["status", "sent_at", "updated_at"])
     logger.info(f"Client communication sent to {client.email} (draft {draft_id})")
+
+    from apps.clients.models import EmailLog
+    EmailLog.log(workspace=workspace, category=EmailLog.Category.CLIENT_MESSAGE,
+                 client=client, subject=subject, recipient_email=client.email, related_id=draft_id,
+                 body_html=html)
 
 
 @shared_task(name="tasks.email.send_contract_signed_notice")

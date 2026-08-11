@@ -16,6 +16,27 @@ function today() {
   return new Date().toISOString().slice(0, 10)
 }
 
+// Date-only fields ("YYYY-MM-DD") parse as UTC midnight under plain `new Date(...)`, which
+// renders as the PREVIOUS day in any timezone behind UTC. Appending a local-time suffix
+// parses it as local midnight instead.
+function parseDate(d: string) {
+  return new Date(d + 'T00:00:00')
+}
+
+// First occurrence of `billingDay` on/after `startDateStr` — mirrors the backend's
+// compute_next_invoice_date() day-snapping logic, but for the series' very first invoice
+// rather than the one after it.
+function firstBillingDate(startDateStr: string, billingDay: number) {
+  if (!startDateStr) return ''
+  const start = parseDate(startDateStr)
+  const day = Math.min(Math.max(billingDay || 1, 1), 28)
+  let candidate = new Date(start.getFullYear(), start.getMonth(), day)
+  if (candidate < start) {
+    candidate = new Date(start.getFullYear(), start.getMonth() + 1, day)
+  }
+  return candidate.toISOString().slice(0, 10)
+}
+
 // ── Mini PDF preview rendered inline ─────────────────────────────────────────
 
 function PdfPreview({ client, items, subtotal, discount, tax, total, dueDate, notes, workspaceName, logoUrl }: {
@@ -25,7 +46,7 @@ function PdfPreview({ client, items, subtotal, discount, tax, total, dueDate, no
   dueDate: string; notes: string
   workspaceName: string; logoUrl: string
 }) {
-  const due = dueDate ? new Date(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+  const due = dueDate ? parseDate(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
   const clientName = client ? `${client.first_name} ${client.last_name}` : '—'
   const clientEmail = client?.email || ''
   const clientCompany = client?.company || ''
@@ -268,7 +289,7 @@ function SendPreviewModal({ client, amount, dueDate, onClose, onConfirm, sending
     if (amount) params.amount = amount
     if (dueDate) {
       try {
-        params.due_date = new Date(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+        params.due_date = parseDate(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
       } catch { params.due_date = dueDate }
     }
     if (client?.first_name) params.client_name = `${client.first_name} ${client.last_name || ''}`.trim()
@@ -435,12 +456,21 @@ export default function NewInvoice() {
 
   const clientFirstName = selectedClient?.first_name || 'Client'
 
+  // For subscriptions, due_date isn't picked manually — it's the first occurrence of
+  // BILLING DAY on/after START DATE, so it always stays in sync with the billing cycle.
+  const computedDueDate = useMemo(
+    () => tab === 'subscription'
+      ? firstBillingDate(form.subscription_start, Number(form.billing_day))
+      : form.due_date,
+    [tab, form.subscription_start, form.billing_day, form.due_date]
+  )
+
   const payload = useMemo(() => ({
     client: form.client,
     invoice_type: tab === 'subscription' ? 'subscription' : 'one_time',
     currency: form.currency,
     issue_date: form.issue_date || null,
-    due_date: form.due_date || null,
+    due_date: computedDueDate || null,
     notes: form.notes,
     discount_type: form.discount_type,
     discount_value: Number(form.discount_value),
@@ -457,7 +487,7 @@ export default function NewInvoice() {
       subscription_end: form.subscription_end || null,
       subscription_auto_send: form.subscription_auto_send,
     } : {}),
-  }), [form, items, tab])
+  }), [form, items, tab, computedDueDate])
 
   const parseError = (e: any) => {
     const d = e.response?.data
@@ -625,12 +655,27 @@ export default function NewInvoice() {
                 <input className="finput" type="date" value={form.issue_date} onChange={e => set('issue_date', e.target.value)} />
               </div>
 
-              {/* Due Date */}
+              {/* Due Date — manual for one-time invoices; derived from the billing cycle for subscriptions */}
               <div className="fgroup" style={{ marginBottom: 0 }}>
                 <label className="flabel">DUE DATE</label>
-                <input className="finput" type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
+                {tab === 'subscription' ? (
+                  <div
+                    className="finput"
+                    style={{ display: 'flex', alignItems: 'center', color: 'var(--muted)', background: 'var(--paper)', cursor: 'default' }}
+                    title="Set automatically from Start Date + Billing Day in Subscription Settings"
+                  >
+                    {computedDueDate ? parseDate(computedDueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                  </div>
+                ) : (
+                  <input className="finput" type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
+                )}
               </div>
             </div>
+            {tab === 'subscription' && (
+              <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+                Due date is set automatically from Start Date + Billing Day below.
+              </div>
+            )}
 
             {/* Notes */}
             <div className="fgroup" style={{ marginTop: 12, marginBottom: 0 }}>
@@ -903,7 +948,7 @@ export default function NewInvoice() {
               discount={discountAmt}
               tax={taxAmt}
               total={total}
-              dueDate={form.due_date}
+              dueDate={computedDueDate}
               notes={form.notes}
               workspaceName={workspaceName}
               logoUrl={logoUrl}
@@ -916,7 +961,7 @@ export default function NewInvoice() {
         <SendPreviewModal
           client={selectedClient}
           amount={total.toFixed(2)}
-          dueDate={form.due_date}
+          dueDate={computedDueDate}
           sending={saving}
           onClose={() => setShowSendPreview(false)}
           onConfirm={() => { setShowSendPreview(false); handleSend() }}

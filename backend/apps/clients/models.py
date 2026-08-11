@@ -226,3 +226,47 @@ class GoalProgress(WorkspaceModel):
     class Meta:
         db_table = "clients_goalprogress"
         ordering = ["-created_at"]
+
+
+class EmailLog(WorkspaceModel):
+    """A record of every client-facing email actually sent — powers the Email
+    Communication tab's "sent" history. Written by the various tasks.email.send_*
+    functions right after a successful send; see EmailLog.log() below."""
+    class Category(models.TextChoices):
+        INVOICE               = "invoice",               "Invoice"
+        PAYMENT_RECEIPT       = "payment_receipt",        "Payment Receipt"
+        ACTIVITY_CONFIRMATION = "activity_confirmation",  "Session Confirmation"
+        ACTIVITY_REMINDER     = "activity_reminder",      "Session Reminder"
+        ACTIVITY_RESCHEDULE   = "activity_reschedule",    "Session Rescheduled"
+        ACTIVITY_CANCELLATION = "activity_cancellation",  "Session Cancelled"
+        CLIENT_MESSAGE        = "client_message",         "Client Message"
+        PORTAL_INVITE         = "portal_invite",           "Portal Invite"
+
+    id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    client          = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name="email_logs")
+    category        = models.CharField(max_length=30, choices=Category.choices)
+    subject         = models.CharField(max_length=300, blank=True)
+    recipient_email = models.EmailField(blank=True)
+    body_html       = models.TextField(blank=True)  # snapshot of what was actually sent, for the detail view
+    related_id      = models.CharField(max_length=64, blank=True)  # invoice/activity/draft id — informational
+    sent_at         = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "clients_emaillog"
+        ordering = ["-sent_at"]
+
+    def __str__(self):
+        return f"{self.category} -> {self.recipient_email} ({self.sent_at})"
+
+    @classmethod
+    def log(cls, *, workspace, category, recipient_email, client=None, subject="", related_id="", body_html=""):
+        """Best-effort logging — a logging failure must never break the actual send."""
+        try:
+            cls.objects.create(
+                workspace=workspace, category=category, client=client,
+                subject=subject or "", recipient_email=recipient_email or "",
+                related_id=str(related_id) if related_id else "", body_html=body_html or "",
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("EmailLog.log failed for category=%s", category)

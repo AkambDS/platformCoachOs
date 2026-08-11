@@ -5,7 +5,7 @@ import { queryClient } from '../../lib/queryClient'
 import {
   LayoutDashboard, Users, Kanban, CalendarDays, CheckSquare,
   Receipt, BookOpen, BarChart3, Settings, LogOut,
-  MessageSquarePlus, Building2, KeyRound, Bell, UserCog,
+  MessageSquarePlus, Building2, KeyRound, Bell, UserCog, Mail,
 } from 'lucide-react'
 
 type NavItem =
@@ -26,6 +26,7 @@ const COACH_NAV: NavItem[] = [
   { to: '/activities', Icon: CheckSquare,       label: 'Activities', tab: 'activities', tour: 'activities' },
   { section: 'Finance' },
   { to: '/invoices',   Icon: Receipt,           label: 'Invoices',   tab: 'invoices',   tour: 'invoices'   },
+  { to: '/email-communication', Icon: Mail,     label: 'Email Communication', roles: ['business_owner'] },
   { section: 'Content' },
   { to: '/library',    Icon: BookOpen,          label: 'Library',    tab: 'library'    },
   { to: '/reports',    Icon: BarChart3,         label: 'Reports',    tab: 'reports',    tour: 'reports' },

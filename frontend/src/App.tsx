@@ -22,6 +22,7 @@ import Activities  from "./pages/coach/Activities"
 import Invoices      from "./pages/coach/Invoices"
 import NewInvoice    from "./pages/coach/NewInvoice"
 import InvoiceDetail from "./pages/coach/InvoiceDetail"
+import EmailCommunication from "./pages/coach/EmailCommunication"
 import Reports        from "./pages/coach/Reports"
 import Settings       from "./pages/coach/Settings"
 import Library        from "./pages/coach/Library"
@@ -162,6 +163,7 @@ export default function App() {
           <Route path="/invoices/new"      element={<PrivateRoute><TabRoute tab="invoices"><NewInvoice /></TabRoute></PrivateRoute>} />
           <Route path="/invoices/:id"      element={<PrivateRoute><TabRoute tab="invoices"><InvoiceDetail /></TabRoute></PrivateRoute>} />
           <Route path="/invoices/:id/edit" element={<PrivateRoute><TabRoute tab="invoices"><NewInvoice /></TabRoute></PrivateRoute>} />
+          <Route path="/email-communication" element={<PrivateRoute><RoleRoute allow={["business_owner"]}><EmailCommunication /></RoleRoute></PrivateRoute>} />
           <Route path="/reports"       element={<PrivateRoute><TabRoute tab="reports"><Reports /></TabRoute></PrivateRoute>} />
           <Route path="/library"         element={<PrivateRoute><TabRoute tab="library"><Library /></TabRoute></PrivateRoute>} />
           <Route path="/team"            element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Team /></RoleRoute></PrivateRoute>} />
