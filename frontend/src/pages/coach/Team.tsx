@@ -56,6 +56,29 @@ function PermissionsModal({ member, onClose }: { member: any; onClose: () => voi
     })
   }
 
+  // Column header checkboxes — bulk-toggle one permission (e.g. View) across every
+  // section at once, instead of clicking each row individually.
+  const columnAllChecked = (field: 'view' | 'edit' | 'delete') => TABS.every(t => perms[t.key]?.[field])
+  const toggleColumn = (field: 'view' | 'edit' | 'delete') => {
+    const value = !columnAllChecked(field)
+    setPerms(p => {
+      const next: TabPerms = { ...p }
+      TABS.forEach(t => {
+        const cell = { ...next[t.key], [field]: value }
+        if ((field === 'edit' || field === 'delete') && value) cell.view = true
+        if (field === 'view' && !value) { cell.edit = false; cell.delete = false }
+        next[t.key] = cell
+      })
+      return next
+    })
+  }
+
+  // "Select All" / "Clear All" — grant or revoke full access to every feature in one
+  // click, so an owner doesn't have to check 18 boxes to give someone full access.
+  const allGranted = TABS.every(t => perms[t.key]?.view && perms[t.key]?.edit && perms[t.key]?.delete)
+  const selectAll = () => setPerms(TABS.reduce((acc, t) => ({ ...acc, [t.key]: { view: true, edit: true, delete: true } }), {} as TabPerms))
+  const clearAll = () => setPerms(blankTabPerms())
+
   const handleSave = async () => {
     setSaving(true)
     try {
@@ -79,17 +102,43 @@ function PermissionsModal({ member, onClose }: { member: any; onClose: () => voi
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
       ) : (
         <>
-          <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 16, lineHeight: 1.6 }}>
-            Control exactly which sections <strong style={{ color: 'var(--ink)' }}>{member.full_name}</strong> can
-            see and act on. Unchecked sections are completely hidden from them.
-          </p>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+            <p style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
+              Control exactly which sections <strong style={{ color: 'var(--ink)' }}>{member.full_name}</strong> can
+              see and act on. Unchecked sections are completely hidden from them.
+            </p>
+            <button
+              type="button"
+              onClick={allGranted ? clearAll : selectAll}
+              style={{
+                whiteSpace: 'nowrap', background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+                padding: '5px 12px', fontSize: 12, fontWeight: 600, color: 'var(--gold)', cursor: 'pointer',
+              }}
+            >
+              {allGranted ? 'Clear All' : 'Select All Features'}
+            </button>
+          </div>
           <table className="tbl">
             <thead>
               <tr>
                 <th>Section</th>
-                <th style={{ textAlign: 'center' }}>View</th>
-                <th style={{ textAlign: 'center' }}>Edit</th>
-                <th style={{ textAlign: 'center' }}>Delete</th>
+                {(['view', 'edit', 'delete'] as const).map(field => (
+                  <th key={field} style={{ textAlign: 'center', cursor: 'pointer', userSelect: 'none' }}
+                    onClick={() => toggleColumn(field)}
+                    title={`Toggle ${field} for every section`}
+                  >
+                    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+                      <input
+                        type="checkbox"
+                        checked={columnAllChecked(field)}
+                        onChange={() => toggleColumn(field)}
+                        onClick={e => e.stopPropagation()}
+                        style={{ width: 13, height: 13, cursor: 'pointer', accentColor: 'var(--gold)' }}
+                      />
+                      {field.charAt(0).toUpperCase() + field.slice(1)}
+                    </span>
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>

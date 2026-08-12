@@ -2432,7 +2432,7 @@ export default function ClientDetail() {
       {showDeleteConfirm && (
         <Modal title="Delete Client" onClose={() => !deleting && setShowDeleteConfirm(false)}>
           <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
-            Permanently delete <strong>{client.first_name} {client.last_name}</strong>? This cannot be undone — all their sessions, notes, invoices, and files will be removed.
+            Permanently delete <strong>{client.first_name} {client.last_name}</strong>? This cannot be undone — all their sessions, notes, invoices, pipeline deals, and files will be removed.
           </div>
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
             <button className="btn btn-outline btn-sm" onClick={() => setShowDeleteConfirm(false)} disabled={deleting}>Cancel</button>

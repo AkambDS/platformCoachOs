@@ -116,6 +116,14 @@ class ClientDetailSerializer(serializers.ModelSerializer):
     def validate_email(self, value):
         if not value:
             return value
+        # Editing an existing client re-submits its current email on every save (the
+        # edit form sends the full record, not just the changed field) — if that email
+        # happens to collide with another client's (pre-existing duplicate data, or a
+        # legacy import), that's not a NEW duplicate being introduced, so it shouldn't
+        # block unrelated edits like a job title change. Only enforce uniqueness when
+        # the email is actually changing to a new value.
+        if self.instance and self.instance.email == value:
+            return value
         request = self.context.get("request")
         if not request or not request.user.workspace_id:
             return value

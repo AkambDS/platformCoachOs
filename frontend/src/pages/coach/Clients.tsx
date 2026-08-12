@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { EmptyState, useToast } from '../../components/ui'
+import { EmptyState, useToast, Modal } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
 
 const AVATAR_COLS = ['c1', 'c2', 'c3', 'c4', 'c5']
@@ -42,6 +42,14 @@ export default function Clients() {
   const navigate = useNavigate()
   const { user } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
+  // Creating clients only needs the "Clients" edit permission (matches the backend's
+  // require_tab("clients", "edit") check on POST /api/clients/) — so a coach/assistant
+  // the owner has granted Edit for via Team > Permissions can add clients too, not just
+  // the owner. CSV import stays owner/coach-only (backend gates it with IsCoachOrAbove
+  // regardless of the edit flag), and deleting a client stays owner-only (cascades
+  // invoices/deals/files, backend hard-requires IsBusinessOwnerOrSuperuser for it).
+  const canAddClients = isOwner || !!user?.tab_permissions?.clients?.edit
+  const isCoachOrAbove = isOwner || user?.role === 'coach'
   const queryClient = useQueryClient()
   const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
@@ -50,6 +58,8 @@ export default function Clients() {
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
   const [importing, setImporting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   const { data: statusConfigs = [] } = useQuery({
     queryKey: ['client-status-configs'],
@@ -100,6 +110,21 @@ export default function Clients() {
     }
   }
 
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await clientsApi.delete(deleteTarget.id)
+      queryClient.invalidateQueries({ queryKey: ['clients'] })
+      toast('Client deleted')
+      setDeleteTarget(null)
+    } catch {
+      toast('Failed to delete client', 'error')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const { data, isLoading } = useQuery({
     queryKey: ['clients', search, statusFilter, selectedTag],
     queryFn: () => clientsApi.list({
@@ -131,14 +156,16 @@ export default function Clients() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-ghost" onClick={handleExport}>↓ Export CSV</button>
-            {isOwner && (
+            {isCoachOrAbove && (
               <>
                 <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
                   {importing ? 'Importing…' : '↑ Import CSV'}
                 </button>
                 <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
-                <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
               </>
+            )}
+            {canAddClients && (
+              <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
             )}
           </div>
         </div>
@@ -247,7 +274,7 @@ export default function Clients() {
           <EmptyState icon="◉" title="No clients found" message={
             selectedTag || search ? 'Try adjusting your search or filters' : 'Add your first client to get started'
           } action={
-            isOwner && !selectedTag && !search
+            canAddClients && !selectedTag && !search
               ? <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
               : undefined
           } />
@@ -261,6 +288,7 @@ export default function Clients() {
                 <th>Coach</th>
                 <th>Last Activity</th>
                 <th></th>
+                {isOwner && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -336,12 +364,41 @@ export default function Clients() {
                     })()}
                   </td>
                   <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
+                  {isOwner && (
+                    <td onClick={e => e.stopPropagation()}>
+                      <button
+                        title="Delete client"
+                        onClick={() => setDeleteTarget({ id: c.id, name: `${c.first_name} ${c.last_name}` })}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#b5afa6', fontSize: 14, padding: 4 }}
+                        onMouseEnter={e => (e.currentTarget.style.color = '#c0392b')}
+                        onMouseLeave={e => (e.currentTarget.style.color = '#b5afa6')}
+                      >✕</button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         )}
       </div>
+
+      {deleteTarget && (
+        <Modal title="Delete Client" onClose={() => !deleting && setDeleteTarget(null)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Permanently delete <strong>{deleteTarget.name}</strong>? This cannot be undone — all their sessions, notes, invoices, pipeline deals, and files will be removed.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)} disabled={deleting}>Cancel</button>
+            <button
+              className="btn btn-sm"
+              onClick={handleDelete}
+              disabled={deleting}
+              style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+            >{deleting ? 'Deleting…' : 'Delete Client'}</button>
+          </div>
+        </Modal>
+      )}
+
       {toastEl}
     </AppShell>
   )
