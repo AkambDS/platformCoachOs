@@ -190,6 +190,20 @@ class ClientViewSet(viewsets.ModelViewSet):
         except UnicodeDecodeError:
             return Response({"detail": "File must be UTF-8 encoded."}, status=400)
 
+        # Duplicate guard — re-importing a previously exported CSV (or any file that
+        # overlaps with existing records) would otherwise create exact copies since
+        # Client has no unique constraint on email/name. Match by email when the row
+        # has one (the reliable identity signal — what export always fills in); fall
+        # back to first+last name only for rows with no email. Seeded from what's
+        # already in the workspace and updated as we go, so duplicates *within* the
+        # same file (not just against the DB) are also caught.
+        existing_qs     = Client.objects.filter(workspace=request.user.workspace)
+        existing_emails = set(e.lower() for e in existing_qs.exclude(email="").values_list("email", flat=True))
+        existing_names  = set(
+            (f.strip().lower(), l.strip().lower())
+            for f, l in existing_qs.values_list("first_name", "last_name")
+        )
+
         reader  = csv.DictReader(io.StringIO(text))
         created = 0
         skipped = 0
@@ -201,6 +215,17 @@ class ClientViewSet(viewsets.ModelViewSet):
             if not first and not last and not email:
                 skipped += 1
                 continue
+
+            email_key = email.lower()
+            name_key  = (first.lower(), last.lower())
+            display_name = f"{first} {last}".strip() or "(no name)"
+            if email_key and email_key in existing_emails:
+                errors.append({"row": i, "error": f'"{display_name}" — a client with email "{email}" already exists in this workspace.'})
+                continue
+            if not email_key and name_key in existing_names:
+                errors.append({"row": i, "error": f'"{display_name}" — a client with this name already exists in this workspace.'})
+                continue
+
             raw_tags = row.get("tags", "").strip()
             tags = [t.strip() for t in raw_tags.replace(",", "|").split("|") if t.strip()]
             client_status = row.get("status", "Lead").strip() or "Lead"
@@ -221,6 +246,9 @@ class ClientViewSet(viewsets.ModelViewSet):
                     notes=row.get("notes", "").strip(),
                 )
                 created += 1
+                if email_key:
+                    existing_emails.add(email_key)
+                existing_names.add(name_key)
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})
 
@@ -626,9 +654,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
 
 class ClientMessageDraftViewSet(viewsets.ModelViewSet):
     """CRUD /api/clients/{client_pk}/messages/ — draft/edit client-communication emails.
-    Draft-only for now: no send action exists yet."""
+    Owner-only for now — there's no dedicated tab permission for this yet (same call
+    made for the Email Communication page), so it's locked down rather than left open
+    to every coach by the older, coarser role check."""
     serializer_class   = ClientMessageDraftSerializer
-    permission_classes = [IsCoachOrAbove]
+    permission_classes = [IsBusinessOwner]
 
     def _get_client(self):
         return get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])

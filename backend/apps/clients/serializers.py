@@ -122,23 +122,48 @@ class ClientDetailSerializer(serializers.ModelSerializer):
         # legacy import), that's not a NEW duplicate being introduced, so it shouldn't
         # block unrelated edits like a job title change. Only enforce uniqueness when
         # the email is actually changing to a new value.
-        if self.instance and self.instance.email == value:
+        if self.instance and self.instance.email.lower() == value.lower():
             return value
         request = self.context.get("request")
         if not request or not request.user.workspace_id:
             return value
         workspace_id = request.user.workspace_id
-        # Duplicate client check
-        qs = Client.objects.filter(workspace_id=workspace_id, email=value)
+        # Duplicate client check — case-insensitive, since Foo@x.com and foo@x.com are
+        # the same mailbox and CSV import already treats them as one duplicate.
+        qs = Client.objects.filter(workspace_id=workspace_id, email__iexact=value)
         if self.instance:
             qs = qs.exclude(pk=self.instance.pk)
         if qs.exists():
             raise serializers.ValidationError("A client with this email already exists in your workspace.")
         # Workspace user (coach/owner) check
         from apps.accounts.models import User
-        if User.objects.filter(workspace_id=workspace_id, email=value).exists():
+        if User.objects.filter(workspace_id=workspace_id, email__iexact=value).exists():
             raise serializers.ValidationError("This email belongs to a coach or team member in your workspace.")
         return value
+
+    def validate(self, attrs):
+        # Second, independent duplicate signal alongside the email check above — catches
+        # the same person being re-entered under a different (or blank) email, and
+        # matches the same email-or-name duplicate rule CSV import already enforces.
+        request = self.context.get("request")
+        if not request or not request.user.workspace_id:
+            return attrs
+        first = (attrs.get("first_name", getattr(self.instance, "first_name", "")) or "").strip()
+        last  = (attrs.get("last_name",  getattr(self.instance, "last_name",  "")) or "").strip()
+        if not (first or last):
+            return attrs
+        # Same rationale as validate_email: a full-record resave of an unchanged name
+        # shouldn't fail because some other pre-existing record happens to share it.
+        if self.instance and self.instance.first_name.lower() == first.lower() and self.instance.last_name.lower() == last.lower():
+            return attrs
+        workspace_id = request.user.workspace_id
+        qs = Client.objects.filter(workspace_id=workspace_id, first_name__iexact=first, last_name__iexact=last)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            full_name = f"{first} {last}".strip()
+            raise serializers.ValidationError({"first_name": f'A client named "{full_name}" already exists in this workspace.'})
+        return attrs
 
 
 def _presigned_url(s3_key):

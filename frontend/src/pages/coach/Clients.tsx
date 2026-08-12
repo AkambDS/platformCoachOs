@@ -60,6 +60,7 @@ export default function Clients() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [importResult, setImportResult] = useState<{ created: number; errors: { row: number; error: string }[] } | null>(null)
 
   const { data: statusConfigs = [] } = useQuery({
     queryKey: ['client-status-configs'],
@@ -101,7 +102,14 @@ export default function Clients() {
       const fd = new FormData()
       fd.append('file', file)
       const { data } = await clientsApi.importCsv(fd)
-      toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}${data.errors.length ? ` · ${data.errors.length} error(s)` : ''}`, 'success')
+      if (data.errors.length > 0) {
+        // Errors (e.g. duplicate name/email already in this workspace) need their
+        // per-row description visible, not just a count — a toast isn't enough room
+        // and disappears too fast to read a list of rows.
+        setImportResult({ created: data.created, errors: data.errors })
+      } else {
+        toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}`, 'success')
+      }
       queryClient.invalidateQueries({ queryKey: ['clients'] })
     } catch {
       toast('Import failed. Check the file format.', 'error')
@@ -395,6 +403,29 @@ export default function Clients() {
               disabled={deleting}
               style={{ background: '#c0392b', color: '#fff', border: 'none' }}
             >{deleting ? 'Deleting…' : 'Delete Client'}</button>
+          </div>
+        </Modal>
+      )}
+
+      {importResult && (
+        <Modal title="Import Results" onClose={() => setImportResult(null)}>
+          <div style={{ padding: '4px 0 16px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Imported <strong>{importResult.created}</strong> new client{importResult.created !== 1 ? 's' : ''}.
+            {' '}<strong style={{ color: '#c0392b' }}>{importResult.errors.length}</strong> row{importResult.errors.length !== 1 ? 's' : ''} skipped:
+          </div>
+          <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+            {importResult.errors.map((e, i) => (
+              <div key={i} style={{
+                padding: '8px 12px', fontSize: 13, color: 'var(--ink)',
+                borderBottom: i < importResult.errors.length - 1 ? '1px solid var(--border)' : 'none',
+              }}>
+                <span style={{ color: 'var(--muted)', fontWeight: 600, marginRight: 6 }}>Row {e.row}:</span>
+                {e.error}
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
+            <button className="btn btn-dark btn-sm" onClick={() => setImportResult(null)}>Done</button>
           </div>
         </Modal>
       )}

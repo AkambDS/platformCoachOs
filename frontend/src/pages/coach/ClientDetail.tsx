@@ -1712,6 +1712,17 @@ export default function ClientDetail() {
   const { show: showToast, el: toastEl } = useToast()
   const { user, workspace } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
+  // Invoices sub-tab follows the same per-tab RBAC grant as the standalone Invoices
+  // page — a coach without it granted shouldn't see client invoices or be able to
+  // create one from inside the Clients tab either. Client Communication has no
+  // dedicated tab permission yet, so it's owner-only for now (same call made for the
+  // Email Communication page).
+  const canViewInvoices = isOwner || !!user?.tab_permissions?.invoices?.view
+  const canEditInvoices = isOwner || !!user?.tab_permissions?.invoices?.edit
+  const canViewClientComm = isOwner
+  const visibleTabs = TABS.filter(t =>
+    (t !== 'Invoices' || canViewInvoices) && (t !== 'Client Communication' || canViewClientComm)
+  )
   const tz: string | undefined = (workspace as any)?.workspace_timezone || undefined
   const [tab, setTab] = useState('Overview')
   const [showActivity, setShowActivity] = useState(false)
@@ -1769,7 +1780,7 @@ export default function ClientDetail() {
   const { data: invoices } = useQuery<any, Error>({
     queryKey: ['client-invoices', id],
     queryFn: () => invoicesApi.list({ client: id }).then(r => r.data),
-    enabled: tab === 'Invoices' || tab === 'Overview',
+    enabled: (tab === 'Invoices' || tab === 'Overview') && canViewInvoices,
   })
 
   const { data: notesData, refetch: refetchNotes } = useQuery<any, Error>({
@@ -1996,7 +2007,7 @@ export default function ClientDetail() {
 
           {/* Profile Tabs */}
           <div style={{ display: 'flex', borderTop: '1px solid var(--border)' }}>
-            {TABS.map(t => (
+            {visibleTabs.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
                 padding: '11px 18px', fontSize: 12, fontWeight: 500,
                 color: tab === t ? 'var(--ink)' : 'var(--muted)',
@@ -2254,6 +2265,7 @@ export default function ClientDetail() {
               </div>
 
               {/* INVOICES — row 2, col 1 */}
+              {canViewInvoices && (
               <div className="card" style={{ gridColumn: 1, gridRow: 2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
@@ -2266,7 +2278,9 @@ export default function ClientDetail() {
                         View all →
                       </button>
                     )}
-                    <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>+ New</button>
+                    {canEditInvoices && (
+                      <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>+ New</button>
+                    )}
                   </div>
                 </div>
                 {invList.length === 0 ? (
@@ -2281,6 +2295,7 @@ export default function ClientDetail() {
                   </div>
                 )}
               </div>
+              )}
 
               {/* PIPELINE DEAL — row 2, col 2 */}
               {deal && (() => {
@@ -2400,13 +2415,15 @@ export default function ClientDetail() {
         )}
 
         {/* ── Invoices ── */}
-        {tab === 'Invoices' && (
+        {tab === 'Invoices' && canViewInvoices && (
           <>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
               <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Invoices</div>
-              <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>
-                + Create Invoice
-              </button>
+              {canEditInvoices && (
+                <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>
+                  + Create Invoice
+                </button>
+              )}
             </div>
             {invList.length === 0
               ? <EmptyState icon="$" title="No invoices" message="Create the first invoice for this client" />
@@ -2421,7 +2438,7 @@ export default function ClientDetail() {
           </>
         )}
 
-        {tab === 'Client Communication' && (
+        {tab === 'Client Communication' && canViewClientComm && (
           <ClientCommunicationPanel clientId={id!} clientName={`${client.first_name} ${client.last_name}`} coachName={(client as any).coach_name || ''} />
         )}
       </div>
