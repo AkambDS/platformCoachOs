@@ -429,12 +429,11 @@ export default function Clients() {
               : undefined
           } />
         ) : (
-          <div style={{ maxHeight: 'max(420px, calc(100vh - 480px))', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
-          <table className="tbl" style={{ margin: 0 }}>
-            <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
+          <table className="tbl">
+            <thead>
               <tr>
                 {isOwner && (
-                  <th style={{ background: '#fff', width: 32 }}>
+                  <th style={{ width: 32 }}>
                     <input
                       type="checkbox"
                       checked={allOnPageSelected}
@@ -444,13 +443,13 @@ export default function Clients() {
                     />
                   </th>
                 )}
-                <th style={{ background: '#fff' }}>Client</th>
-                <th style={{ background: '#fff' }}>Status</th>
-                <th style={{ background: '#fff' }}>Tags</th>
-                <th style={{ background: '#fff' }}>Coach</th>
-                <th style={{ background: '#fff' }}>Last Activity</th>
-                <th style={{ background: '#fff' }}></th>
-                {isOwner && <th style={{ background: '#fff' }}></th>}
+                <th>Client</th>
+                <th>Status</th>
+                <th>Tags</th>
+                <th>Coach</th>
+                <th>Last Activity</th>
+                <th></th>
+                {isOwner && <th></th>}
               </tr>
             </thead>
             <tbody>
@@ -551,7 +550,6 @@ export default function Clients() {
               ))}
             </tbody>
           </table>
-          </div>
         )}
 
         {!isLoading && clients.length > 0 && totalPages > 1 && (
