@@ -272,6 +272,13 @@ class ClientViewSet(viewsets.ModelViewSet):
             return ""
 
         for i, row in enumerate(reader, start=2):
+            # A row with fewer commas than the header (common in hand-edited/exported-
+            # from-elsewhere CSVs — e.g. trailing empty columns just omitted rather than
+            # left as ",,,") gets those missing columns filled with None by DictReader,
+            # not "" — even though row.get(key, "") looks like it should default safely,
+            # it doesn't: the key IS present, just mapped to None, so every .strip() call
+            # below would crash the entire import instead of skipping one blank field.
+            row = {k: (v if v is not None else "") for k, v in row.items()}
             first = row.get("first_name", "").strip()
             last  = row.get("last_name", "").strip()
             email = get_any(row, "email_1", "email")
