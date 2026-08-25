@@ -43,7 +43,14 @@ export default function SignaturePad({ value, onChange }: { value: string; onCha
     const canvas = canvasRef.current!
     const rect = canvas.getBoundingClientRect()
     const point = 'touches' in e ? e.touches[0] : e
-    return { x: point.clientX - rect.left, y: point.clientY - rect.top }
+    // The canvas's drawing buffer (320×110, set via the width/height attributes below)
+    // is stretched via CSS to fill whatever width the container gives it — often much
+    // wider than 320px. getBoundingClientRect() reports the STRETCHED size, so without
+    // rescaling here the stroke gets drawn off from wherever the cursor actually is
+    // (worse the wider the container), which is what read as "laggy"/unusable.
+    const scaleX = canvas.width / rect.width
+    const scaleY = canvas.height / rect.height
+    return { x: (point.clientX - rect.left) * scaleX, y: (point.clientY - rect.top) * scaleY }
   }
 
   const start = (e: React.MouseEvent | React.TouchEvent) => {

@@ -10,6 +10,7 @@ import SignaturePad from '../../components/SignaturePad'
 import { useAuthStore } from '../../store/auth'
 
 const GOAL_STATUSES  = ['active','completed','paused']
+const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
 
 type Client = {
   id?: string
@@ -2049,19 +2050,57 @@ export default function ClientDetail() {
                   <div style={{ padding: '20px 24px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
                       <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Email 1</label>
+                        <input className="finput" value={ef.email || ''} onChange={e => setEditForm((f: any) => ({ ...f, email: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Email 2</label>
+                        <input className="finput" value={(ef as any).email_2 || ''} onChange={e => setEditForm((f: any) => ({ ...f, email_2: e.target.value }))} />
+                      </div>
+                    </div>
+                    {/* Phone 1 / Phone 2 — each number+ext+type grouped on its own row
+                        (same pattern as the address street/city/state/zip rows below)
+                        instead of interleaved through the 2-col grid, which scattered
+                        each phone's 3 fields across 2 separate rows out of order. */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 92px 1fr', gap: '0 16px' }}>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 1</label>
+                        <input className="finput" value={ef.phone || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 1 Ext</label>
+                        <input className="finput" value={(ef as any).phone_ext || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone_ext: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 1 Type</label>
+                        <select className="fselect" value={(ef as any).phone_type || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone_type: e.target.value }))}>
+                          <option value="">Select type…</option>
+                          {PHONE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 2</label>
+                        <input className="finput" value={(ef as any).phone_2 || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone_2: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 2 Ext</label>
+                        <input className="finput" value={(ef as any).phone_2_ext || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone_2_ext: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Phone 2 Type</label>
+                        <select className="fselect" value={(ef as any).phone_2_type || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone_2_type: e.target.value }))}>
+                          <option value="">Select type…</option>
+                          {PHONE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                      </div>
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
                         <label className="flabel">Status</label>
                         <select className="fselect" value={(ef as any).status || 'Lead'} onChange={e => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
                           {(statusConfigs as any[]).map((s: any) => <option key={s.label} value={s.label}>{s.label}</option>)}
                           {(statusConfigs as any[]).length === 0 && <option value="Lead">Lead</option>}
                         </select>
-                      </div>
-                      <div className="fgroup" style={{ marginBottom: 14 }}>
-                        <label className="flabel">Email</label>
-                        <input className="finput" value={ef.email || ''} onChange={e => setEditForm((f: any) => ({ ...f, email: e.target.value }))} />
-                      </div>
-                      <div className="fgroup" style={{ marginBottom: 14 }}>
-                        <label className="flabel">Phone</label>
-                        <input className="finput" value={ef.phone || ''} onChange={e => setEditForm((f: any) => ({ ...f, phone: e.target.value }))} />
                       </div>
                       <div className="fgroup" style={{ marginBottom: 14 }}>
                         <label className="flabel">Company</label>
@@ -2105,14 +2144,22 @@ export default function ClientDetail() {
                       return (
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '0 16px' }}>
                           <div className="fgroup" style={{ marginBottom: 14, gridColumn: '1 / -1' }}>
-                            <label className="flabel">Street Address</label>
+                            <label className="flabel">Street Address 1</label>
                             <input className="finput" value={addr.street || ''} onChange={e => setAddr('street', e.target.value)} placeholder="123 Main St" />
                           </div>
-                          <div className="fgroup" style={{ gridColumn: '1 / 2' }}>
+                          <div className="fgroup" style={{ marginBottom: 14, gridColumn: '1 / -1' }}>
+                            <label className="flabel">Street Address 2</label>
+                            <input className="finput" value={addr.street2 || ''} onChange={e => setAddr('street2', e.target.value)} placeholder="Apt, suite, unit, etc. (optional)" />
+                          </div>
+                          <div className="fgroup" style={{ marginBottom: 14 }}>
+                            <label className="flabel">City</label>
+                            <input className="finput" value={addr.city || ''} onChange={e => setAddr('city', e.target.value)} placeholder="New York" />
+                          </div>
+                          <div className="fgroup" style={{ marginBottom: 14 }}>
                             <label className="flabel">State</label>
                             <input className="finput" value={addr.state || ''} onChange={e => setAddr('state', e.target.value)} placeholder="New York" />
                           </div>
-                          <div className="fgroup">
+                          <div className="fgroup" style={{ marginBottom: 14 }}>
                             <label className="flabel">Zip Code</label>
                             <input className="finput" value={addr.zip || ''} onChange={e => setAddr('zip', e.target.value)} placeholder="10001" />
                           </div>
@@ -2168,25 +2215,32 @@ export default function ClientDetail() {
                 ) : (
                   <div style={{ padding: '16px 24px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 40px' }}>
-                      {[
-                        { label: 'Email',   value: client.email },
-                        { label: 'Phone',   value: client.phone || '—' },
-                        { label: 'Company', value: client.company || '—' },
-                        { label: 'Title',   value: client.job_title || '—' },
-                        { label: 'Status',  value: (client as any).status || 'Lead' },
-                        { label: 'Source',  value: client.lead_source ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1) : '—' },
-                        { label: 'Coach',   value: (client as any).coach_name || '—' },
-                        { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
-                      ].map(({ label, value }) => (
-                        <div key={label} style={{ display: 'flex', flexDirection: 'column', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
-                          <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>{label}</span>
-                          <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{value}</span>
-                        </div>
-                      ))}
+                      {(() => {
+                        const fmtPhone = (num: string, ext: string, type: string) =>
+                          !num ? '—' : [num, ext ? `x${ext}` : '', type ? `(${type})` : ''].filter(Boolean).join(' ')
+                        const rows = [
+                          { label: 'Email 1', value: client.email },
+                          ...((client as any).email_2 ? [{ label: 'Email 2', value: (client as any).email_2 }] : []),
+                          { label: 'Phone 1', value: fmtPhone(client.phone || '', (client as any).phone_ext || '', (client as any).phone_type || '') },
+                          ...((client as any).phone_2 ? [{ label: 'Phone 2', value: fmtPhone((client as any).phone_2, (client as any).phone_2_ext || '', (client as any).phone_2_type || '') }] : []),
+                          { label: 'Company', value: client.company || '—' },
+                          { label: 'Title',   value: client.job_title || '—' },
+                          { label: 'Status',  value: (client as any).status || 'Lead' },
+                          { label: 'Source',  value: client.lead_source ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1) : '—' },
+                          { label: 'Coach',   value: (client as any).coach_name || '—' },
+                          { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
+                        ]
+                        return rows.map(({ label, value }) => (
+                          <div key={label} style={{ display: 'flex', flexDirection: 'column', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
+                            <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>{label}</span>
+                            <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{value}</span>
+                          </div>
+                        ))
+                      })()}
                     </div>
                     {(() => {
                       const addr = (client as any).primary_address || {}
-                      const full = [[addr.street], [addr.state, addr.zip].filter(Boolean).join(', ')].filter(Boolean).join(', ')
+                      const full = [addr.street, addr.street2, [addr.city, addr.state, addr.zip].filter(Boolean).join(', ')].filter(Boolean).join(', ')
                       return full ? (
                         <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0', borderBottom: '1px solid #f3f0eb' }}>
                           <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>Address</span>

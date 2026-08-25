@@ -53,8 +53,18 @@ class Client(WorkspaceModel):
     last_name    = models.CharField(max_length=100)
     company      = models.CharField(max_length=200, blank=True)
     job_title    = models.CharField(max_length=200, blank=True)
+    # "Email 1"/"Phone 1" in the UI and CSV — kept as the plain `email`/`phone` column
+    # names here since they're the primary identity fields referenced throughout the
+    # app (duplicate checks, email sends, invoicing, portal login); only the display
+    # label is numbered to pair with the new optional _2 fields below.
     email        = models.EmailField()
+    email_2      = models.EmailField(blank=True)
     phone        = models.CharField(max_length=30, blank=True)
+    phone_ext    = models.CharField(max_length=20, blank=True)
+    phone_type   = models.CharField(max_length=20, blank=True)
+    phone_2      = models.CharField(max_length=30, blank=True)
+    phone_2_ext  = models.CharField(max_length=20, blank=True)
+    phone_2_type = models.CharField(max_length=20, blank=True)
     website      = models.URLField(blank=True)
     linkedin_url = models.URLField(blank=True)
     # Address

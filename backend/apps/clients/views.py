@@ -48,6 +48,30 @@ def _log(request, client, action, **metadata):
         pass
 
 
+# Formats CSV import will accept for birth_date, tried in order — covers our own
+# export (%Y-%m-%d) plus what Excel/Sheets tend to produce when someone hand-edits a
+# date column. MM/DD is tried before DD/MM since that's the far more common default
+# for coaches exporting from US-locale tools; genuinely ambiguous dates (e.g. 03/04)
+# resolve to MM/DD under that assumption.
+_DATE_FORMATS = ["%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y",
+                  "%Y/%m/%d", "%B %d, %Y", "%b %d, %Y", "%m/%d/%y", "%d/%m/%y"]
+
+
+def _parse_flexible_date(raw):
+    """Best-effort date parse for CSV import — returns None (not an error) if nothing
+    matches, since birth_date is an optional field and shouldn't block a row."""
+    from datetime import datetime
+    raw = (raw or "").strip()
+    if not raw:
+        return None
+    for fmt in _DATE_FORMATS:
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
 def _client_qs(request):
     """Return the base Client queryset scoped to the requesting user.
 
@@ -151,21 +175,39 @@ class ClientViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=["get"], url_path="export")
     def csv_export(self, request):
-        """GET /api/clients/export/ — download all clients as CSV"""
+        """GET /api/clients/export/ — download all clients as CSV.
+        Column set mirrors the New Client form exactly (see csv_import below)."""
         if not request.user.workspace_id:
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
 
-        fields = ["first_name", "last_name", "email", "phone", "company",
-                  "job_title", "tags", "status", "notes"]
+        # Column order matches a common external CRM export layout (name/birthday/
+        # company, then phone 1/2 groups, then email, then address) so a coach who's
+        # used to that format can find things where they expect — our own field names
+        # underneath differ, but csv_import reads by header name, not position, so
+        # this order has no effect on what re-imports correctly.
+        fields = ["first_name", "last_name", "birth_date", "company",
+                  "phone_1", "phone_1_ext", "phone_1_type",
+                  "phone_2", "phone_2_ext", "phone_2_type",
+                  "email_1", "email_2",
+                  "street_address_1", "street_address_2", "city", "state", "zip",
+                  "job_title", "status", "lead_source", "coach_email", "tags", "notes"]
 
         def rows():
             yield ",".join(fields) + "\r\n"
             for c in _client_qs(request).order_by("last_name"):
+                addr = c.primary_address or {}
                 row = [
-                    c.first_name, c.last_name, c.email, c.phone or "",
-                    c.company or "", c.job_title or "",
+                    c.first_name, c.last_name,
+                    c.birth_date.isoformat() if c.birth_date else "",
+                    c.company or "",
+                    c.phone or "", c.phone_ext or "", c.phone_type or "",
+                    c.phone_2 or "", c.phone_2_ext or "", c.phone_2_type or "",
+                    c.email, c.email_2 or "",
+                    addr.get("street", ""), addr.get("street2", ""), addr.get("city", ""),
+                    addr.get("state", ""), addr.get("zip", ""),
+                    c.job_title or "", c.status or "Lead", c.lead_source or "",
+                    c.coach.email if c.coach else "",
                     "|".join(c.tags or []),
-                    c.status or "Lead",
                     (c.notes or "").replace("\r\n", " ").replace("\n", " "),
                 ]
                 yield ",".join(f'"{v.replace(chr(34), chr(34)+chr(34))}"' for v in row) + "\r\n"
@@ -177,7 +219,11 @@ class ClientViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=["post"], url_path="import",
             parser_classes=[MultiPartParser])
     def csv_import(self, request):
-        """POST /api/clients/import/ — CSV bulk import"""
+        """POST /api/clients/import/ — CSV bulk import. Column set mirrors the New Client
+        form: first_name/last_name/email_1 are mandatory (same fields marked * there);
+        everything else (email_2, phone_1[_ext/_type], phone_2[_ext/_type], job_title,
+        company, status, lead_source, birth_date, street_address_1/2, city, state, zip,
+        coach_email, tags, notes) is optional."""
         if not request.user.workspace_id:
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
         file = request.FILES.get("file")
@@ -203,26 +249,49 @@ class ClientViewSet(viewsets.ModelViewSet):
             (f.strip().lower(), l.strip().lower())
             for f, l in existing_qs.values_list("first_name", "last_name")
         )
+        # coach_email resolves against workspace coaches only — same pool the New
+        # Client form's "Assign Coach" dropdown offers — cached once, not per row.
+        from apps.accounts.models import User
+        coaches_by_email = {
+            u.email.lower(): u
+            for u in User.objects.filter(workspace=request.user.workspace, role="coach")
+        }
 
         reader  = csv.DictReader(io.StringIO(text))
         created = 0
         skipped = 0
         errors  = []
+        # get_any() falls back to the pre-rename header (e.g. "email") for CSVs
+        # exported before email/phone/street_address were split into numbered pairs,
+        # so an older template someone already has downloaded still imports cleanly.
+        def get_any(row, *keys):
+            for k in keys:
+                v = row.get(k)
+                if v:
+                    return v.strip()
+            return ""
+
         for i, row in enumerate(reader, start=2):
             first = row.get("first_name", "").strip()
             last  = row.get("last_name", "").strip()
-            email = row.get("email", "").strip()
+            email = get_any(row, "email_1", "email")
             if not first and not last and not email:
                 skipped += 1
                 continue
 
+            # Mandatory fields — same three the New Client form marks with *.
+            missing = [name for name, val in (("first_name", first), ("last_name", last), ("email_1", email)) if not val]
+            if missing:
+                errors.append({"row": i, "error": f'"{f"{first} {last}".strip() or email or "(blank)"}" — missing required field(s): {", ".join(missing)}.'})
+                continue
+
             email_key = email.lower()
             name_key  = (first.lower(), last.lower())
-            display_name = f"{first} {last}".strip() or "(no name)"
-            if email_key and email_key in existing_emails:
+            display_name = f"{first} {last}".strip()
+            if email_key in existing_emails:
                 errors.append({"row": i, "error": f'"{display_name}" — a client with email "{email}" already exists in this workspace.'})
                 continue
-            if not email_key and name_key in existing_names:
+            if name_key in existing_names:
                 errors.append({"row": i, "error": f'"{display_name}" — a client with this name already exists in this workspace.'})
                 continue
 
@@ -230,24 +299,50 @@ class ClientViewSet(viewsets.ModelViewSet):
             tags = [t.strip() for t in raw_tags.replace(",", "|").split("|") if t.strip()]
             client_status = row.get("status", "Lead").strip() or "Lead"
             active = client_status.lower() == "active"
+
+            # Tries several common date formats (see _DATE_FORMATS) — optional field,
+            # so a date we still can't parse is dropped rather than failing the row.
+            birth_date = _parse_flexible_date(row.get("birth_date", ""))
+
+            street  = get_any(row, "street_address_1", "street_address")
+            street2 = row.get("street_address_2", "").strip()
+            city    = row.get("city", "").strip()
+            state   = row.get("state", "").strip()
+            zip_    = row.get("zip", "").strip()
+            primary_address = (
+                {"street": street, "street2": street2, "city": city, "state": state, "zip": zip_}
+                if (street or street2 or city or state or zip_) else {}
+            )
+
+            coach_email = row.get("coach_email", "").strip().lower()
+            coach = coaches_by_email.get(coach_email) or request.user
+
             try:
                 Client.objects.create(
                     workspace=request.user.workspace,
-                    coach=request.user,
+                    coach=coach,
                     first_name=first,
                     last_name=last,
                     email=email,
-                    phone=row.get("phone", "").strip(),
+                    email_2=row.get("email_2", "").strip(),
+                    phone=get_any(row, "phone_1", "phone"),
+                    phone_ext=row.get("phone_1_ext", "").strip(),
+                    phone_type=row.get("phone_1_type", "").strip(),
+                    phone_2=row.get("phone_2", "").strip(),
+                    phone_2_ext=row.get("phone_2_ext", "").strip(),
+                    phone_2_type=row.get("phone_2_type", "").strip(),
                     company=row.get("company", "").strip(),
                     job_title=row.get("job_title", "").strip(),
+                    lead_source=row.get("lead_source", "").strip(),
+                    birth_date=birth_date,
+                    primary_address=primary_address,
                     tags=tags,
                     status=client_status,
                     active_flag=active,
                     notes=row.get("notes", "").strip(),
                 )
                 created += 1
-                if email_key:
-                    existing_emails.add(email_key)
+                existing_emails.add(email_key)
                 existing_names.add(name_key)
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})

@@ -6,6 +6,7 @@ import AppShell from '../../components/layout/AppShell'
 import { useToast } from '../../components/ui'
 
 const LEAD_SOURCES = ['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other']
+const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
 
 export default function NewClient() {
   const navigate = useNavigate()
@@ -31,11 +32,13 @@ export default function NewClient() {
   })
 
   const [form, setForm] = useState({
-    first_name: '', last_name: '', email: '', phone: '',
+    first_name: '', last_name: '', email: '', email_2: '',
+    phone: '', phone_ext: '', phone_type: '',
+    phone_2: '', phone_2_ext: '', phone_2_type: '',
     company: '', job_title: '', lead_source: '', birth_date: '',
     notes: '', tags: [] as string[], status: 'Lead', create_deal: true,
     lead_source_other: '',
-    address: '', state: '', zip: '',
+    address: '', address2: '', city: '', state: '', zip: '',
     coach: '',
   })
   const [saving, setSaving] = useState(false)
@@ -49,14 +52,14 @@ export default function NewClient() {
     if (!form.first_name || !form.email) { setError('First name and email are required'); return }
     setSaving(true); setError('')
     try {
-      const { lead_source_other, address, state, zip, coach, ...rest } = form
+      const { lead_source_other, address, address2, city, state, zip, coach, ...rest } = form
       const merged: any = {
         ...rest,
         lead_source: form.lead_source === 'other' ? (lead_source_other.trim() || 'other') : form.lead_source,
         ...(coach ? { coach } : {}),
       }
-      if (address || state || zip) {
-        merged.primary_address = { street: address, state, zip }
+      if (address || address2 || city || state || zip) {
+        merged.primary_address = { street: address, street2: address2, city, state, zip }
       }
       // Strip empty strings from optional fields so Django doesn't reject them
       const payload = Object.fromEntries(
@@ -134,13 +137,50 @@ export default function NewClient() {
                 <input className="finput" value={form.last_name} onChange={e => set('last_name', e.target.value)} placeholder="Levi" />
               </div>
               <div className="fgroup">
-                <label className="flabel">Email *</label>
+                <label className="flabel">Email 1 *</label>
                 <input className="finput" type="email" value={form.email} onChange={e => set('email', e.target.value)} placeholder="amara.levi@company.com" />
               </div>
               <div className="fgroup">
-                <label className="flabel">Phone</label>
+                <label className="flabel">Email 2</label>
+                <input className="finput" type="email" value={form.email_2} onChange={e => set('email_2', e.target.value)} placeholder="Optional secondary email" />
+              </div>
+            </div>
+            {/* Phone 1 / Phone 2 — each number+ext+type grouped on its own row instead
+                of interleaved through the 2-col grid above, which scattered each
+                phone's 3 fields across 2 separate rows out of order. */}
+            <div className="fgrid" style={{ gridTemplateColumns: '1fr 92px 1fr' }}>
+              <div className="fgroup">
+                <label className="flabel">Phone 1</label>
                 <input className="finput" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="+1 646 555 0192" />
               </div>
+              <div className="fgroup">
+                <label className="flabel">Phone 1 Ext</label>
+                <input className="finput" value={form.phone_ext} onChange={e => set('phone_ext', e.target.value)} placeholder="Optional" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Phone 1 Type</label>
+                <select className="fselect" value={form.phone_type} onChange={e => set('phone_type', e.target.value)}>
+                  <option value="">Select type…</option>
+                  {PHONE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Phone 2</label>
+                <input className="finput" value={form.phone_2} onChange={e => set('phone_2', e.target.value)} placeholder="Optional" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Phone 2 Ext</label>
+                <input className="finput" value={form.phone_2_ext} onChange={e => set('phone_2_ext', e.target.value)} placeholder="Optional" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Phone 2 Type</label>
+                <select className="fselect" value={form.phone_2_type} onChange={e => set('phone_2_type', e.target.value)}>
+                  <option value="">Select type…</option>
+                  {PHONE_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+            </div>
+            <div className="fgrid">
               <div className="fgroup">
                 <label className="flabel">Job Title</label>
                 <input className="finput" value={form.job_title} onChange={e => set('job_title', e.target.value)} placeholder="Chief Executive Officer" />
@@ -192,8 +232,16 @@ export default function NewClient() {
             </div>
             <div className="fgrid">
               <div className="fgroup" style={{ gridColumn: '1 / -1' }}>
-                <label className="flabel">Street Address</label>
+                <label className="flabel">Street Address 1</label>
                 <input className="finput" value={form.address} onChange={e => set('address', e.target.value)} placeholder="123 Main St" />
+              </div>
+              <div className="fgroup" style={{ gridColumn: '1 / -1' }}>
+                <label className="flabel">Street Address 2</label>
+                <input className="finput" value={form.address2} onChange={e => set('address2', e.target.value)} placeholder="Apt, suite, unit, etc. (optional)" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">City</label>
+                <input className="finput" value={form.city} onChange={e => set('city', e.target.value)} placeholder="New York" />
               </div>
               <div className="fgroup">
                 <label className="flabel">State</label>

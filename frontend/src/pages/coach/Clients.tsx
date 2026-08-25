@@ -57,10 +57,12 @@ export default function Clients() {
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
   const [importing, setImporting] = useState(false)
+  const [showFormatHelp, setShowFormatHelp] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [importResult, setImportResult] = useState<{ created: number; errors: { row: number; error: string }[] } | null>(null)
+  const [importFatalError, setImportFatalError] = useState<string | null>(null)
 
   const { data: statusConfigs = [] } = useQuery({
     queryKey: ['client-status-configs'],
@@ -111,8 +113,12 @@ export default function Clients() {
         toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}`, 'success')
       }
       queryClient.invalidateQueries({ queryKey: ['clients'] })
-    } catch {
-      toast('Import failed. Check the file format.', 'error')
+    } catch (e: any) {
+      // Surface the backend's actual reason (e.g. "File must be UTF-8 encoded.") in a
+      // popup instead of a generic toast — a vague "check the file format" message
+      // doesn't tell you what's actually wrong or give you time to read it.
+      const detail = e?.response?.data?.detail
+      setImportFatalError(detail || 'Failed to import file. Please check that it\'s a valid CSV and try again.')
     } finally {
       setImporting(false)
     }
@@ -165,12 +171,43 @@ export default function Clients() {
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-ghost" onClick={handleExport}>↓ Export CSV</button>
             {isCoachOrAbove && (
-              <>
+              <div style={{ position: 'relative', display: 'flex' }}>
                 <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
                   {importing ? 'Importing…' : '↑ Import CSV'}
                 </button>
+                <button
+                  type="button"
+                  title="CSV format guide"
+                  onClick={() => setShowFormatHelp(v => !v)}
+                  style={{
+                    background: 'none', border: '1px solid var(--border)', borderRadius: '50%',
+                    width: 20, height: 20, marginLeft: 6, alignSelf: 'center', cursor: 'pointer',
+                    fontSize: 11, color: 'var(--muted)', lineHeight: 1, padding: 0,
+                  }}
+                >ⓘ</button>
                 <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
-              </>
+                {showFormatHelp && (
+                  <div style={{
+                    position: 'absolute', top: '100%', right: 0, marginTop: 8, width: 300, zIndex: 20,
+                    background: '#fff', border: '1px solid var(--border)', borderRadius: 8,
+                    boxShadow: '0 4px 16px rgba(0,0,0,.12)', padding: 16, fontSize: 12.5, lineHeight: 1.7,
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <strong style={{ fontSize: 12 }}>CSV format guide</strong>
+                      <button type="button" onClick={() => setShowFormatHelp(false)}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 0 }}>×</button>
+                    </div>
+                    <div><strong>Required:</strong> first_name, last_name, email_1</div>
+                    <div><strong>Everything else is optional:</strong> email_2, phone_1 (+ _ext/_type), phone_2 (+ _ext/_type), street_address_1/2, city, state, zip, and more</div>
+                    <div><strong>birth_date:</strong> YYYY-MM-DD preferred (MM/DD/YYYY and a few other common formats are also accepted)</div>
+                    <div><strong>tags:</strong> separate multiple with | or ,</div>
+                    <div><strong>coach_email:</strong> must match a coach's email already in this workspace, else it's assigned to you</div>
+                    <div style={{ marginTop: 8, color: 'var(--muted)' }}>
+                      Easiest: click <strong>↓ Export CSV</strong> first to get a file with the right columns and see the exact format.
+                    </div>
+                  </div>
+                )}
+              </div>
             )}
             {canAddClients && (
               <button className="btn btn-dark" onClick={() => navigate('/clients/new')}>+ New Client</button>
@@ -426,6 +463,17 @@ export default function Clients() {
           </div>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
             <button className="btn btn-dark btn-sm" onClick={() => setImportResult(null)}>Done</button>
+          </div>
+        </Modal>
+      )}
+
+      {importFatalError && (
+        <Modal title="Import Failed" onClose={() => setImportFatalError(null)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            {importFatalError}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+            <button className="btn btn-dark btn-sm" onClick={() => setImportFatalError(null)}>Close</button>
           </div>
         </Modal>
       )}
