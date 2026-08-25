@@ -106,7 +106,7 @@ class ClientViewSet(viewsets.ModelViewSet):
     filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields   = ["active_flag", "status", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]
-    ordering_fields    = ["last_name", "created_at"]
+    ordering_fields    = ["first_name", "last_name", "created_at"]
     ordering           = ["last_name"]
 
     def get_queryset(self):
@@ -258,9 +258,10 @@ class ClientViewSet(viewsets.ModelViewSet):
         }
 
         reader  = csv.DictReader(io.StringIO(text))
-        created = 0
-        skipped = 0
-        errors  = []
+        created  = 0
+        skipped  = 0
+        errors   = []
+        warnings = []
         # get_any() falls back to the pre-rename header (e.g. "email") for CSVs
         # exported before email/phone/street_address were split into numbered pairs,
         # so an older template someone already has downloaded still imports cleanly.
@@ -271,6 +272,29 @@ class ClientViewSet(viewsets.ModelViewSet):
                     return v.strip()
             return ""
 
+        fieldnames = reader.fieldnames or []
+
+        def recover_crammed_row(row):
+            """Some spreadsheet round-trips (copy-pasting a raw CSV row into a single
+            cell, then re-exporting) end up with an ENTIRE data row jammed into the
+            first_name column as one quoted comma-separated blob, with every other
+            column blank. That's a distinctive, safe-to-detect shape: re-parse the
+            blob as its own CSV row and use those as the real column values instead.
+            Returns None if the row doesn't match this pattern."""
+            populated = [(k, v) for k, v in row.items() if k and v]
+            if len(populated) != 1 or populated[0][0] != fieldnames[0]:
+                return None
+            blob = populated[0][1]
+            if "," not in blob:
+                return None
+            try:
+                parsed = next(csv.reader(io.StringIO(blob)))
+            except Exception:
+                return None
+            if len(parsed) < 2:
+                return None
+            return dict(zip(fieldnames, parsed))
+
         for i, row in enumerate(reader, start=2):
             # A row with fewer commas than the header (common in hand-edited/exported-
             # from-elsewhere CSVs — e.g. trailing empty columns just omitted rather than
@@ -278,7 +302,12 @@ class ClientViewSet(viewsets.ModelViewSet):
             # not "" — even though row.get(key, "") looks like it should default safely,
             # it doesn't: the key IS present, just mapped to None, so every .strip() call
             # below would crash the entire import instead of skipping one blank field.
+            short_row = any(v is None for v in row.values())
             row = {k: (v if v is not None else "") for k, v in row.items()}
+            recovered = recover_crammed_row(row)
+            if recovered is not None:
+                row = recovered
+                short_row = len(row) < len(fieldnames)
             first = row.get("first_name", "").strip()
             last  = row.get("last_name", "").strip()
             email = get_any(row, "email_1", "email")
@@ -298,9 +327,13 @@ class ClientViewSet(viewsets.ModelViewSet):
             if email_key in existing_emails:
                 errors.append({"row": i, "error": f'"{display_name}" — a client with email "{email}" already exists in this workspace.'})
                 continue
-            if name_key in existing_names:
-                errors.append({"row": i, "error": f'"{display_name}" — a client with this name already exists in this workspace.'})
-                continue
+            # Same name but a genuinely different email is common in real contact lists
+            # (an old email vs a new one, two different people who share a name, etc.) —
+            # email_1 is mandatory now, so it's the reliable identity signal; blocking
+            # on name alone here silently dropped legitimate, distinct rows that just
+            # happened to share a name with someone else already imported. Flag it as a
+            # warning instead so it's still imported, with a nudge to double-check.
+            name_already_seen = name_key in existing_names
 
             raw_tags = row.get("tags", "").strip()
             tags = [t.strip() for t in raw_tags.replace(",", "|").split("|") if t.strip()]
@@ -321,8 +354,15 @@ class ClientViewSet(viewsets.ModelViewSet):
                 if (street or street2 or city or state or zip_) else {}
             )
 
+            # Unlike the New Client form (which defaults "Assign Coach" to the person
+            # creating it), a bulk import leaves coach unset when coach_email is blank
+            # or doesn't match a real coach in this workspace — defaulting dozens of
+            # rows to whoever happens to run the import would misattribute ownership
+            # for clients that were never actually that person's. The business owner
+            # can still see and assign these (unassigned clients are only invisible to
+            # non-owner roles, per _client_qs), so nothing is lost, just left open.
             coach_email = row.get("coach_email", "").strip().lower()
-            coach = coaches_by_email.get(coach_email) or request.user
+            coach = coaches_by_email.get(coach_email)
 
             try:
                 Client.objects.create(
@@ -351,10 +391,31 @@ class ClientViewSet(viewsets.ModelViewSet):
                 created += 1
                 existing_emails.add(email_key)
                 existing_names.add(name_key)
+                if recovered is not None:
+                    warnings.append({
+                        "row": i,
+                        "warning": f'"{display_name}" — this row\'s data was packed into a single column in the '
+                                   f'source file; it was automatically unpacked and imported. Please double-check '
+                                   f'it, especially job_title/status/lead_source/coach_email/tags/notes.',
+                    })
+                elif short_row:
+                    warnings.append({
+                        "row": i,
+                        "warning": f'"{display_name}" — this row has fewer columns than the header row. '
+                                   f'Imported, but double-check job_title/status/lead_source/coach_email/tags/notes '
+                                   f'for this client — the source file may have shifted or dropped columns.',
+                    })
+                if name_already_seen:
+                    warnings.append({
+                        "row": i,
+                        "warning": f'"{display_name}" — another client with this exact name (different email) '
+                                   f'already exists in this workspace. Imported as a separate client; please '
+                                   f'verify these aren\'t the same person before keeping both.',
+                    })
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})
 
-        return Response({"created": created, "skipped": skipped, "errors": errors}, status=201)
+        return Response({"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}, status=201)
 
 
 class ClientNoteViewSet(viewsets.ModelViewSet):

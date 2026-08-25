@@ -1853,7 +1853,10 @@ export default function ClientDetail() {
 
   const handleSave = async () => {
     try {
-      await clientsApi.update(id!, editForm)
+      // A cleared date input sends '' — the model's birth_date is a nullable DateField,
+      // and DRF rejects '' as "wrong format" for a date, so normalize to null.
+      const payload = { ...editForm, birth_date: (editForm as any)?.birth_date || null }
+      await clientsApi.update(id!, payload)
       qc.invalidateQueries({ queryKey: ['client', id] })
       qc.invalidateQueries({ queryKey: ['clients'] })
       setEditMode(false)
@@ -2136,6 +2139,10 @@ export default function ClientDetail() {
                           </div>
                         )
                       })()}
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Birth Date</label>
+                        <input className="finput" type="date" value={(ef as any).birth_date || ''} onChange={e => setEditForm((f: any) => ({ ...f, birth_date: e.target.value }))} />
+                      </div>
                     </div>
                     {(() => {
                       const addr = (ef as any).primary_address || {}
@@ -2216,8 +2223,14 @@ export default function ClientDetail() {
                   <div style={{ padding: '16px 24px' }}>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 40px' }}>
                       {(() => {
-                        const fmtPhone = (num: string, ext: string, type: string) =>
-                          !num ? '—' : [num, ext ? `x${ext}` : '', type ? `(${type})` : ''].filter(Boolean).join(' ')
+                        const fmtPhone = (num: string, ext: string, type: string) => {
+                          if (!num) return '—'
+                          // Some imported numbers already carry their type inline, e.g.
+                          // "(801) 815-7599   (Work)" — appending the phone_type field
+                          // on top of that duplicates it as "...(Work) (Work)".
+                          const typeAlreadyInNumber = !!type && num.toLowerCase().includes(type.toLowerCase())
+                          return [num, ext ? `x${ext}` : '', (type && !typeAlreadyInNumber) ? `(${type})` : ''].filter(Boolean).join(' ')
+                        }
                         const rows = [
                           { label: 'Email 1', value: client.email },
                           ...((client as any).email_2 ? [{ label: 'Email 2', value: (client as any).email_2 }] : []),
@@ -2227,6 +2240,7 @@ export default function ClientDetail() {
                           { label: 'Title',   value: client.job_title || '—' },
                           { label: 'Status',  value: (client as any).status || 'Lead' },
                           { label: 'Source',  value: client.lead_source ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1) : '—' },
+                          { label: 'Birth Date', value: client.birth_date ? fmtDate(client.birth_date) : '—' },
                           { label: 'Coach',   value: (client as any).coach_name || '—' },
                           { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
                         ]

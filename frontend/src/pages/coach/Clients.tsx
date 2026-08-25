@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, settingsApi } from '../../api/client'
@@ -53,6 +53,7 @@ export default function Clients() {
   const queryClient = useQueryClient()
   const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
+  const [sortBy, setSortBy] = useState<'first_name' | 'last_name'>('last_name')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
@@ -61,8 +62,20 @@ export default function Clients() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [importResult, setImportResult] = useState<{ created: number; errors: { row: number; error: string }[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ created: number; errors: { row: number; error: string }[]; warnings: { row: number; warning: string }[] } | null>(null)
   const [importFatalError, setImportFatalError] = useState<string | null>(null)
+  const PAGE_SIZE = 20
+  const [page, setPage] = useState(1)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+
+  // Changing a filter can shrink the result set below the page you were on (e.g. you're
+  // on page 3 of "All" and switch to a status with only 1 page of results) — reset to
+  // page 1 whenever the query itself changes, and clear selection so a bulk-delete can
+  // never fire against rows that scrolled out of view without the user re-checking them.
+  useEffect(() => { setPage(1) }, [search, statusFilter, selectedTag, sortBy])
+  useEffect(() => { setSelectedIds(new Set()) }, [page, search, statusFilter, selectedTag, sortBy])
 
   const { data: statusConfigs = [] } = useQuery({
     queryKey: ['client-status-configs'],
@@ -104,11 +117,12 @@ export default function Clients() {
       const fd = new FormData()
       fd.append('file', file)
       const { data } = await clientsApi.importCsv(fd)
-      if (data.errors.length > 0) {
-        // Errors (e.g. duplicate name/email already in this workspace) need their
-        // per-row description visible, not just a count — a toast isn't enough room
-        // and disappears too fast to read a list of rows.
-        setImportResult({ created: data.created, errors: data.errors })
+      if (data.errors.length > 0 || data.warnings?.length > 0) {
+        // Errors (e.g. duplicate name/email already in this workspace) and warnings
+        // (e.g. a row with fewer columns than the header — likely a shifted/misaligned
+        // source file) need their per-row description visible, not just a count — a
+        // toast isn't enough room and disappears too fast to read a list of rows.
+        setImportResult({ created: data.created, errors: data.errors, warnings: data.warnings || [] })
       } else {
         toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}`, 'success')
       }
@@ -140,22 +154,63 @@ export default function Clients() {
   }
 
   const { data, isLoading } = useQuery({
-    queryKey: ['clients', search, statusFilter, selectedTag],
+    queryKey: ['clients', search, statusFilter, selectedTag, sortBy, page],
     queryFn: () => clientsApi.list({
       search: search || undefined,
       status: statusFilter !== 'all' ? statusFilter : undefined,
       tag: selectedTag || undefined,
+      ordering: sortBy,
+      page,
+      page_size: PAGE_SIZE,
     }).then(r => r.data),
   })
 
   const clients: any[] = data?.results || data || []
+  // DRF's paginated response's `count` is the true total across all pages (already
+  // filtered — search/status/tag filters apply server-side before pagination, so this
+  // is always "how many match the current filters", not the workspace-wide total).
+  const totalCount: number = data?.count ?? clients.length
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE))
 
-  // Collect all unique tags from loaded clients for the tag dropdown
-  const allTags = useMemo(() => {
-    const tagSet = new Set<string>()
-    clients.forEach((c: any) => (c.tags || []).forEach((t: string) => tagSet.add(t)))
-    return Array.from(tagSet).sort()
-  }, [clients])
+  // Tag filter options come from the workspace's configured tags, not from scanning
+  // whatever clients happen to be on the current page — otherwise this list would
+  // shrink to just the ~20 tags visible on one page instead of every tag that exists.
+  const allTags = useMemo(
+    () => (tagConfigs as any[]).map(t => t.name).sort(),
+    [tagConfigs]
+  )
+
+  const pageIds = useMemo(() => clients.map((c: any) => c.id), [clients])
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))
+  const toggleSelectAllOnPage = () => {
+    setSelectedIds(prev => {
+      if (allOnPageSelected) return new Set()
+      return new Set(pageIds)
+    })
+  }
+  const toggleSelectOne = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  async function handleBulkDelete() {
+    setBulkDeleting(true)
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(ids.map(id => clientsApi.delete(id)))
+    const failed = results.filter(r => r.status === 'rejected').length
+    queryClient.invalidateQueries({ queryKey: ['clients'] })
+    setSelectedIds(new Set())
+    setBulkDeleteConfirm(false)
+    setBulkDeleting(false)
+    if (failed > 0) {
+      toast(`Deleted ${ids.length - failed} of ${ids.length} clients — ${failed} failed`, 'error')
+    } else {
+      toast(`Deleted ${ids.length} client${ids.length !== 1 ? 's' : ''}`)
+    }
+  }
 
   return (
     <AppShell>
@@ -165,7 +220,11 @@ export default function Clients() {
           <div>
             <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 300, marginBottom: 4 }}>Clients</div>
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {clients.length} {statusFilter === 'all' ? 'total' : statusFilter}
+              {totalCount === 0 ? (
+                `0 ${statusFilter === 'all' ? 'clients' : statusFilter}`
+              ) : (
+                <>Showing <strong style={{ color: 'var(--ink)' }}>{(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)}</strong> of <strong style={{ color: 'var(--ink)' }}>{totalCount}</strong> {statusFilter === 'all' ? 'clients' : statusFilter}</>
+              )}
             </div>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -188,23 +247,39 @@ export default function Clients() {
                 <input ref={fileInputRef} type="file" accept=".csv" style={{ display: 'none' }} onChange={handleImport} />
                 {showFormatHelp && (
                   <div style={{
-                    position: 'absolute', top: '100%', right: 0, marginTop: 8, width: 300, zIndex: 20,
+                    position: 'absolute', top: '100%', right: 0, marginTop: 8, width: 320, zIndex: 20,
                     background: '#fff', border: '1px solid var(--border)', borderRadius: 8,
                     boxShadow: '0 4px 16px rgba(0,0,0,.12)', padding: 16, fontSize: 12.5, lineHeight: 1.7,
                   }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
                       <strong style={{ fontSize: 12 }}>CSV format guide</strong>
                       <button type="button" onClick={() => setShowFormatHelp(false)}
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 0 }}>×</button>
                     </div>
-                    <div><strong>Required:</strong> first_name, last_name, email_1</div>
-                    <div><strong>Everything else is optional:</strong> email_2, phone_1 (+ _ext/_type), phone_2 (+ _ext/_type), street_address_1/2, city, state, zip, and more</div>
+
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
+                      Preparing your file
+                    </div>
+                    <div style={{ marginBottom: 10 }}>
+                      Build your data in a spreadsheet app (Excel, Google Sheets, Numbers) — never by typing raw CSV text by hand, which is how columns end up misaligned.
+                      When you're done, save or export it as <strong>CSV</strong> (a plain <code>.csv</code> file — not <code>.xlsx</code>).
+                      Easiest start: click <strong>↓ Export CSV</strong> first to get a file with the exact right columns already filled in.
+                    </div>
+
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
+                      Columns
+                    </div>
+                    <div style={{ marginBottom: 4 }}><strong>Required:</strong> first_name, last_name, email_1</div>
+                    <div style={{ marginBottom: 10 }}>
+                      <strong>Optional:</strong> email_2, phone_1 (+ _ext/_type), phone_2 (+ _ext/_type), street_address_1/2, city, state, zip, and more
+                    </div>
+
+                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
+                      Field notes
+                    </div>
                     <div><strong>birth_date:</strong> YYYY-MM-DD preferred (MM/DD/YYYY and a few other common formats are also accepted)</div>
                     <div><strong>tags:</strong> separate multiple with | or ,</div>
                     <div><strong>coach_email:</strong> must match a coach's email already in this workspace, else it's assigned to you</div>
-                    <div style={{ marginTop: 8, color: 'var(--muted)' }}>
-                      Easiest: click <strong>↓ Export CSV</strong> first to get a file with the right columns and see the exact format.
-                    </div>
                   </div>
                 )}
               </div>
@@ -301,6 +376,18 @@ export default function Clients() {
               </>
             )}
           </div>
+
+          {/* Sort order */}
+          <select
+            className="fselect"
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value as 'first_name' | 'last_name')}
+            title="Sort by"
+            style={{ width: 'auto', marginBottom: 0, fontSize: 12, padding: '6px 10px' }}
+          >
+            <option value="last_name">Sort: Last Name</option>
+            <option value="first_name">Sort: First Name</option>
+          </select>
         </div>
 
         {/* Active tag badge */}
@@ -310,6 +397,24 @@ export default function Clients() {
             <span className="tag" style={{ cursor: 'pointer' }} onClick={() => setSelectedTag('')}>
               {selectedTag} ×
             </span>
+          </div>
+        )}
+
+        {isOwner && selectedIds.size > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: '#fdf4f4', border: '1px solid #e5b4b4', borderRadius: 8,
+            padding: '8px 14px', marginBottom: 12,
+          }}>
+            <span style={{ fontSize: 13, color: 'var(--ink)' }}>{selectedIds.size} selected</span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setSelectedIds(new Set())}>Clear</button>
+              <button
+                className="btn btn-sm"
+                onClick={() => setBulkDeleteConfirm(true)}
+                style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+              >Delete Selected</button>
+            </div>
           </div>
         )}
 
@@ -324,21 +429,43 @@ export default function Clients() {
               : undefined
           } />
         ) : (
-          <table className="tbl">
-            <thead>
+          <div style={{ maxHeight: 'max(420px, calc(100vh - 480px))', overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 8 }}>
+          <table className="tbl" style={{ margin: 0 }}>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 2 }}>
               <tr>
-                <th>Client</th>
-                <th>Status</th>
-                <th>Tags</th>
-                <th>Coach</th>
-                <th>Last Activity</th>
-                <th></th>
-                {isOwner && <th></th>}
+                {isOwner && (
+                  <th style={{ background: '#fff', width: 32 }}>
+                    <input
+                      type="checkbox"
+                      checked={allOnPageSelected}
+                      onChange={toggleSelectAllOnPage}
+                      title="Select all on this page"
+                      style={{ width: 14, height: 14, cursor: 'pointer', accentColor: 'var(--gold)' }}
+                    />
+                  </th>
+                )}
+                <th style={{ background: '#fff' }}>Client</th>
+                <th style={{ background: '#fff' }}>Status</th>
+                <th style={{ background: '#fff' }}>Tags</th>
+                <th style={{ background: '#fff' }}>Coach</th>
+                <th style={{ background: '#fff' }}>Last Activity</th>
+                <th style={{ background: '#fff' }}></th>
+                {isOwner && <th style={{ background: '#fff' }}></th>}
               </tr>
             </thead>
             <tbody>
               {clients.map((c: any, i: number) => (
                 <tr key={c.id} onClick={() => navigate(`/clients/${c.id}`)}>
+                  {isOwner && (
+                    <td onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(c.id)}
+                        onChange={() => toggleSelectOne(c.id)}
+                        style={{ width: 14, height: 14, cursor: 'pointer', accentColor: 'var(--gold)' }}
+                      />
+                    </td>
+                  )}
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                       <div className={`avatar ${AVATAR_COLS[i % 5]}`}>
@@ -424,8 +551,42 @@ export default function Clients() {
               ))}
             </tbody>
           </table>
+          </div>
+        )}
+
+        {!isLoading && clients.length > 0 && totalPages > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14 }}>
+            <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+              Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, totalCount)} of {totalCount} · Page {page} of {totalPages}
+            </span>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button className="btn btn-outline btn-sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}>
+                ← Prev
+              </button>
+              <button className="btn btn-outline btn-sm" onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
+                Next →
+              </button>
+            </div>
+          </div>
         )}
       </div>
+
+      {bulkDeleteConfirm && (
+        <Modal title="Delete Clients" onClose={() => !bulkDeleting && setBulkDeleteConfirm(false)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Permanently delete <strong>{selectedIds.size} client{selectedIds.size !== 1 ? 's' : ''}</strong>? This cannot be undone — all their sessions, notes, invoices, pipeline deals, and files will be removed too.
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setBulkDeleteConfirm(false)} disabled={bulkDeleting}>Cancel</button>
+            <button
+              className="btn btn-sm"
+              onClick={handleBulkDelete}
+              disabled={bulkDeleting}
+              style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+            >{bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size} Client${selectedIds.size !== 1 ? 's' : ''}`}</button>
+          </div>
+        </Modal>
+      )}
 
       {deleteTarget && (
         <Modal title="Delete Client" onClose={() => !deleting && setDeleteTarget(null)}>
@@ -448,19 +609,45 @@ export default function Clients() {
         <Modal title="Import Results" onClose={() => setImportResult(null)}>
           <div style={{ padding: '4px 0 16px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
             Imported <strong>{importResult.created}</strong> new client{importResult.created !== 1 ? 's' : ''}.
-            {' '}<strong style={{ color: '#c0392b' }}>{importResult.errors.length}</strong> row{importResult.errors.length !== 1 ? 's' : ''} skipped:
+            {importResult.errors.length > 0 && (
+              <> <strong style={{ color: '#c0392b' }}>{importResult.errors.length}</strong> row{importResult.errors.length !== 1 ? 's' : ''} skipped.</>
+            )}
+            {importResult.warnings.length > 0 && (
+              <> <strong style={{ color: '#b8860b' }}>{importResult.warnings.length}</strong> row{importResult.warnings.length !== 1 ? 's' : ''} flagged for review.</>
+            )}
           </div>
-          <div style={{ maxHeight: 280, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
-            {importResult.errors.map((e, i) => (
-              <div key={i} style={{
-                padding: '8px 12px', fontSize: 13, color: 'var(--ink)',
-                borderBottom: i < importResult.errors.length - 1 ? '1px solid var(--border)' : 'none',
-              }}>
-                <span style={{ color: 'var(--muted)', fontWeight: 600, marginRight: 6 }}>Row {e.row}:</span>
-                {e.error}
+          {importResult.errors.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#c0392b', marginBottom: 6 }}>Skipped</div>
+              <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, marginBottom: importResult.warnings.length > 0 ? 16 : 0 }}>
+                {importResult.errors.map((e, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px', fontSize: 13, color: 'var(--ink)',
+                    borderBottom: i < importResult.errors.length - 1 ? '1px solid var(--border)' : 'none',
+                  }}>
+                    <span style={{ color: 'var(--muted)', fontWeight: 600, marginRight: 6 }}>Row {e.row}:</span>
+                    {e.error}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </>
+          )}
+          {importResult.warnings.length > 0 && (
+            <>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#b8860b', marginBottom: 6 }}>Imported, but check these</div>
+              <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid #f0dca0', background: '#fffbf0', borderRadius: 6 }}>
+                {importResult.warnings.map((w, i) => (
+                  <div key={i} style={{
+                    padding: '8px 12px', fontSize: 13, color: 'var(--ink)',
+                    borderBottom: i < importResult.warnings.length - 1 ? '1px solid #f0dca0' : 'none',
+                  }}>
+                    <span style={{ color: '#b8860b', fontWeight: 600, marginRight: 6 }}>Row {w.row}:</span>
+                    {w.warning}
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
             <button className="btn btn-dark btn-sm" onClick={() => setImportResult(null)}>Done</button>
           </div>
