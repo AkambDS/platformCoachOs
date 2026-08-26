@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { EmailEditModal } from '../../components/EmailEditModal'
 import { InvoiceTables, parseDate as parseInvoiceDate } from '../../components/InvoiceTables'
 import { EDITABLE_OFFICE_EXTS, OfficeEditorModal, InlineOfficeViewer } from '../../components/OfficeEditor'
 import SignaturePad from '../../components/SignaturePad'
@@ -42,10 +43,87 @@ function fmtDatetime(d: string) {
   return new Date(d).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+// ── Zoom meeting generator ────────────────────────────────────────────────────
+function ZoomButton({ topic, startTime, durationMinutes, onGenerated }: {
+  topic: string
+  startTime: string
+  durationMinutes: number
+  onGenerated: (url: string) => void
+}) {
+  const [loading, setLoading] = useState(false)
+
+  async function generate() {
+    setLoading(true)
+    try {
+      const { data } = await settingsApi.createZoomMeeting({ topic, start_time: startTime, duration_minutes: durationMinutes })
+      onGenerated(data.join_url)
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail || 'Failed to create Zoom meeting'
+      alert(msg)
+    } finally { setLoading(false) }
+  }
+
+  return (
+    <button type="button" className="btn btn-outline btn-sm" onClick={generate} disabled={loading}
+      style={{ whiteSpace: 'nowrap', flexShrink: 0 }} title="Auto-generate Zoom meeting link">
+      {loading ? '…' : '📹 Zoom'}
+    </button>
+  )
+}
+
+function PhoneButton({ phone, onGenerated }: { phone: string; onGenerated: (val: string) => void }) {
+  return (
+    <button type="button" className="btn btn-outline btn-sm" onClick={() => onGenerated(`Call: ${phone}`)}
+      style={{ whiteSpace: 'nowrap', flexShrink: 0 }} title="Use your phone number as the meeting location">
+      📞 Phone
+    </button>
+  )
+}
+
+// ── Confirmation email preview — read-only render using the actual values being scheduled ──
+function ConfirmationPreviewModal({ clientName, coachName, sessionTitle, sessionTime, location, onClose }: {
+  clientName: string; coachName: string; sessionTitle: string; sessionTime: string; location: string
+  onClose: () => void
+}) {
+  const [html, setHtml] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    settingsApi.emailPreview('confirmation', {
+      client_name: clientName || undefined,
+      coach_name: coachName || undefined,
+      session_title: sessionTitle || undefined,
+      session_time: sessionTime || undefined,
+      location: location || undefined,
+    })
+      .then(r => setHtml(r.data.html || ''))
+      .catch(() => setHtml(''))
+      .finally(() => setLoading(false))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Modal title="Confirmation Email Preview" size="lg" onClose={onClose}>
+      <div style={{ height: 480, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', position: 'relative', background: '#eeebe5' }}>
+        {loading && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--muted)' }}>
+            Loading preview…
+          </div>
+        )}
+        {!loading && (
+          <iframe srcDoc={html} title="Confirmation email preview" sandbox="allow-same-origin"
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} />
+        )}
+      </div>
+    </Modal>
+  )
+}
+
 // ── New Activity Modal ────────────────────────────────────────────────────────
-function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
+function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSaved }: any) {
   const qc = useQueryClient()
   const { user, workspace } = useAuthStore()
+  const dialInPhone = (user as any)?.phone || ''
   const genericTemplates: any[] = (workspace as any)?.generic_templates || []
   // Only templates assigned to the Booking Confirmation slot — other use cases use a
   // different placeholder set, so picking one here leaves those placeholders literal.
@@ -55,6 +133,10 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter((t: any) => t.is_active),
   })
+  const { data: affiliations = [] } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
+  })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -63,6 +145,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   const coaches = teamMembers.filter((m: any) => ['coach', 'business_owner'].includes(m.role))
 
   const [coachId, setCoachId] = useState(defaultCoachId || user?.id || '')
+  const [affiliationId, setAffiliationId] = useState('')
   const [form, setForm] = useState({ activity_type: 'session', title: '', location: '', notes: '' })
   const [date, setDate]           = useState('')
   const [startTime, setStartTime] = useState('')
@@ -73,6 +156,8 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   const [repeatUntil, setRepeatUntil] = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
   const [emailTemplateId, setEmailTemplateId] = useState('')
+  const [showEmailEdit, setShowEmailEdit] = useState(false)
+  const [showEmailPreview, setShowEmailPreview] = useState(false)
   const [saving, setSaving] = useState(false)
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
   const toUTC = (local: string) => local ? new Date(local).toISOString() : local
@@ -90,7 +175,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
     const end_at = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.title || !start_at) return
     setSaving(true)
-    const payload: any = { ...form, client: clientId, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation, email_template_id: emailTemplateId }
+    const payload: any = { ...form, client: clientId, coach: coachId || undefined, affiliation: affiliationId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation, email_template_id: emailTemplateId }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -107,6 +192,7 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
   }
 
   return (
+    <>
     <Modal title="Schedule Activity" onClose={onClose} footer={
       <>
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
@@ -133,6 +219,19 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
           </select>
         </div>
       </div>
+
+      {/* Affiliation */}
+      {affiliations.length > 0 && (
+        <div className="fgroup">
+          <label className="flabel">Affiliation</label>
+          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
+            <option value="">— None —</option>
+            {affiliations.map((a: any) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {/* Title */}
       <div className="fgroup">
@@ -168,7 +267,18 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
       {/* Location */}
       <div className="fgroup" style={{ marginTop: 10 }}>
         <label className="flabel">Location / Link</label>
-        <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link, office address…" />
+        <div style={{ display: 'flex', gap: 8 }}>
+          <input className="finput" value={form.location} onChange={e => set('location', e.target.value)} placeholder="Zoom link, office address…" style={{ flex: 1 }} />
+          <ZoomButton
+            topic={form.title || 'Coaching Session'}
+            startTime={date && startTime ? `${date}T${startTime}` : ''}
+            durationMinutes={endTime && startTime ? Math.round((new Date(`2000-01-01T${endTime}`).getTime() - new Date(`2000-01-01T${startTime}`).getTime()) / 60000) : 60}
+            onGenerated={url => set('location', url)}
+          />
+          {dialInPhone && (
+            <PhoneButton phone={dialInPhone} onGenerated={val => set('location', val)} />
+          )}
+        </div>
       </div>
 
       {/* Notes */}
@@ -247,7 +357,34 @@ function NewActivityModal({ clientId, defaultCoachId, onClose, onSaved }: any) {
           </select>
         </div>
       )}
+      {sendConfirmation && (
+        <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+          <button type="button" onClick={() => setShowEmailPreview(true)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2d6a9f', fontSize: 12, fontWeight: 600, padding: 0 }}>
+            Preview email →
+          </button>
+          <button type="button" onClick={() => setShowEmailEdit(true)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2d6a9f', fontSize: 12, fontWeight: 600, padding: 0 }}>
+            Edit Default Template →
+          </button>
+        </div>
+      )}
     </Modal>
+
+    {showEmailEdit && (
+      <EmailEditModal useCase="confirmation" onClose={() => setShowEmailEdit(false)} />
+    )}
+    {showEmailPreview && (
+      <ConfirmationPreviewModal
+        clientName={clientName || ''}
+        coachName={coaches.find((c: any) => c.id === coachId)?.full_name || ''}
+        sessionTitle={form.title}
+        sessionTime={date && startTime ? new Date(`${date}T${startTime}`).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
+        location={form.location}
+        onClose={() => setShowEmailPreview(false)}
+      />
+    )}
+    </>
   )
 }
 
@@ -2511,7 +2648,7 @@ export default function ClientDetail() {
         )}
       </div>
 
-      {showActivity && <NewActivityModal clientId={id} defaultCoachId={(client as any)?.coach} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
+      {showActivity && <NewActivityModal clientId={id} defaultCoachId={(client as any)?.coach} clientName={client ? `${client.first_name} ${client.last_name}` : ''} onClose={() => setShowActivity(false)} onSaved={(emailSent?: boolean) => { setShowActivity(false); showToast(emailSent ? 'Session scheduled — confirmation sent to client' : 'Session scheduled') }} />}
       {showGoal && <GoalModal clientId={id} onClose={() => setShowGoal(false)} onSaved={() => { setShowGoal(false); showToast('Goal created') }} />}
       {editingGoal && <GoalModal clientId={id} goal={editingGoal} onClose={() => setEditingGoal(null)} onSaved={() => { setEditingGoal(null); showToast('Goal updated') }} />}
       {showDeleteConfirm && (

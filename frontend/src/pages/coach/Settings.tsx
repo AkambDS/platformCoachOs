@@ -36,7 +36,6 @@ function WorkspaceTab() {
     city:               (workspace as any)?.city       || '',
     state:              (workspace as any)?.state      || '',
     zip_code:           (workspace as any)?.zip_code   || '',
-    phone:              (workspace as any)?.phone      || '',
   })
   const [saving, setSaving] = useState(false)
   const [logoUploading, setLogoUploading] = useState(false)
@@ -153,16 +152,9 @@ function WorkspaceTab() {
               <input className="finput" value={form.state} onChange={e => set('state', e.target.value)} placeholder="NY" />
             </div>
           </div>
-          <div className="fgrid">
-            <div className="fgroup" style={{ maxWidth: 200 }}>
-              <label className="flabel">ZIP / Postal Code</label>
-              <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
-            </div>
-            <div className="fgroup">
-              <label className="flabel">Phone Number</label>
-              <input className="finput" type="tel" value={form.phone} onChange={e => set('phone', e.target.value)} placeholder="(555) 123-4567" />
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Offered as a dial-in option when scheduling meetings.</div>
-            </div>
+          <div className="fgroup" style={{ maxWidth: 200 }}>
+            <label className="flabel">ZIP / Postal Code</label>
+            <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
           </div>
 
           {/* ── Scheduling Defaults ── */}
@@ -812,6 +804,149 @@ function ActivityTypesTab() {
                 This is a built-in type. If you ever need it back, use "+ Add Type" to recreate it.
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {toastEl}
+    </div>
+  )
+}
+
+function AffiliationsTab() {
+  const { show, el: toastEl } = useToast()
+  const qc = useQueryClient()
+  const { data: affiliations = [], isLoading } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
+  })
+  const [showAdd, setShowAdd]       = useState(false)
+  const [editTarget, setEditTarget] = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [newForm, setNewForm]       = useState({ name: '', color: '#2d6a9f' })
+  const [editForm, setEditForm]     = useState({ name: '', color: '#2d6a9f' })
+  const [saving, setSaving]         = useState(false)
+
+  const handleAdd = async () => {
+    if (!newForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.createAffiliation(newForm)
+      qc.invalidateQueries({ queryKey: ['affiliation-configs'] })
+      setShowAdd(false)
+      setNewForm({ name: '', color: '#2d6a9f' })
+      show('Affiliation added')
+    } catch (e: any) {
+      show(e?.response?.data?.name?.[0] || 'Failed to add affiliation', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editForm.name.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.updateAffiliation(editTarget.id, editForm)
+      qc.invalidateQueries({ queryKey: ['affiliation-configs'] })
+      setEditTarget(null)
+      show('Affiliation updated')
+    } catch (e: any) {
+      show(e?.response?.data?.name?.[0] || 'Failed to update', 'error')
+    } finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSaving(true)
+    try {
+      await settingsApi.deleteAffiliation(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: ['affiliation-configs'] })
+      setDeleteTarget(null)
+      show('Affiliation deleted')
+    } catch (e: any) {
+      show(e?.response?.data?.detail || 'Failed to delete', 'error')
+    } finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 600 }}>
+      <div className="card-hdr">
+        Affiliation
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Affiliation
+        </button>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {affiliations.length === 0 && (
+          <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>
+            No affiliations yet — add the businesses sessions can be booked under (e.g. "Rass Consulting", "LMT Consulting").
+          </div>
+        )}
+        {affiliations.map((a: any) => (
+          <div key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ width: 12, height: 12, borderRadius: '50%', background: a.color, flexShrink: 0 }} />
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500, color: 'var(--ink)' }}>{a.name}</div>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(a); setEditForm({ name: a.name, color: a.color }) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(a)} style={{ color: '#c0392b', padding: '2px 6px' }}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Affiliation" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Name *</label>
+            <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Rass Consulting"
+              onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={newForm.color} onChange={c => setNewForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title="Edit Affiliation" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Name *</label>
+            <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
+              onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Color</label>
+            <ColorPicker value={editForm.color} onChange={c => setEditForm(f => ({ ...f, color: c }))} />
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete Affiliation" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Delete <strong>"{deleteTarget.name}"</strong>? Activities already booked under this affiliation will keep their label.
           </div>
         </Modal>
       )}
@@ -2119,6 +2254,7 @@ export default function Settings() {
     { key: 'Profile',          icon: <User size={13} />,         ownerOnly: false },
     { key: 'Pipeline',         icon: <Kanban size={13} />,       ownerOnly: true  },
     { key: 'Activity Types',   icon: <CalendarDays size={13} />, ownerOnly: true  },
+    { key: 'Affiliation',      icon: <Building2 size={13} />,    ownerOnly: true  },
     { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
@@ -2153,6 +2289,7 @@ export default function Settings() {
         {tab === 'Profile'        && <ProfileTab />}
         {tab === 'Pipeline'       && isOwner && <PipelineTab />}
         {tab === 'Activity Types'  && isOwner && <ActivityTypesTab />}
+        {tab === 'Affiliation'     && isOwner && <AffiliationsTab />}
         {tab === 'Client Statuses' && isOwner && <ClientStatusesTab />}
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}

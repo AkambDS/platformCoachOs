@@ -177,20 +177,36 @@ def _build_email_html(invoice: Invoice) -> str:
             heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
         )
 
-        custom_intro   = _apply_tmpl(tmpl.get("intro",   ""), **tmpl_vars)
-        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
-        _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
-        from tasks.email import _DEFAULT_INVOICE_HTML, _invoice_footer_block
+        from tasks.email import (
+            _DEFAULT_INVOICE_HTML, _DEFAULT_INVOICE_BODY, _invoice_body_block,
+            _invoice_footer_block, _invoice_header_block,
+            _invoice_heading_block, _invoice_signature_block,
+        )
+        raw_body  = tmpl.get("intro", "").strip() or _DEFAULT_INVOICE_BODY
+        body_text = _apply_tmpl(raw_body, **tmpl_vars)
         tmpl_vars.update(dict(
-            intro=custom_intro,
-            closing=custom_closing,
-            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
-            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            body_para=_invoice_body_block(body_text),
             footer_block=_invoice_footer_block(
                 tmpl_style.get("show_footer", True) and not disable_style,
                 body_font_css=_body_font_css, owner_email=owner_email,
                 owner_name=owner_name or owner_email, accent_color=_accent_color,
                 workspace_name=workspace.name, invoice_number=invoice.number,
+                show_contact_line=tmpl_style.get("show_contact_line", True),
+            ),
+            header_block=_invoice_header_block(
+                tmpl_style.get("show_header", True) and not disable_style,
+                header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+                accent_color=_accent_color, logo_img=_logo_img, workspace_name=workspace.name,
+            ),
+            body_radius="0 0 8px 8px" if (tmpl_style.get("show_header", True) and not disable_style) else "8px",
+            heading_block=_invoice_heading_block(
+                tmpl_style.get("show_heading", True) and not disable_style,
+                heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+                workspace_name=workspace.name,
+            ),
+            signature_block=_invoice_signature_block(
+                tmpl_style.get("show_signature", True) and not disable_style,
+                workspace_name=workspace.name,
             ),
         ))
 

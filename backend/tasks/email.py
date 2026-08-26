@@ -48,6 +48,7 @@ def _get_invoice_template(invoice) -> dict:
                 "disable_style": tmpl.get("disable_style", False),
                 "show_logo":     tmpl.get("show_logo", True),
                 "style":         tmpl.get("style", {}),
+                "attachments":   tmpl.get("attachments", []),
             }
     return (workspace.email_templates or {}).get("invoice", {})
 
@@ -169,11 +170,13 @@ class _InvoiceEmail(EmailMessage):
     (wraps plain+PDF in multipart/mixed then buries that inside multipart/alternative),
     which causes Gmail and some clients to render the HTML as a download attachment.
     """
-    def __init__(self, *args, html: str = "", pdf_bytes: bytes = b"", pdf_filename: str = "invoice.pdf", **kwargs):
+    def __init__(self, *args, html: str = "", pdf_bytes: bytes = b"", pdf_filename: str = "invoice.pdf",
+                 extra_attachments: list = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._html = html
         self._pdf_bytes = pdf_bytes
         self._pdf_filename = pdf_filename
+        self._extra_attachments = extra_attachments or []  # [(filename, content_bytes, mimetype), ...]
 
     def message(self):
         encoding = self.encoding or "utf-8"
@@ -182,13 +185,19 @@ class _InvoiceEmail(EmailMessage):
         alt.attach(SafeMIMEText(self.body or "", "plain", encoding))
         alt.attach(SafeMIMEText(self._html, "html", encoding))
 
-        if self._pdf_bytes:
+        if self._pdf_bytes or self._extra_attachments:
             root = SafeMIMEMultipart("mixed")
             root.attach(alt)
-            pdf = MIMEApplication(self._pdf_bytes, "pdf")
-            pdf.add_header("Content-Disposition", "attachment", filename=self._pdf_filename)
-            pdf.add_header("Content-Type", "application/pdf", name=self._pdf_filename)
-            root.attach(pdf)
+            if self._pdf_bytes:
+                pdf = MIMEApplication(self._pdf_bytes, "pdf")
+                pdf.add_header("Content-Disposition", "attachment", filename=self._pdf_filename)
+                pdf.add_header("Content-Type", "application/pdf", name=self._pdf_filename)
+                root.attach(pdf)
+            for filename, content, mime in self._extra_attachments:
+                _, _, subtype = (mime or "application/octet-stream").partition("/")
+                part = MIMEApplication(content, subtype or "octet-stream")
+                part.add_header("Content-Disposition", "attachment", filename=filename)
+                root.attach(part)
             msg = root
         else:
             msg = alt
@@ -225,35 +234,15 @@ _DEFAULT_INVOICE_HTML = (
     '  <tr><td style="padding:32px 16px;">\n'
     '    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">\n'
     '\n'
-    '      <!-- Header -->\n'
-    '      <tr>\n'
-    '        <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">\n'
-    '          {logo_img}\n'
-    '          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>\n'
-    '        </td>\n'
-    '      </tr>\n'
-    '      <tr><td style="height:3px;background:{accent_color};"></td></tr>\n'
+    '      {header_block}\n'
     '\n'
     '      <!-- Body -->\n'
     '      <tr>\n'
-    '        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">\n'
-    '          <h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">\n'
-    '            {workspace_name} sent you an invoice.\n'
-    '          </h1>\n'
-    '          {intro_para}\n'
-    '          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
-    "            You've received an invoice for <strong style=\"color:{value_color};\">${amount}</strong> with payment due on <strong style=\"color:{value_color};\">{due_date}</strong>.\n"
-    '          </p>\n'
-    '          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
-    '            {view_instructions}\n'
-    '          </p>\n'
+    '        <td style="background:#fff;padding:40px;border-radius:{body_radius};">\n'
+    '          {heading_block}\n'
+    '          {body_para}\n'
     '          {pay_button}\n'
-    '          {closing_para}\n'
-    '          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">\n'
-    '            Please email us at <a href="mailto:{owner_email}" style="color:{accent_color};">{owner_email}</a> with any questions.\n'
-    '          </p>\n'
-    '          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>\n'
-    '          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>\n'
+    '          {signature_block}\n'
     '        </td>\n'
     '      </tr>\n'
     '\n'
@@ -266,25 +255,99 @@ _DEFAULT_INVOICE_HTML = (
     '</html>'
 )
 
+# The plain, fully-editable email body — this is the ENTIRE middle content of the
+# invoice email (below the optional heading, above the pay button), not just an
+# "opening paragraph" tacked onto fixed boilerplate. A coach can freely rewrite or
+# delete any part of this, including the amount/due-date line — nothing is force-added
+# beyond what ends up in this string. {view_instructions} is left as a placeholder
+# (rather than baked in as literal text) so it still adapts to whether a Stripe pay
+# link exists, even though the surrounding sentence is otherwise plain, editable text.
+_DEFAULT_INVOICE_BODY = (
+    "Hi {client_name},\n"
+    "\n"
+    "Please find your invoice attached.\n"
+    "\n"
+    "You've received an invoice for ${amount} with payment due on {due_date}.\n"
+    "\n"
+    "{view_instructions}"
+)
 
-def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email: str,
-                           owner_name: str, accent_color: str, workspace_name: str,
-                           invoice_number: str) -> str:
-    """The invoice email's footer — unlike every other email type (which goes through
-    _email_shell and already respects show_footer), the invoice template is its own
-    hand-rolled HTML string, so it needs the same conditional handled separately.
-    Values are interpolated directly here (not left as {placeholders}) because the
-    caller substitutes the surrounding template in a single str.format() pass, which
-    would leave any nested {placeholders} in this string un-substituted."""
-    if not show_footer:
+
+def _invoice_body_block(body: str) -> str:
+    """Wrap the plain-text (newline-separated) invoice email body in a single styled
+    <p> using white-space:pre-line — preserves the author's blank-line paragraph
+    breaks without needing to split the text into separate <p> tags."""
+    if not body.strip():
+        return ""
+    return (
+        '<p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;'
+        f'white-space:pre-line;">{body}</p>'
+    )
+
+
+def _invoice_header_block(show_header: bool, *, header_bg: str, accent_color: str,
+                           logo_img: str, workspace_name: str) -> str:
+    """The invoice email's header (brand bar + accent line) — hand-rolled like
+    _invoice_footer_block, for the same reason: the invoice template is its own HTML
+    string rather than going through _email_shell."""
+    if not show_header:
         return ""
     return (
         '<tr>\n'
-        f'  <td style="padding:28px 20px 20px;text-align:center;">\n'
+        f'  <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">\n'
+        f'    {logo_img}\n'
+        f'    <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>\n'
+        '  </td>\n'
+        '</tr>\n'
+        f'<tr><td style="height:3px;background:{accent_color};"></td></tr>'
+    )
+
+
+def _invoice_heading_block(show_heading: bool, *, heading_font_css: str, workspace_name: str) -> str:
+    """The "{workspace_name} sent you an invoice." heading — optional so a coach who
+    writes a full custom body isn't stuck with this redundant boilerplate above it."""
+    if not show_heading:
+        return ""
+    return (
+        f'<h1 style="margin:0 0 24px;font-family:{heading_font_css};font-size:26px;'
+        f'font-weight:400;color:#16130f;line-height:1.3;">\n'
+        f'  {workspace_name} sent you an invoice.\n'
+        f'</h1>'
+    )
+
+
+def _invoice_signature_block(show_signature: bool, *, workspace_name: str) -> str:
+    """The "Thanks! / {workspace_name}" sign-off — optional for the same reason as
+    _invoice_heading_block."""
+    if not show_signature:
+        return ""
+    return (
+        '<p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>\n'
+        f'<p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>'
+    )
+
+
+def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email: str,
+                           owner_name: str, accent_color: str, workspace_name: str,
+                           invoice_number: str, show_contact_line: bool = True) -> str:
+    """The invoice email's footer — unlike every other email type (which goes through
+    _email_shell and already respects show_footer/show_contact_line), the invoice
+    template is its own hand-rolled HTML string, so it needs the same conditionals
+    handled separately. Values are interpolated directly here (not left as
+    {placeholders}) because the caller substitutes the surrounding template in a single
+    str.format() pass, which would leave any nested {placeholders} un-substituted."""
+    if not show_footer:
+        return ""
+    contact_line = (
         f'    <p style="margin:0 0 8px;font-size:13px;color:#9e9890;font-family:{body_font_css};line-height:1.7;">\n'
         f'      Questions? Contact us at <a href="mailto:{owner_email}" style="color:{accent_color};text-decoration:none;font-weight:600;">{owner_name}</a>\n'
         f'      &mdash; <a href="mailto:{owner_email}" style="color:#b5afa6;text-decoration:none;font-size:11px;">{owner_email}</a>\n'
         '    </p>\n'
+    ) if show_contact_line else ""
+    return (
+        '<tr>\n'
+        f'  <td style="padding:28px 20px 20px;text-align:center;">\n'
+        f'{contact_line}'
         f'    <p style="margin:0;font-size:11px;color:#b5afa6;font-family:{body_font_css};">\n'
         f'      Sent by {workspace_name} &middot; Invoice #{invoice_number}\n'
         '    </p>\n'
@@ -293,12 +356,18 @@ def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email:
     )
 
 
-# Maps a workspace owner's email address to the SES-verified sending domain for that workspace.
-# Any workspace whose owner is not listed here defaults to rass-consulting.com.
-_OWNER_SENDING_DOMAIN: dict[str, str] = {
-    "laura.lmtconsulting@gmail.com": "lauratreonze.com",
-}
-_DEFAULT_SENDING_DOMAIN = "rass-consulting.com"
+# Maps a workspace owner's email address to the Resend-verified sending domain for that workspace.
+# Any workspace whose owner is not listed here defaults to _DEFAULT_SENDING_DOMAIN below.
+# Keys must be lowercase — _workspace_from_email() lowercases the owner's email before lookup.
+# laura.lmtconsulting@gmail.com temporarily omitted (falls back to the default below) —
+# lauratreonze.com is added in Resend but not yet DNS-verified. Re-add once verified:
+#     "laura.lmtconsulting@gmail.com": "lauratreonze.com",
+_OWNER_SENDING_DOMAIN: dict[str, str] = {}
+# NOT YET DNS-verified in Resend (SPF/DKIM) as of this change — outgoing mail from this
+# domain may fail to send or land in spam until that's done. Set anyway per explicit
+# request; switch back to "rass-consulting.com" (or whatever the last known-good verified
+# domain is) if sending breaks.
+_DEFAULT_SENDING_DOMAIN = "lmtconsulting.com"
 
 
 def _workspace_from_email(workspace) -> str:
@@ -1031,15 +1100,11 @@ def send_invoice_email(invoice_id: str):
             payment_link=_pay_link, pay_button=_pay_button,
             view_instructions=_view_instructions, logo_img=_logo_img,
         )
-        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
-        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        raw_body = tmpl.get("intro", "").strip() or _DEFAULT_INVOICE_BODY
+        body_text = _apply_tmpl(raw_body, **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
-        _p = 'style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"'
         tmpl_vars.update(dict(
-            intro=custom_intro,
-            closing=custom_closing,
-            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
-            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
+            body_para=_invoice_body_block(body_text),
             header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
             accent_color=_accent_color,
             value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
@@ -1050,6 +1115,22 @@ def send_invoice_email(invoice_id: str):
                 body_font_css=_body_font_css, owner_email=owner_email,
                 owner_name=owner_name or owner_email, accent_color=_accent_color,
                 workspace_name=workspace.name, invoice_number=invoice.number,
+                show_contact_line=tmpl_style.get("show_contact_line", True),
+            ),
+            header_block=_invoice_header_block(
+                tmpl_style.get("show_header", True) and not disable_style,
+                header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+                accent_color=_accent_color, logo_img=_logo_img, workspace_name=workspace.name,
+            ),
+            body_radius="0 0 8px 8px" if (tmpl_style.get("show_header", True) and not disable_style) else "8px",
+            heading_block=_invoice_heading_block(
+                tmpl_style.get("show_heading", True) and not disable_style,
+                heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+                workspace_name=workspace.name,
+            ),
+            signature_block=_invoice_signature_block(
+                tmpl_style.get("show_signature", True) and not disable_style,
+                workspace_name=workspace.name,
             ),
         ))
 
@@ -1078,6 +1159,22 @@ def send_invoice_email(invoice_id: str):
             pdf_bytes = WeasyHTML(string=pdf_html).write_pdf()
         except Exception as pdf_err:
             logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
+
+        import mimetypes
+        from django.core.files.storage import default_storage
+        extra_attachments = []
+        for att in (tmpl.get("attachments") or []):
+            s3_key = att.get("s3_key")
+            if not s3_key:
+                continue
+            try:
+                with default_storage.open(s3_key, "rb") as f:
+                    content = f.read()
+                mime = mimetypes.guess_type(att.get("file_name", ""))[0] or "application/octet-stream"
+                extra_attachments.append((att.get("file_name") or "attachment", content, mime))
+            except Exception as att_err:
+                logger.warning(f"Could not attach {s3_key} to invoice {invoice.number}: {att_err}")
+
         msg = _InvoiceEmail(
             subject=subject,
             body=plain,
@@ -1087,6 +1184,7 @@ def send_invoice_email(invoice_id: str):
             html=html,
             pdf_bytes=pdf_bytes,
             pdf_filename=f"{invoice.number}.pdf",
+            extra_attachments=extra_attachments,
         )
         msg.send()
         logger.info(f"Invoice email sent for {invoice.number}")

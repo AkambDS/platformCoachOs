@@ -11,9 +11,10 @@ from .serializers import (
     BrandingSerializer, SchedulingSerializer, WorkspaceSerializer,
     PipelineStageConfigSerializer, ActivityTypeConfigSerializer,
     ClientStatusConfigSerializer, ClientTagConfigSerializer,
+    AffiliationConfigSerializer,
 )
 from apps.pipeline.models import PipelineStageConfig
-from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES
+from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES, AffiliationConfig
 from apps.clients.models import ClientStatusConfig, ClientTagConfig
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
 
@@ -89,6 +90,61 @@ def logo_upload(request):
     workspace.logo_data = data_url
     workspace.save(update_fields=["logo_data"])
     return Response({"logo_data": data_url})
+
+
+@api_view(["POST", "DELETE"])
+@permission_classes([IsBusinessOwner])
+@parser_classes([MultiPartParser])
+def email_template_attachments(request):
+    """
+    POST   /api/settings/email-template-attachments/?use_case=invoice   (multipart, field: file)
+        — attach a file (doc/pdf/any) that gets sent alongside every email using this
+          workspace's default template for the given use case (currently only "invoice").
+    DELETE /api/settings/email-template-attachments/?use_case=invoice&s3_key=...
+        — remove a previously attached file.
+    """
+    import uuid
+    from django.core.files.storage import default_storage
+
+    workspace = request.user.workspace
+    use_case  = request.query_params.get("use_case", "invoice")
+    templates = dict(workspace.email_templates or {})
+    tmpl      = dict(templates.get(use_case, {}))
+    attachments = list(tmpl.get("attachments", []))
+
+    if request.method == "DELETE":
+        s3_key = request.query_params.get("s3_key")
+        remaining = [a for a in attachments if a.get("s3_key") != s3_key]
+        if len(remaining) != len(attachments):
+            try:
+                default_storage.delete(s3_key)
+            except Exception:
+                pass
+        tmpl["attachments"] = remaining
+        templates[use_case] = tmpl
+        workspace.email_templates = templates
+        workspace.save(update_fields=["email_templates"])
+        return Response({"attachments": remaining})
+
+    file = request.FILES.get("file")
+    if not file:
+        return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+    if file.size > 10 * 1024 * 1024:  # 10 MB limit
+        return Response({"detail": "File must be under 10 MB."}, status=status.HTTP_400_BAD_REQUEST)
+
+    ext = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else "bin"
+    s3_key = f"email-template-attachments/{workspace.id}/{use_case}/{uuid.uuid4()}.{ext}"
+    try:
+        default_storage.save(s3_key, file)
+    except Exception as e:
+        return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    attachments.append({"s3_key": s3_key, "file_name": file.name, "size": file.size})
+    tmpl["attachments"] = attachments
+    templates[use_case] = tmpl
+    workspace.email_templates = templates
+    workspace.save(update_fields=["email_templates"])
+    return Response({"attachments": attachments})
 
 
 @api_view(["GET"])
@@ -358,16 +414,38 @@ def email_preview(request):
     else:
         style["show_contact_line"] = saved_style.get("show_contact_line", True)
 
+    # show_heading/show_signature: hide the auto heading (e.g. "{name} sent you an
+    # invoice." / "Your session is confirmed") and/or "Thanks! / {name}" sign-off when
+    # a coach's custom body already covers that (avoids redundant boilerplate on top).
+    raw_show_heading = request.query_params.get("show_heading")
+    if raw_show_heading is not None:
+        style["show_heading"] = raw_show_heading not in ("0", "false", "False")
+    else:
+        style["show_heading"] = saved_style.get("show_heading", True)
+
+    raw_show_signature = request.query_params.get("show_signature")
+    if raw_show_signature is not None:
+        style["show_signature"] = raw_show_signature not in ("0", "false", "False")
+    else:
+        style["show_signature"] = saved_style.get("show_signature", True)
+
     if email_type == "confirmation":
-        client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        # Allow callers (e.g. the Schedule Activity preview) to pass the real client/
+        # session details instead of dummy placeholders.
+        _preview_client_name   = request.query_params.get("client_name",   "Jane Smith")
+        _preview_coach_name    = request.query_params.get("coach_name",    "Coach Mike")
+        _preview_session_title = request.query_params.get("session_title", "Discovery Session")
+        _preview_session_time  = request.query_params.get("session_time",  "Wednesday, June 5 at 10:00 AM")
+        _preview_location      = request.query_params.get("location",      "123 Main St")
+        client   = SimpleNamespace(first_name=_preview_client_name.split()[0], full_name=_preview_client_name, email="jane@example.com")
         activity = SimpleNamespace(
-            title="Discovery Session", activity_type="session",
-            location="123 Main St", notes="", client=client,
+            title=_preview_session_title, activity_type="session",
+            location=_preview_location, notes="", client=client,
         )
         html = build_confirmation_email(
             activity=activity, workspace_name=workspace.name, logo_url=logo_url,
-            coach_name="Coach Mike", coach_email="",
-            dt_human="Wednesday, June 5 at 10:00 AM",
+            coach_name=_preview_coach_name, coach_email="",
+            dt_human=_preview_session_time,
             owner_email=owner_email, owner_name=owner_name,
             google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
             style=style,
@@ -416,7 +494,11 @@ def email_preview(request):
         # disable_style only applies when custom HTML is actually being used
         using_custom = custom_html_tmpl and not skip_custom
         disable_style = using_custom and tmpl.get("disable_style", False)
-        from tasks.email import _apply_tmpl, _DEFAULT_INVOICE_HTML, _invoice_footer_block
+        from tasks.email import (
+            _apply_tmpl, _DEFAULT_INVOICE_HTML, _DEFAULT_INVOICE_BODY, _invoice_body_block,
+            _invoice_footer_block, _invoice_header_block,
+            _invoice_heading_block, _invoice_signature_block,
+        )
         _show_logo = tmpl.get("show_logo", True) and not disable_style
         logo_img_tag = (
             f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
@@ -440,9 +522,6 @@ def email_preview(request):
             owner_email=owner_email, owner_name=owner_name or owner_email,
             payment_link="", pay_button="", logo_img=logo_img_tag,
             view_instructions="You can view the invoice by clicking on the attached file.",
-            intro=custom_intro, closing=custom_closing,
-            intro_para=f'<p {_p}>{custom_intro}</p>' if custom_intro.strip() else '',
-            closing_para=f'<p {_p}>{custom_closing}</p>' if custom_closing.strip() else '',
             header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
             accent_color="#b8922e" if disable_style else style.get("accent_color", "#b8922e"),
             value_color="#1a1714" if disable_style else style.get("value_color", "#1a1714"),
@@ -453,8 +532,26 @@ def email_preview(request):
                 body_font_css=_body_font_css, owner_email=owner_email,
                 owner_name=owner_name or owner_email, accent_color=_accent_color,
                 workspace_name=workspace.name, invoice_number="INV-0042",
+                show_contact_line=style.get("show_contact_line", True),
+            ),
+            header_block=_invoice_header_block(
+                style.get("show_header", True) and not disable_style,
+                header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
+                accent_color=_accent_color, logo_img=logo_img_tag, workspace_name=workspace.name,
+            ),
+            body_radius="0 0 8px 8px" if (style.get("show_header", True) and not disable_style) else "8px",
+            heading_block=_invoice_heading_block(
+                style.get("show_heading", True) and not disable_style,
+                heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
+                workspace_name=workspace.name,
+            ),
+            signature_block=_invoice_signature_block(
+                style.get("show_signature", True) and not disable_style,
+                workspace_name=workspace.name,
             ),
         )
+        raw_body = raw_intro.strip() or _DEFAULT_INVOICE_BODY
+        preview_vars["body_para"] = _invoice_body_block(_apply_tmpl(raw_body, **preview_vars))
         effective_tmpl = (custom_html_tmpl if not skip_custom else "") or _DEFAULT_INVOICE_HTML
         html = _apply_tmpl(effective_tmpl, **preview_vars)
 
@@ -634,6 +731,46 @@ def client_tag_config_detail(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     ser = ClientTagConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def affiliation_configs(request):
+    """GET /api/settings/affiliations/ — list; POST — create affiliation."""
+    workspace = request.user.workspace
+
+    if request.method == "GET":
+        qs = AffiliationConfig.objects.filter(workspace=workspace)
+        return Response(AffiliationConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = AffiliationConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def affiliation_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/affiliations/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = AffiliationConfig.objects.get(pk=pk, workspace=workspace)
+    except AffiliationConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = AffiliationConfigSerializer(obj, data=request.data, partial=True)
     if ser.is_valid():
         ser.save()
         return Response(ser.data)

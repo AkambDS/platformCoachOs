@@ -287,6 +287,8 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     show_header    = s.get("show_header", True)
     show_footer    = s.get("show_footer", True)
     show_contact_line = s.get("show_contact_line", True)
+    show_heading   = s.get("show_heading", True)
+    show_signature = s.get("show_signature", True)
     footer_text    = s.get("footer_text", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
     heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
@@ -316,7 +318,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     intro_html   = custom_intro   or _default_intro
     closing_html = custom_closing or _default_closing
 
-    body = f"""
+    heading_block = f"""
     <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
               font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
               font-weight:600;">
@@ -325,7 +327,20 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     <h1 style="margin:0 0 12px;font-family:{heading_font};
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       Your session is confirmed
-    </h1>
+    </h1>""" if show_heading else ""
+
+    signature_block = f"""
+    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      {closing_html}
+    </p>
+    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>""" if show_signature else ""
+
+    body = f"""
+    {heading_block}
     <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
               font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
       {intro_html}
@@ -346,14 +361,7 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     {_action_buttons(confirm_url, cancel_url, reschedule_url)}
     {_calendar_block(google_cal_url)}
 
-    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {closing_html}
-    </p>
-    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
+    {signature_block}"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
                         header_bg=header_bg, accent_color=accent_color,

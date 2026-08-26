@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from apps.accounts.models import Workspace
 from apps.pipeline.models import PipelineStageConfig
-from apps.activities.models import ActivityTypeConfig
+from apps.activities.models import ActivityTypeConfig, AffiliationConfig
 from apps.clients.models import ClientStatusConfig, ClientTagConfig
 
 
@@ -92,4 +92,11 @@ class ClientTagConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model  = ClientTagConfig
         fields = ["id", "name", "color"]
+        read_only_fields = ["id"]
+
+
+class AffiliationConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = AffiliationConfig
+        fields = ["id", "name", "color", "sort_order"]
         read_only_fields = ["id"]

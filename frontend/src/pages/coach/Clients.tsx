@@ -62,7 +62,7 @@ export default function Clients() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [deleting, setDeleting] = useState(false)
-  const [importResult, setImportResult] = useState<{ created: number; errors: { row: number; error: string }[]; warnings: { row: number; warning: string }[] } | null>(null)
+  const [importResult, setImportResult] = useState<{ created: number; skipped: number; errors: { row: number; error: string }[]; warnings: { row: number; warning: string }[]; extraColumns: string[] } | null>(null)
   const [importFatalError, setImportFatalError] = useState<string | null>(null)
   const PAGE_SIZE = 20
   const [page, setPage] = useState(1)
@@ -117,12 +117,19 @@ export default function Clients() {
       const fd = new FormData()
       fd.append('file', file)
       const { data } = await clientsApi.importCsv(fd)
-      if (data.errors.length > 0 || data.warnings?.length > 0) {
-        // Errors (e.g. duplicate name/email already in this workspace) and warnings
-        // (e.g. a row with fewer columns than the header — likely a shifted/misaligned
-        // source file) need their per-row description visible, not just a count — a
-        // toast isn't enough room and disappears too fast to read a list of rows.
-        setImportResult({ created: data.created, errors: data.errors, warnings: data.warnings || [] })
+      // Errors (e.g. duplicate name/email already in this workspace) and warnings
+      // (e.g. a row with fewer columns than the header — likely a shifted/misaligned
+      // source file) need their per-row description visible, not just a count — a
+      // toast isn't enough room and disappears too fast to read a list of rows.
+      // Also show the modal (instead of a bare toast) whenever nothing got created —
+      // "Imported 0 clients" as a toast gives no clue whether that's because the file
+      // was genuinely blank or because its columns didn't match at all.
+      if (data.errors.length > 0 || data.warnings?.length > 0 || data.created === 0 || data.extra_columns?.length > 0) {
+        setImportResult({
+          created: data.created, skipped: data.skipped || 0,
+          errors: data.errors, warnings: data.warnings || [],
+          extraColumns: data.extra_columns || [],
+        })
       } else {
         toast(`Imported ${data.created} client${data.created !== 1 ? 's' : ''}`, 'success')
       }
@@ -257,29 +264,24 @@ export default function Clients() {
                         style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 14, padding: 0 }}>×</button>
                     </div>
 
-                    <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
-                      Preparing your file
-                    </div>
                     <div style={{ marginBottom: 10 }}>
-                      Build your data in a spreadsheet app (Excel, Google Sheets, Numbers) — never by typing raw CSV text by hand, which is how columns end up misaligned.
-                      When you're done, save or export it as <strong>CSV</strong> (a plain <code>.csv</code> file — not <code>.xlsx</code>).
-                      Easiest start: click <strong>↓ Export CSV</strong> first to get a file with the exact right columns already filled in.
+                      Build in a spreadsheet app, export as <strong>.csv</strong>. Tip: <strong>↓ Export CSV</strong> first for a ready-made template.
                     </div>
 
                     <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
                       Columns
                     </div>
-                    <div style={{ marginBottom: 4 }}><strong>Required:</strong> first_name, last_name, email_1</div>
                     <div style={{ marginBottom: 10 }}>
-                      <strong>Optional:</strong> email_2, phone_1 (+ _ext/_type), phone_2 (+ _ext/_type), street_address_1/2, city, state, zip, and more
+                      <strong>Required:</strong> first_name, last_name, email_1<br />
+                      <strong>Optional:</strong> email_2, phone_1/2, address fields, and more
                     </div>
 
                     <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
                       Field notes
                     </div>
-                    <div><strong>birth_date:</strong> YYYY-MM-DD preferred (MM/DD/YYYY and a few other common formats are also accepted)</div>
-                    <div><strong>tags:</strong> separate multiple with | or ,</div>
-                    <div><strong>coach_email:</strong> must match a coach's email already in this workspace, else it's assigned to you</div>
+                    <div><strong>birth_date:</strong> YYYY-MM-DD preferred</div>
+                    <div><strong>tags:</strong> separate with | or ,</div>
+                    <div><strong>coach_email:</strong> must match a coach in this workspace, else left unassigned</div>
                   </div>
                 )}
               </div>
@@ -613,7 +615,15 @@ export default function Clients() {
             {importResult.warnings.length > 0 && (
               <> <strong style={{ color: '#b8860b' }}>{importResult.warnings.length}</strong> row{importResult.warnings.length !== 1 ? 's' : ''} flagged for review.</>
             )}
+            {importResult.created === 0 && importResult.errors.length === 0 && importResult.skipped > 0 && (
+              <> All <strong>{importResult.skipped}</strong> row{importResult.skipped !== 1 ? 's were' : ' was'} blank (no name or email) and skipped — double-check this file has data below its header row.</>
+            )}
           </div>
+          {importResult.extraColumns.length > 0 && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 12px', marginBottom: 16 }}>
+              <strong>Ignored column{importResult.extraColumns.length !== 1 ? 's' : ''}</strong> (not part of the expected format, so left out): {importResult.extraColumns.join(', ')}
+            </div>
+          )}
           {importResult.errors.length > 0 && (
             <>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: '#c0392b', marginBottom: 6 }}>Skipped</div>

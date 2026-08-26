@@ -512,6 +512,7 @@ export default function Activities() {
 
   const [statusFilter, setStatusFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
+  const [affiliationFilter, setAffiliationFilter] = useState('')
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
@@ -520,8 +521,9 @@ export default function Activities() {
   const [cancelScope,  setCancelScope]  = useState<'this'|'future'|'all'>('this')
 
   const params: any = { page_size: 200 }
-  if (statusFilter) params.status = statusFilter
-  if (typeFilter)   params.activity_type = typeFilter
+  if (statusFilter)      params.status = statusFilter
+  if (typeFilter)        params.activity_type = typeFilter
+  if (affiliationFilter) params.affiliation = affiliationFilter
 
   const { data: workspace } = useQuery({
     queryKey: ['workspace'],
@@ -535,8 +537,13 @@ export default function Activities() {
     select: (d: any[]) => d.filter(t => t.is_active),
   })
 
+  const { data: affiliationsList = [] } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
+  })
+
   const { data, isLoading } = useQuery({
-    queryKey: ['activities-list', statusFilter, typeFilter],
+    queryKey: ['activities-list', statusFilter, typeFilter, affiliationFilter],
     queryFn: () => activitiesApi.list(params).then(r => r.data),
   })
   const activities: any[] = (data?.results || data || []).filter((a: any) => {
@@ -644,6 +651,19 @@ export default function Activities() {
               <option key={t.name} value={t.name}>{t.name.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</option>
             ))}
           </select>
+          {affiliationsList.length > 0 && (
+            <select
+              className="fselect"
+              style={{ width: 'auto', minWidth: 130 }}
+              value={affiliationFilter}
+              onChange={e => setAffiliationFilter(e.target.value)}
+            >
+              <option value="">All affiliations</option>
+              {(affiliationsList as any[]).map((a: any) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+          )}
         </div>
 
         {/* Table */}
@@ -665,6 +685,7 @@ export default function Activities() {
                 <th>Date</th>
                 <th>Time</th>
                 <th>Client</th>
+                <th>Affiliation</th>
                 <th>Type</th>
                 <th>Title</th>
                 <th>Location</th>
@@ -693,6 +714,14 @@ export default function Activities() {
                       <User size={12} color="var(--muted)" />
                       {a.client_name}
                     </div>
+                  </td>
+                  <td>
+                    {a.affiliation_name ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <div style={{ width: 8, height: 8, borderRadius: '50%', background: a.affiliation_color || '#8c8279', flexShrink: 0 }} />
+                        <span style={{ fontSize: 12 }}>{a.affiliation_name}</span>
+                      </div>
+                    ) : <span style={{ color: 'var(--border)' }}>—</span>}
                   </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

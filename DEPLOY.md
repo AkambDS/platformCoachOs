@@ -231,13 +231,71 @@ Copy the webhook signing secret → set `DJSTRIPE_WEBHOOK_SECRET` in backend/.en
 
 ---
 
+## Email Setup (Production)
+
+**Actual transport in use: [Resend](https://resend.com) SMTP relay** — not SendGrid (below cost
+table is stale) and not literally AWS SES, despite the env var names.
+
+`backend/config/settings/production.py` has an "AWS SES via SMTP" block left over from an
+earlier SES setup:
+```python
+EMAIL_BACKEND       = "django.core.mail.backends.smtp.EmailBackend"
+EMAIL_HOST          = env("EMAIL_HOST",     default="email-smtp.us-east-1.amazonaws.com")
+EMAIL_PORT          = env.int("EMAIL_PORT", default=587)
+EMAIL_USE_TLS       = True
+EMAIL_HOST_USER     = env("AWS_SES_SMTP_USER",     default="")
+EMAIL_HOST_PASSWORD = env("AWS_SES_SMTP_PASSWORD", default="")
+```
+Since this reads the host/user/password from env vars, it was repointed at Resend without a
+code change — `backend/.env` on EC2 (`~/platformCoachOs/backend/.env`) actually holds:
+```
+EMAIL_HOST=smtp.resend.com
+AWS_SES_SMTP_USER=resend           # Resend's SMTP username is always the literal string "resend"
+AWS_SES_SMTP_PASSWORD=<resend API key>
+```
+Don't be misled by the `AWS_SES_SMTP_*` names — they're just repurposed, not actually SES. The
+real AWS SES account for this project (if you ever check the SES console) is unused/sandboxed
+(200/day cap) and completely unrelated to production mail delivery.
+
+**Resend account**: logged in as `rassconsulting.co` (not any other Resend login you might have —
+e.g. an `artikamb` account exists but is empty/unused, zero domains, zero sent mail). Dashboard:
+resend.com → Domains / Emails (send log, statuses, bounce reasons) / Logs.
+
+**Per-workspace sending domain**: `backend/tasks/email.py` (`_OWNER_SENDING_DOMAIN`) maps a
+workspace owner's login email to the "From" domain used for that workspace's outgoing mail —
+lets each coach's clients see mail from the coach's own domain instead of one shared domain.
+Every domain used here must be added and verified in the Resend dashboard (Domains → Add
+Domain → add the SPF/DKIM/MX records it generates to that domain's DNS, e.g. GoDaddy) before
+mail from it will send — an unverified "From" domain fails silently (the task's `except`
+block logs the error but the UI shows no failure).
+
+- `rass-consulting.com` — verified, this is `_DEFAULT_SENDING_DOMAIN`. Any workspace owner not
+  explicitly listed in `_OWNER_SENDING_DOMAIN` sends from `noreply@rass-consulting.com`.
+- `lauratreonze.com` — owned/managed by Laura (workspace owner `laura.lmtconsulting@gmail.com`),
+  added in Resend but **DNS records not yet added, status "Not Started"** as of 2026-08-26.
+
+> **TODO — revert once lauratreonze.com verifies in Resend:** `_OWNER_SENDING_DOMAIN` is
+> currently `{}` (empty) as a stopgap, so `laura.lmtconsulting@gmail.com`'s workspace falls
+> back to sending from `noreply@rass-consulting.com` instead of her own domain — same as every
+> other unlisted owner (e.g. `shreya1201@gmail.com`). This was done so her workspace could send
+> mail immediately instead of waiting on DNS. Once Resend shows `lauratreonze.com` as
+> **Verified**, restore the mapping in `backend/tasks/email.py`:
+> ```python
+> _OWNER_SENDING_DOMAIN: dict[str, str] = {
+>     "laura.lmtconsulting@gmail.com": "lauratreonze.com",
+> }
+> ```
+> then deploy (`git push` → on EC2: `git pull` →
+> `docker compose -f docker-compose.prod.yml up -d --build backend celery celery-beat` — celery
+> must be rebuilt too since invoice/session emails send via Celery tasks, not the web process).
+
 ## Cost Breakdown
 
 | Service | Monthly |
 |---------|---------|
 | DigitalOcean 2CPU/4GB | $24 |
 | Domain name | ~$1 |
-| SendGrid (40k emails free) | $0 |
+| Resend (3k emails/month free, then usage-based) | $0+ |
 | Stripe (2.9% + 30¢/transaction) | Variable |
 | S3 (minimal usage) | ~$1 |
 | **Total fixed** | **~$26/month** |

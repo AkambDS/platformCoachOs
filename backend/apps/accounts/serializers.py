@@ -1,5 +1,6 @@
 """CoachOS — accounts/serializers.py"""
 from rest_framework import serializers
+from rest_framework.exceptions import AuthenticationFailed
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.utils import timezone as tz
 from datetime import timedelta
@@ -9,19 +10,47 @@ from .models import User, Workspace, WorkspaceInvitation
 
 
 class CoachOSTokenObtainPairSerializer(TokenObtainPairSerializer):
-    """Adds workspace_id, role, full_name to JWT payload."""
+    """Adds workspace_id, role, full_name to JWT payload.
+
+    Also replaces SimpleJWT's default "No active account found with the given
+    credentials" — which lumps together "no such email", "wrong password", and
+    "account disabled" into one message — with the specific reason. This isn't a
+    public self-signup product where hiding account existence guards against
+    enumeration; a coach stuck on a pending-invite account needs to know that's
+    the actual problem rather than re-guessing their password.
+    """
 
     def validate(self, attrs):
-        data = super().validate(attrs)
+        try:
+            data = super().validate(attrs)
+        except AuthenticationFailed:
+            email = attrs.get(self.username_field, "")
+            user  = User.objects.filter(**{self.username_field: email}).first()
+            if not user:
+                raise AuthenticationFailed("No account exists with that email.", "no_account")
+            # Checked before password: pending-invite accounts (add_pending_coach) are
+            # created with set_unusable_password(), so check_password() below would
+            # always fail for them regardless of what's typed — reporting "incorrect
+            # password" would hide the real, actionable blocker (account not activated).
+            if not user.is_active:
+                raise AuthenticationFailed(
+                    "This account is inactive. Contact your workspace owner to activate it.",
+                    "account_inactive",
+                )
+            if not user.check_password(attrs.get("password", "")):
+                raise AuthenticationFailed("Incorrect password.", "incorrect_password")
+            # authenticate() failed for some other reason (e.g. a custom auth backend
+            # rule) — none of the above explains it, so surface the generic message.
+            raise
         user = self.user
         if (
             user.workspace
             and not user.workspace.is_active
             and user.role != "platform_admin"
         ):
-            raise serializers.ValidationError(
-                "Your workspace is not yet active. "
-                "Please contact your administrator for access."
+            raise AuthenticationFailed(
+                "Your workspace is not yet active. Please contact your administrator for access.",
+                "workspace_inactive",
             )
         return data
 
@@ -50,7 +79,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
                   "workspace_timezone", "buffer_minutes", "cancellation_hours",
                   "logo_s3_key", "logo_data", "email_templates",
                   "generic_templates", "template_use_case_map",
-                  "address", "city", "state", "zip_code", "created_at"]
+                  "address", "city", "state", "zip_code", "phone", "created_at"]
         read_only_fields = ["id", "created_at", "slug"]
 
 

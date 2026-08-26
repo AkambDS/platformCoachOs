@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, invoicesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, useToast } from '../../components/ui'
+import { EmailTemplateEditor } from '../../components/EmailEditModal'
 import { useAuthStore } from '../../store/auth'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -386,6 +387,7 @@ export default function NewInvoice() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [showSendPreview, setShowSendPreview] = useState(false)
+  const [showEmailTab, setShowEmailTab] = useState(false)
 
   // Load existing invoice when editing
   const { data: existingInv } = useQuery({
@@ -588,7 +590,49 @@ export default function NewInvoice() {
       </div>
 
       {/* ── Body ── */}
-      <div style={{ padding: '24px 32px', display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, alignItems: 'start' }}>
+      <div style={{ padding: '24px 32px 0' }}>
+        {/* Tabs — always visible so switching to/from the email template editor never loses your place */}
+        <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
+          {[
+            { key: 'one_time', label: 'One-Time Invoice' },
+            { key: 'subscription', label: 'Monthly Subscription' },
+            { key: 'email_template', label: 'Edit Email Template' },
+          ].map(t => {
+            const active = t.key === 'email_template' ? showEmailTab : (!showEmailTab && tab === t.key)
+            return (
+              <button
+                key={t.key}
+                onClick={() => {
+                  if (t.key === 'email_template') { setShowEmailTab(true) }
+                  else { setTab(t.key as any); setShowEmailTab(false) }
+                }}
+                style={{
+                  padding: '9px 18px',
+                  background: active ? 'var(--ink)' : 'transparent',
+                  color: active ? '#fff' : 'var(--muted)',
+                  border: '1px solid var(--border)',
+                  borderBottom: active ? '1px solid var(--ink)' : '1px solid var(--border)',
+                  cursor: 'pointer',
+                  fontSize: 13,
+                  fontWeight: active ? 600 : 400,
+                  borderRadius: '4px 4px 0 0',
+                  marginBottom: -1,
+                  letterSpacing: '.01em',
+                }}
+              >
+                {t.label}
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {showEmailTab ? (
+        <div style={{ padding: '20px 32px 24px', height: 'calc(100vh - 210px)' }}>
+          <EmailTemplateEditor title="Invoice Email Template" />
+        </div>
+      ) : (
+      <div style={{ padding: '20px 32px 24px', display: 'grid', gridTemplateColumns: '1fr 340px', gap: 24, alignItems: 'start' }}>
 
         {/* ── Left column ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
@@ -599,34 +643,6 @@ export default function NewInvoice() {
               {error}
             </div>
           )}
-
-          {/* Tabs */}
-          <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
-            {[
-              { key: 'one_time', label: 'One-Time Invoice' },
-              { key: 'subscription', label: 'Monthly Subscription' },
-            ].map(t => (
-              <button
-                key={t.key}
-                onClick={() => setTab(t.key as any)}
-                style={{
-                  padding: '9px 18px',
-                  background: tab === t.key ? 'var(--ink)' : 'transparent',
-                  color: tab === t.key ? '#fff' : 'var(--muted)',
-                  border: '1px solid var(--border)',
-                  borderBottom: tab === t.key ? '1px solid var(--ink)' : '1px solid var(--border)',
-                  cursor: 'pointer',
-                  fontSize: 13,
-                  fontWeight: tab === t.key ? 600 : 400,
-                  borderRadius: tab === t.key ? '4px 4px 0 0' : '4px 4px 0 0',
-                  marginBottom: -1,
-                  letterSpacing: '.01em',
-                }}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
 
           {/* Invoice Details card */}
           <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '24px 24px 20px' }}>
@@ -927,8 +943,8 @@ export default function NewInvoice() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {[
                 'PDF attached to email',
-                'Email template from Settings',
                 'Manual payment also supported',
+                'Email template from Settings',
               ].map(line => (
                 <div key={line} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--ink)' }}>
                   <span style={{ color: 'var(--success)', fontWeight: 700, fontSize: 14 }}>✓</span>
@@ -956,6 +972,7 @@ export default function NewInvoice() {
           </div>
         </div>
       </div>
+      )}
 
       {showSendPreview && (
         <SendPreviewModal

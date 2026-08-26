@@ -1,10 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api, invoicesApi, settingsApi } from '../../api/client'
+import { invoicesApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast } from '../../components/ui'
-import { useAuthStore } from '../../store/auth'
+import { EmailEditModal } from '../../components/EmailEditModal'
 
 // Date-only fields (due_date, next_invoice_date, etc.) come back as "YYYY-MM-DD" with no
 // time/timezone — `new Date(...)` parses that as UTC midnight, which renders as the
@@ -675,382 +675,6 @@ function IssueRefundModal({ inv, onClose, onSaved }: {
   )
 }
 
-// ── Email Edit Modal ─────────────────────────────────────────────────────────
-const BODY_FONTS = [
-  { label: 'Helvetica / Arial (default)', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
-  { label: 'Georgia', value: "Georgia,'Times New Roman',serif" },
-  { label: 'Verdana', value: "Verdana,Geneva,sans-serif" },
-  { label: 'Trebuchet MS', value: "'Trebuchet MS',Helvetica,sans-serif" },
-]
-const HEADING_FONTS = [
-  { label: 'Georgia (default)', value: "Georgia,'Times New Roman',serif" },
-  { label: 'Helvetica / Arial', value: "'Helvetica Neue',Helvetica,Arial,sans-serif" },
-  { label: 'Verdana', value: "Verdana,Geneva,sans-serif" },
-]
-
-function EmailEditModal({ onClose }: { onClose: () => void }) {
-  const { workspace, user, rehydrate } = useAuthStore()
-  const { show, el: toastEl } = useToast()
-
-  const saved      = (workspace as any)?.email_templates?.invoice || {}
-  const savedStyle = saved.style || {}
-
-  const [tab,     setTab]     = useState<'content' | 'style' | 'custom'>('content')
-  const [intro,   setIntro]   = useState<string>(saved.intro   || '')
-  const [closing, setClosing] = useState<string>(saved.closing || '')
-  const [subject, setSubject] = useState<string>(saved.subject || '')
-  const [fromEmail, setFromEmail] = useState<string>(saved.from_email || '')
-
-  const [headerBg,      setHeaderBg]      = useState(savedStyle.header_bg      || '#1a2f4e')
-  const [accentColor,   setAccentColor]   = useState(savedStyle.accent_color   || '#b8922e')
-  const [headerTagline, setHeaderTagline] = useState(savedStyle.header_tagline ?? 'Coaching Platform')
-  const [bodyFont,      setBodyFont]      = useState(savedStyle.body_font      || BODY_FONTS[0].value)
-  const [headingFont,   setHeadingFont]   = useState(savedStyle.heading_font   || HEADING_FONTS[0].value)
-  const [valueColor,    setValueColor]    = useState(savedStyle.value_color    || '#1a1714')
-
-  const [customHtml,     setCustomHtml]     = useState<string>(saved.custom_html || '')
-  const [htmlMode,       setHtmlMode]       = useState<'upload' | 'paste'>('upload')
-  const [pasteBuffer,    setPasteBuffer]    = useState('')
-  const [htmlUploading,  setHtmlUploading]  = useState(false)
-  const [previewHtml,    setPreviewHtml]    = useState('')
-  const [previewLoading, setPreviewLoading] = useState(false)
-  const [saving,         setSaving]         = useState(false)
-
-  const renderPreview = async () => {
-    if (customHtml) { setPreviewHtml(customHtml); return }
-    setPreviewLoading(true)
-    try {
-      const { data } = await api.get('/api/settings/email-preview/', {
-        params: {
-          type: 'invoice', _t: Date.now(),
-          intro, closing,
-          header_bg: headerBg, accent_color: accentColor,
-          header_tagline: headerTagline,
-          body_font: bodyFont, heading_font: headingFont,
-          value_color: valueColor,
-        },
-      })
-      setPreviewHtml(data.html || '')
-    } catch { setPreviewHtml('') }
-    finally { setPreviewLoading(false) }
-  }
-
-  useEffect(() => { renderPreview() }, []) // eslint-disable-line react-hooks/exhaustive-deps
-
-  useEffect(() => {
-    if (customHtml) return
-    const t = setTimeout(() => renderPreview(), 700)
-    return () => clearTimeout(t)
-  }, [intro, closing, headerBg, accentColor, headerTagline, bodyFont, headingFont, valueColor]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  const handleHtmlUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
-    setHtmlUploading(true)
-    try {
-      const text = await file.text()
-      setCustomHtml(text); setPreviewHtml(text)
-    } finally { setHtmlUploading(false); e.target.value = '' }
-  }
-
-  const handleSave = async () => {
-    setSaving(true)
-    try {
-      const existing = (workspace as any)?.email_templates || {}
-      const updated  = {
-        ...existing,
-        invoice: {
-          ...saved,
-          subject, intro, closing, from_email: fromEmail,
-          custom_html: customHtml,
-          style: { header_bg: headerBg, accent_color: accentColor, header_tagline: headerTagline, body_font: bodyFont, heading_font: headingFont, value_color: valueColor },
-        },
-      }
-      const { data } = await settingsApi.updateWorkspace({ email_templates: updated })
-      if (user) rehydrate(user, { ...(workspace as any), ...data, email_templates: updated })
-      show('Email template saved')
-    } catch { show('Failed to save', 'error') }
-    finally { setSaving(false) }
-  }
-
-  const logoData = (workspace as any)?.logo_data || ''
-
-  const labelStyle: React.CSSProperties = {
-    fontSize: 10, fontWeight: 600, letterSpacing: '.12em',
-    color: 'var(--muted)', textTransform: 'uppercase', display: 'block', marginBottom: 6,
-  }
-  const colorRow = (label: string, value: string, onChange: (v: string) => void) => (
-    <div style={{ marginBottom: 14 }}>
-      <label style={labelStyle}>{label}</label>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <input type="color" value={value} onChange={e => onChange(e.target.value)}
-          style={{ width: 40, height: 32, padding: 2, borderRadius: 4, border: '1px solid var(--border)', cursor: 'pointer', background: 'none' }} />
-        <input className="finput" value={value} onChange={e => onChange(e.target.value)}
-          style={{ margin: 0, fontFamily: 'monospace', fontSize: 12, flex: 1 }} />
-        <div style={{ width: 28, height: 28, borderRadius: 4, background: value, border: '1px solid var(--border)', flexShrink: 0 }} />
-      </div>
-    </div>
-  )
-
-  return (
-    <Modal title="Invoice Email Template" size="lg" onClose={onClose} footer={
-      <>
-        <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
-        <button onClick={handleSave} disabled={saving}
-          style={{ padding: '10px 24px', borderRadius: 6, border: 'none', cursor: 'pointer', background: '#1a2f4e', color: '#fff', fontSize: 12, fontWeight: 700, letterSpacing: '.06em' }}>
-          {saving ? 'Saving…' : 'SAVE TEMPLATE'}
-        </button>
-      </>
-    }>
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 0, height: 560 }}>
-
-        {/* Left panel */}
-        <div style={{ borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-
-          {/* Tabs */}
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-            {(['content', 'style', 'custom'] as const).map(t => (
-              <button key={t} onClick={() => setTab(t)} style={{
-                flex: 1, padding: '9px 4px', border: 'none', cursor: 'pointer',
-                background: tab === t ? 'var(--white)' : 'var(--paper)',
-                borderBottom: tab === t ? '2px solid var(--ink)' : '2px solid transparent',
-                fontSize: 11, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase',
-                color: tab === t ? 'var(--ink)' : 'var(--muted)',
-              }}>
-                {t === 'content' ? 'Content' : t === 'style' ? 'Style' : 'Custom HTML'}
-              </button>
-            ))}
-          </div>
-
-          <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
-
-            {tab === 'content' && (
-              <>
-                <div className="fgroup">
-                  <label className="flabel">Subject line</label>
-                  <input className="finput" placeholder="Leave blank for default"
-                    value={subject} onChange={e => setSubject(e.target.value)} />
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">From email address</label>
-                  <input className="finput" type="email" placeholder="laura@yourbusiness.com"
-                    value={fromEmail} onChange={e => setFromEmail(e.target.value)} />
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                    Overrides the default sender. Must be an address @rass-consulting.com or @lauratreonze.com.
-                  </div>
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">Opening paragraph</label>
-                  <textarea className="finput" rows={4} style={{ resize: 'vertical' }}
-                    placeholder="Leave blank for default"
-                    value={intro} onChange={e => setIntro(e.target.value)} />
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                    Variables: <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{client_name}'}</code>{' '}
-                    <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{invoice_number}'}</code>{' '}
-                    <code style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10 }}>{'{amount}'}</code>
-                  </div>
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">Closing paragraph</label>
-                  <textarea className="finput" rows={3} style={{ resize: 'vertical' }}
-                    placeholder="Leave blank for default"
-                    value={closing} onChange={e => setClosing(e.target.value)} />
-                </div>
-              </>
-            )}
-
-            {tab === 'style' && (
-              <>
-                {/* Logo */}
-                <div style={{ marginBottom: 14 }}>
-                  <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: '.1em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 8 }}>Header</div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, marginBottom: 10 }}>
-                    <div style={{ width: 40, height: 28, borderRadius: 4, border: '1px solid var(--border)', background: '#1a1714', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0 }}>
-                      {logoData
-                        ? <img src={logoData} alt="" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
-                        : <span style={{ fontFamily: 'serif', fontSize: 10, color: '#f7f4ef' }}>{(workspace as any)?.name?.charAt(0) || '?'}</span>
-                      }
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--muted)', flex: 1 }}>
-                      {logoData ? 'Logo uploaded' : 'No logo'} · <span style={{ color: '#2d6a9f', cursor: 'pointer' }}>Change in Workspace tab</span>
-                    </div>
-                  </div>
-                  <label style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', marginBottom: 8 }}>
-                    <input type="checkbox" checked={headerTagline === ''}
-                      onChange={e => setHeaderTagline(e.target.checked ? '' : 'Coaching Platform')}
-                      style={{ width: 13, height: 13, accentColor: 'var(--gold)' }} />
-                    Show logo only — hide tagline text
-                  </label>
-                  {headerTagline !== '' && (
-                    <input className="finput" placeholder="Coaching Platform"
-                      value={headerTagline} onChange={e => setHeaderTagline(e.target.value)}
-                      style={{ margin: 0 }} />
-                  )}
-                </div>
-
-                {colorRow('Header background', headerBg, setHeaderBg)}
-                {colorRow('Accent / highlight color', accentColor, setAccentColor)}
-                {colorRow('Detail values (amount, due date)', valueColor, setValueColor)}
-
-                <div style={{ borderTop: '1px solid var(--border)', margin: '12px 0' }} />
-
-                <div style={{ marginBottom: 14 }}>
-                  <label style={labelStyle}>Body font</label>
-                  <select className="fselect" style={{ margin: 0 }} value={bodyFont} onChange={e => setBodyFont(e.target.value)}>
-                    {BODY_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                  </select>
-                </div>
-                <div style={{ marginBottom: 14 }}>
-                  <label style={labelStyle}>Heading font</label>
-                  <select className="fselect" style={{ margin: 0 }} value={headingFont} onChange={e => setHeadingFont(e.target.value)}>
-                    {HEADING_FONTS.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-                  </select>
-                </div>
-              </>
-            )}
-
-            {tab === 'custom' && (
-              <>
-                {customHtml ? (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    <div style={{ fontSize: 11, color: '#16a34a', background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: 6, padding: '8px 12px' }}>
-                      ✓ Custom template active — overrides Content tab
-                    </div>
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)' }}>
-                        {htmlUploading ? 'Reading…' : '↑ Replace file'}
-                        <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                      </label>
-                      <button onClick={() => { setPasteBuffer(customHtml); setHtmlMode('paste'); setCustomHtml(''); setPreviewHtml('') }}
-                        style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
-                        ✎ Edit
-                      </button>
-                      <button onClick={() => { setCustomHtml(''); setPasteBuffer(''); renderPreview() }}
-                        style={{ flex: 1, fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: '#b91c1c', cursor: 'pointer' }}>
-                        ✕ Remove
-                      </button>
-                    </div>
-                    <button onClick={() => { const b = new Blob([customHtml], { type: 'text/html' }); const u = URL.createObjectURL(b); const a = document.createElement('a'); a.href = u; a.download = 'invoice-template.html'; a.click(); URL.revokeObjectURL(u) }}
-                      style={{ fontSize: 11, padding: '6px 0', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--white)', color: 'var(--ink)', cursor: 'pointer' }}>
-                      ↓ Download current template
-                    </button>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
-                      <label style={{ flex: 1, textAlign: 'center', fontSize: 11, cursor: 'pointer', padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', color: 'var(--muted)', background: 'var(--paper)' }}>
-                        {htmlUploading ? 'Reading…' : '↑ Upload .html file'}
-                        <input type="file" accept=".html,.htm" style={{ display: 'none' }} onChange={handleHtmlUpload} />
-                      </label>
-                      <button onClick={() => { setHtmlMode('paste'); setPasteBuffer('') }}
-                        style={{ flex: 1, fontSize: 11, padding: '7px 0', borderRadius: 6, border: '1.5px dashed var(--border)', background: 'var(--paper)', color: 'var(--muted)', cursor: 'pointer' }}>
-                        ✎ Paste HTML
-                      </button>
-                    </div>
-                    {htmlMode === 'paste' && (
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 10 }}>
-                        <textarea rows={8} placeholder="Paste your HTML here…" value={pasteBuffer}
-                          onChange={e => { setPasteBuffer(e.target.value); if (e.target.value) setPreviewHtml(e.target.value) }}
-                          style={{ width: '100%', resize: 'vertical', fontSize: 11, fontFamily: 'monospace', padding: '8px', border: '1px solid var(--border)', borderRadius: 6, background: '#fafafa', lineHeight: 1.5 }} />
-                        <button disabled={!pasteBuffer.trim()}
-                          onClick={() => { setCustomHtml(pasteBuffer.trim()); setPreviewHtml(pasteBuffer.trim()) }}
-                          style={{ fontSize: 11, padding: '7px 0', borderRadius: 6, border: 'none', cursor: pasteBuffer.trim() ? 'pointer' : 'not-allowed', background: pasteBuffer.trim() ? 'var(--ink)' : 'var(--border)', color: '#fff', fontWeight: 600 }}>
-                          Apply Template
-                        </button>
-                      </div>
-                    )}
-                    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 12, marginTop: 4 }}>
-                      <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 8 }}>Start with a sample template pre-filled with all placeholders:</div>
-                      <button onClick={() => {
-                        const html = `<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>{workspace_name}</title></head>
-<body style="margin:0;padding:0;background:#f0ede8;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-  <tr><td style="padding:32px 16px;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;">
-
-      <!-- Header -->
-      <tr>
-        <td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
-          <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>
-        </td>
-      </tr>
-      <tr><td style="height:3px;background:#b8922e;"></td></tr>
-
-      <!-- Body -->
-      <tr>
-        <td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;">
-          <h1 style="margin:0 0 24px;font-family:Georgia,'Times New Roman',serif;font-size:26px;font-weight:400;color:#16130f;line-height:1.3;">
-            {workspace_name} sent you an invoice.
-          </h1>
-          <p style="margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;">
-            You've received an invoice for <strong>\${amount}</strong> with payment due on <strong>{due_date}</strong>.
-          </p>
-          <p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;">
-            {view_instructions}
-          </p>
-          {pay_button}
-          <p style="margin:0 0 24px;font-size:15px;color:#3a3530;line-height:1.7;">
-            Please email us at <a href="mailto:{owner_email}" style="color:#1a2f4e;">{owner_email}</a> with any questions.
-          </p>
-          <p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>
-          <p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>
-        </td>
-      </tr>
-
-      <!-- Footer -->
-      <tr>
-        <td style="padding:20px;text-align:center;font-size:11px;color:#b5afa6;">
-          Sent by {workspace_name} &middot; Invoice #{invoice_number}
-        </td>
-      </tr>
-
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>`
-                        const blob = new Blob([html], { type: 'text/html' })
-                        const url = URL.createObjectURL(blob)
-                        const a = document.createElement('a'); a.href = url; a.download = 'invoice-sample.html'; a.click()
-                        URL.revokeObjectURL(url)
-                      }} style={{ width: '100%', padding: '8px 0', fontSize: 11, fontWeight: 600, borderRadius: 6, border: '1px solid #2d6a9f', background: '#f0f4ff', color: '#2d6a9f', cursor: 'pointer', letterSpacing: '.04em' }}>
-                        ↓ Download Sample Template
-                      </button>
-                      <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6, lineHeight: 1.5 }}>
-                        Edit the file, then upload it back or paste it above.
-                        Placeholders: {['{workspace_name}', '{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{owner_email}', '{pay_button}', '{view_instructions}'].map(v => (
-                          <code key={v} style={{ background: '#f5f3ef', padding: '0 3px', borderRadius: 3, fontFamily: 'monospace', marginRight: 3 }}>{v}</code>
-                        ))}
-                      </div>
-                    </div>
-                  </>
-                )}
-              </>
-            )}
-          </div>
-        </div>
-
-        {/* Right — live preview */}
-        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
-          <div style={{ padding: '8px 14px', background: '#f5f3ef', borderBottom: '1px solid var(--border)', fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', flexShrink: 0 }}>
-            Live Preview
-          </div>
-          {previewLoading && (
-            <div style={{ position: 'absolute', top: 36, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,.75)', zIndex: 1, fontSize: 12, color: 'var(--muted)' }}>
-              Updating preview…
-            </div>
-          )}
-          <iframe srcDoc={previewHtml} title="Email preview" sandbox="allow-same-origin"
-            style={{ flex: 1, border: 'none', display: 'block', width: '100%', height: '100%' }} />
-        </div>
-      </div>
-      {toastEl}
-    </Modal>
-  )
-}
-
 // ── Main Page ────────────────────────────────────────────────────────────────
 export default function InvoiceDetail() {
   const { id } = useParams<{ id: string }>()
@@ -1527,10 +1151,17 @@ ${el.innerHTML}
           }
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ padding: '10px 14px', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
+            <div style={{ padding: '10px 14px', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13, display: 'flex', alignItems: 'center' }}>
               <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', color: 'var(--muted)', marginRight: 10 }}>TO</span>
               <strong>{inv.client_name}</strong>
               {inv.client_email && <span style={{ color: 'var(--muted)', marginLeft: 8 }}>· {inv.client_email}</span>}
+              <button
+                type="button"
+                onClick={() => { setShowSendReview(false); setShowEmailEdit(true) }}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', color: '#2d6a9f', fontSize: 11, fontWeight: 600, padding: 0 }}
+              >
+                Edit Default Template
+              </button>
             </div>
             {sendMode === 'remind' && (
               <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
@@ -1563,6 +1194,7 @@ ${el.innerHTML}
             )}
             <div style={{ height: 440, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: '#eeebe5' }}>
               <iframe
+                key={inv.email_template_id || 'default'}
                 srcDoc={inv.email_html || ''}
                 title="Email preview"
                 sandbox="allow-same-origin"

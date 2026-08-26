@@ -7,6 +7,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi, settingsApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast } from '../../components/ui'
+import { EmailEditModal } from '../../components/EmailEditModal'
 import { useAuthStore } from '../../store/auth'
 
 // ── Type config ───────────────────────────────────────────────────────────────
@@ -140,11 +141,112 @@ function PhoneButton({ phone, onGenerated }: { phone: string; onGenerated: (val:
   )
 }
 
+// ── Confirmation email preview — read-only render using the actual values being scheduled ──
+function ConfirmationPreviewModal({ clientName, coachName, sessionTitle, sessionTime, location, onClose }: {
+  clientName: string; coachName: string; sessionTitle: string; sessionTime: string; location: string
+  onClose: () => void
+}) {
+  const [html, setHtml] = useState('')
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    setLoading(true)
+    settingsApi.emailPreview('confirmation', {
+      client_name: clientName || undefined,
+      coach_name: coachName || undefined,
+      session_title: sessionTitle || undefined,
+      session_time: sessionTime || undefined,
+      location: location || undefined,
+    })
+      .then(r => setHtml(r.data.html || ''))
+      .catch(() => setHtml(''))
+      .finally(() => setLoading(false))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <Modal title="Confirmation Email Preview" size="lg" onClose={onClose}>
+      <div style={{ height: 480, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', position: 'relative', background: '#eeebe5' }}>
+        {loading && (
+          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, color: 'var(--muted)' }}>
+            Loading preview…
+          </div>
+        )}
+        {!loading && (
+          <iframe srcDoc={html} title="Confirmation email preview" sandbox="allow-same-origin"
+            style={{ width: '100%', height: '100%', border: 'none', display: 'block' }} />
+        )}
+      </div>
+    </Modal>
+  )
+}
+
+// ── Client combobox — searchable client picker for the Schedule/Edit modals ────
+function ClientCombobox({ clients, value, onChange }: {
+  clients: any[]; value: string; onChange: (id: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [open, setOpen]   = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const selected = clients.find((c: any) => String(c.id) === String(value))
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  const filtered = query.trim()
+    ? clients.filter((c: any) => `${c.first_name} ${c.last_name}`.toLowerCase().includes(query.trim().toLowerCase()))
+    : clients
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <input
+        className="finput"
+        style={{ marginBottom: 0 }}
+        placeholder="Search clients…"
+        value={open ? query : selected ? `${selected.first_name} ${selected.last_name}` : ''}
+        onFocus={() => { setOpen(true); setQuery('') }}
+        onChange={e => { setQuery(e.target.value); setOpen(true) }}
+        autoComplete="off"
+      />
+      {open && (
+        <div style={{
+          position: 'absolute', zIndex: 50, top: '100%', left: 0, right: 0,
+          background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
+          boxShadow: '0 4px 16px rgba(0,0,0,.1)', maxHeight: 180, overflowY: 'auto', marginTop: 2,
+        }}>
+          {filtered.length === 0 && (
+            <div style={{ padding: '9px 14px', fontSize: 13, color: 'var(--muted)' }}>No clients found</div>
+          )}
+          {filtered.map((c: any) => (
+            <div
+              key={c.id}
+              onMouseDown={() => { onChange(String(c.id)); setOpen(false); setQuery('') }}
+              style={{
+                padding: '8px 14px', fontSize: 13, cursor: 'pointer',
+                background: String(c.id) === String(value) ? 'var(--paper)' : '#fff',
+                fontWeight: String(c.id) === String(value) ? 600 : 400,
+              }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--paper)')}
+              onMouseLeave={e => (e.currentTarget.style.background = String(c.id) === String(value) ? 'var(--paper)' : '#fff')}
+            >
+              {c.first_name} {c.last_name}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 
 function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const qc = useQueryClient()
   const { user, workspace } = useAuthStore()
-  const dialInPhone = (user as any)?.phone || (workspace as any)?.phone || ''
+  const dialInPhone = (user as any)?.phone || ''
   const { data: clientsData } = useQuery({
     queryKey: ['clients-all'],
     queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data),
@@ -153,6 +255,10 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
+  })
+  const { data: affiliations = [] } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
   })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
@@ -167,6 +273,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     location: '', notes: '',
   })
   const [coachId, setCoachId] = useState(user?.id || '')
+  const [affiliationId, setAffiliationId] = useState('')
 
   // Auto-populate coach from the selected client's assigned coach
   useEffect(() => {
@@ -180,6 +287,8 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   const [endTime, setEndTime]     = useState('')
   const [sendConfirmation, setSendConfirmation] = useState(true)
   const [emailTemplateId, setEmailTemplateId] = useState('')
+  const [showEmailEdit, setShowEmailEdit] = useState(false)
+  const [showEmailPreview, setShowEmailPreview] = useState(false)
   const genericTemplates: any[] = (workspace as any)?.generic_templates || []
   // Only templates assigned to the Booking Confirmation slot — other use cases use a
   // different placeholder set, so picking one here leaves those placeholders literal.
@@ -204,7 +313,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     const end_at      = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.client || !form.title || !start_at || !end_at) return
     setSaving(true)
-    const payload: any = { ...form, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at) }
+    const payload: any = { ...form, coach: coachId || undefined, affiliation: affiliationId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at) }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -223,6 +332,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
   }
 
   return (
+    <>
     <Modal title="Schedule Activity" onClose={onClose} footer={
       <>
         <button className="btn btn-outline btn-sm" onClick={onClose}>Cancel</button>
@@ -234,10 +344,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       <div className="fgrid">
         <div className="fgroup">
           <label className="flabel">Client *</label>
-          <select className="fselect" value={form.client} onChange={e => set('client', e.target.value)}>
-            <option value="">Select client…</option>
-            {clients.map((c: any) => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
-          </select>
+          <ClientCombobox clients={clients} value={form.client} onChange={v => set('client', v)} />
         </div>
         <div className="fgroup">
           <label className="flabel">Type</label>
@@ -250,6 +357,17 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       </div>
       <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
         onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
+      {affiliations.length > 0 && (
+        <div className="fgroup">
+          <label className="flabel">Affiliation</label>
+          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
+            <option value="">— None —</option>
+            {affiliations.map((a: any) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="fgroup">
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
@@ -378,7 +496,34 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
           </select>
         </div>
       )}
+      {sendConfirmation && (
+        <div style={{ display: 'flex', gap: 16, marginTop: 10 }}>
+          <button type="button" onClick={() => setShowEmailPreview(true)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2d6a9f', fontSize: 12, fontWeight: 600, padding: 0 }}>
+            Preview email →
+          </button>
+          <button type="button" onClick={() => setShowEmailEdit(true)}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#2d6a9f', fontSize: 12, fontWeight: 600, padding: 0 }}>
+            Edit Default Template →
+          </button>
+        </div>
+      )}
     </Modal>
+
+    {showEmailEdit && (
+      <EmailEditModal useCase="confirmation" onClose={() => setShowEmailEdit(false)} />
+    )}
+    {showEmailPreview && (
+      <ConfirmationPreviewModal
+        clientName={(() => { const c = clients.find((c: any) => c.id === form.client); return c ? `${c.first_name} ${c.last_name}` : '' })()}
+        coachName={coaches.find((c: any) => c.id === coachId)?.full_name || ''}
+        sessionTitle={form.title}
+        sessionTime={date && startTime ? new Date(`${date}T${startTime}`).toLocaleString('en-US', { weekday: 'long', month: 'long', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''}
+        location={form.location}
+        onClose={() => setShowEmailPreview(false)}
+      />
+    )}
+    </>
   )
 }
 
@@ -390,6 +535,17 @@ function CoachField({ coaches, coachId, setCoachId, onCoachAdded }: {
   const [addForm, setAddForm] = useState({ full_name: '', email: '' })
   const [adding, setAdding]   = useState(false)
   const [addError, setAddError] = useState('')
+  const [query, setQuery] = useState('')
+  const [open, setOpen]   = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
 
   const handleAdd = async () => {
     setAddError('')
@@ -406,21 +562,72 @@ function CoachField({ coaches, coachId, setCoachId, onCoachAdded }: {
     } finally { setAdding(false) }
   }
 
+  const selected = coaches.find((c: any) => String(c.id) === String(coachId))
+  const selectedLabel = selected ? `${selected.full_name}${!selected.is_active ? ' (pending)' : ''}` : '— Auto (from client) —'
+  const filtered = query.trim()
+    ? coaches.filter((c: any) => c.full_name?.toLowerCase().includes(query.trim().toLowerCase()))
+    : coaches
+
+  const pick = (id: string) => { setCoachId(id); setShowAdd(false); setOpen(false); setQuery('') }
+
   return (
     <div className="fgroup">
       <label className="flabel">Coach</label>
-      <select className="fselect" value={coachId} onChange={e => {
-        if (e.target.value === '__add__') { setShowAdd(true) }
-        else { setCoachId(e.target.value); setShowAdd(false) }
-      }}>
-        <option value="">— Auto (from client) —</option>
-        {coaches.map((c: any) => (
-          <option key={c.id} value={c.id}>
-            {c.full_name}{!c.is_active ? ' (pending)' : ''}
-          </option>
-        ))}
-        <option value="__add__">+ Add new coach…</option>
-      </select>
+      <div ref={ref} style={{ position: 'relative' }}>
+        <input
+          className="finput"
+          style={{ marginBottom: 0 }}
+          placeholder="Search coaches…"
+          value={open ? query : selectedLabel}
+          onFocus={() => { setOpen(true); setQuery('') }}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          autoComplete="off"
+        />
+        {open && (
+          <div style={{
+            position: 'absolute', zIndex: 50, top: '100%', left: 0, right: 0,
+            background: '#fff', border: '1px solid var(--border)', borderRadius: 6,
+            boxShadow: '0 4px 16px rgba(0,0,0,.1)', maxHeight: 180, overflowY: 'auto', marginTop: 2,
+          }}>
+            {!query.trim() && (
+              <div
+                onMouseDown={() => pick('')}
+                style={{ padding: '8px 14px', fontSize: 13, cursor: 'pointer', color: 'var(--muted)', fontStyle: 'italic' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--paper)')}
+                onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+              >
+                — Auto (from client) —
+              </div>
+            )}
+            {filtered.length === 0 && (
+              <div style={{ padding: '9px 14px', fontSize: 13, color: 'var(--muted)' }}>No coaches found</div>
+            )}
+            {filtered.map((c: any) => (
+              <div
+                key={c.id}
+                onMouseDown={() => pick(String(c.id))}
+                style={{
+                  padding: '8px 14px', fontSize: 13, cursor: 'pointer',
+                  background: String(c.id) === String(coachId) ? 'var(--paper)' : '#fff',
+                  fontWeight: String(c.id) === String(coachId) ? 600 : 400,
+                }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--paper)')}
+                onMouseLeave={e => (e.currentTarget.style.background = String(c.id) === String(coachId) ? 'var(--paper)' : '#fff')}
+              >
+                {c.full_name}{!c.is_active ? ' (pending)' : ''}
+              </div>
+            ))}
+            <div
+              onMouseDown={() => { setShowAdd(true); setOpen(false); setQuery('') }}
+              style={{ padding: '8px 14px', fontSize: 13, cursor: 'pointer', borderTop: '1px solid var(--border)', color: 'var(--ink)', fontWeight: 500 }}
+              onMouseEnter={e => (e.currentTarget.style.background = 'var(--paper)')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#fff')}
+            >
+              + Add new coach…
+            </div>
+          </div>
+        )}
+      </div>
 
       {showAdd && (
         <div style={{ marginTop: 10, padding: '12px 14px', background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6 }}>
@@ -474,13 +681,17 @@ function parseRrule(rrule: string): 'none'|'daily'|'weekly'|'biweekly'|'monthly'
 
 function EditActivityModal({ activity, onClose, onSaved }: any) {
   const qc = useQueryClient()
-  const { user, workspace } = useAuthStore()
-  const dialInPhone = (user as any)?.phone || (workspace as any)?.phone || ''
+  const { user } = useAuthStore()
+  const dialInPhone = (user as any)?.phone || ''
   const { data: clientsData } = useQuery({ queryKey: ['clients-all'], queryFn: () => clientsApi.list({ page_size: 200 }).then(r => r.data) })
   const { data: activityTypes = [] } = useQuery({
     queryKey: ['activity-type-configs'],
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
+  })
+  const { data: affiliations = [] } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
   })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
@@ -493,6 +704,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
   const localStart = activity.start_at ? toLocalInput(activity.start_at) : ''
   const localEnd   = activity.end_at   ? toLocalInput(activity.end_at)   : ''
   const [coachId, setCoachId] = useState(activity.coach || '')
+  const [affiliationId, setAffiliationId] = useState(activity.affiliation || '')
   const [form, setForm] = useState({
     client: activity.client || '',
     activity_type: activity.activity_type || 'session',
@@ -535,6 +747,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     const payload: any = {
       ...form,
       coach: coachId || undefined,
+      affiliation: affiliationId || undefined,
       start_at: toUTC(start_at),
       end_at: toUTC(end_at),
       repeat,
@@ -564,9 +777,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
       <div className="fgrid">
         <div className="fgroup">
           <label className="flabel">Client</label>
-          <select className="fselect" value={form.client} onChange={e => set('client', e.target.value)}>
-            {clients.map((c: any) => <option key={c.id} value={c.id}>{c.first_name} {c.last_name}</option>)}
-          </select>
+          <ClientCombobox clients={clients} value={form.client} onChange={v => set('client', v)} />
         </div>
         <div className="fgroup">
           <label className="flabel">Type</label>
@@ -579,6 +790,17 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
       </div>
       <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
         onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
+      {affiliations.length > 0 && (
+        <div className="fgroup">
+          <label className="flabel">Affiliation</label>
+          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
+            <option value="">— None —</option>
+            {affiliations.map((a: any) => (
+              <option key={a.id} value={a.id}>{a.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="fgroup"><label className="flabel">Title</label><input className="finput" value={form.title} onChange={e => set('title', e.target.value)} /></div>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
         <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>

@@ -274,6 +274,41 @@ class ClientViewSet(viewsets.ModelViewSet):
 
         fieldnames = reader.fieldnames or []
 
+        # Column names this importer actually reads anywhere below — used both to
+        # detect "this isn't our CSV format at all" up front and to flag leftover
+        # columns (e.g. a raw CRM export's "Birthday"/"Company Name"/"Postal Code")
+        # that get silently ignored otherwise.
+        _RECOGNIZED_COLUMNS = {
+            "first_name", "last_name", "email_1", "email", "email_2",
+            "phone_1", "phone", "phone_1_ext", "phone_1_type",
+            "phone_2", "phone_2_ext", "phone_2_type",
+            "company", "job_title", "lead_source", "birth_date",
+            "street_address_1", "street_address", "street_address_2",
+            "city", "state", "zip", "coach_email", "tags", "status", "notes",
+        }
+        found_columns = {f.strip() for f in fieldnames if f and f.strip()}
+        has_name  = "first_name" in found_columns or "last_name" in found_columns
+        has_email = "email_1" in found_columns or "email" in found_columns
+        if not (has_name or has_email):
+            # None of the mandatory identity columns are present at all — every row
+            # would silently fall into the "blank row" skip path below, reporting
+            # "0 imported" with no explanation. This is almost always a file whose
+            # columns don't match CoachOS's expected names (e.g. a CRM export with
+            # "First Name"/"Last Name" instead of "first_name"/"last_name") rather
+            # than a file that's genuinely empty — fail loudly and say exactly why.
+            return Response({
+                "detail": (
+                    "This file's columns don't match the expected import format — none of "
+                    "\"first_name\", \"last_name\", or \"email_1\" were found. "
+                    f"Found columns: {', '.join(f for f in fieldnames if f) or '(none)'}. "
+                    "Rename your columns to match the CSV format guide (ⓘ next to Import CSV), "
+                    "or use \"Export CSV\" first to get a template with the right headers."
+                ),
+                "expected_columns": ["first_name", "last_name", "email_1"],
+                "found_columns": [f for f in fieldnames if f],
+            }, status=400)
+        extra_columns = sorted(found_columns - _RECOGNIZED_COLUMNS)
+
         def recover_crammed_row(row):
             """Some spreadsheet round-trips (copy-pasting a raw CSV row into a single
             cell, then re-exporting) end up with an ENTIRE data row jammed into the
@@ -415,7 +450,10 @@ class ClientViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 errors.append({"row": i, "error": str(e)})
 
-        return Response({"created": created, "skipped": skipped, "errors": errors, "warnings": warnings}, status=201)
+        return Response({
+            "created": created, "skipped": skipped, "errors": errors, "warnings": warnings,
+            "extra_columns": extra_columns,
+        }, status=201)
 
 
 class ClientNoteViewSet(viewsets.ModelViewSet):

@@ -45,6 +45,10 @@ class Activity(WorkspaceModel):
     # Linked deal (optional)
     deal           = models.ForeignKey("pipeline.Deal", on_delete=models.SET_NULL,
                                        null=True, blank=True, related_name="activities")
+    # Which of the coach's businesses this session was booked under (optional) —
+    # e.g. "Rass Consulting" vs "LMT Consulting" — workspace-configurable, see AffiliationConfig.
+    affiliation    = models.ForeignKey("AffiliationConfig", on_delete=models.SET_NULL,
+                                       null=True, blank=True, related_name="activities")
     meeting_link   = models.URLField(max_length=500, blank=True, help_text="Zoom / Meet / Teams join URL")
     # Recurrence (FR-ACT-07)
     rrule          = models.TextField(blank=True, help_text="RRULE string e.g. FREQ=WEEKLY;COUNT=12")
@@ -135,6 +139,23 @@ class ActivityTypeConfig(WorkspaceModel):
 
     class Meta:
         db_table        = "activities_activitytypeconfig"
+        unique_together = ["workspace", "name"]
+        ordering        = ["sort_order", "name"]
+
+    def __str__(self):
+        return f"{self.workspace} / {self.name}"
+
+
+class AffiliationConfig(WorkspaceModel):
+    """Workspace-configurable list of businesses a session can be booked under
+    (e.g. "Rass Consulting", "LMT Consulting"), each with its own color for the
+    Activities list / Schedule Activity picker. Fully custom — no seeded builtins."""
+    name       = models.CharField(max_length=50)
+    color      = models.CharField(max_length=7, default="#1a2f4e")
+    sort_order = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        db_table        = "activities_affiliationconfig"
         unique_together = ["workspace", "name"]
         ordering        = ["sort_order", "name"]
 

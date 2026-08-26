@@ -68,6 +68,7 @@ def _generate_series(parent: Activity, repeat: str, repeat_until):
             location      = parent.location,
             notes         = parent.notes,
             deal          = parent.deal,
+            affiliation   = parent.affiliation,
             rrule         = rrule_str,
             recurrence_id = parent.pk,
         ))
@@ -84,6 +85,8 @@ def _fire(fn, *args):
 class ActivitySerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source="client.full_name", read_only=True)
     coach_name  = serializers.CharField(source="coach.full_name",  read_only=True)
+    affiliation_name  = serializers.CharField(source="affiliation.name",  read_only=True, default="")
+    affiliation_color = serializers.CharField(source="affiliation.color", read_only=True, default="")
     # Frontend passes send_confirmation=false to suppress confirmation email
     send_confirmation = serializers.BooleanField(write_only=True, required=False, default=True)
     # Frontend passes send_update=false to suppress reschedule email on edit
@@ -105,7 +108,8 @@ class ActivitySerializer(serializers.ModelSerializer):
         fields = ["id", "activity_type", "title", "status", "start_at", "end_at",
                   "location", "meeting_link", "notes", "rrule", "recurrence_id",
                   "google_cal_uid", "client", "client_name", "coach", "coach_name",
-                  "deal", "edit_history", "created_at", "send_confirmation", "send_update",
+                  "deal", "affiliation", "affiliation_name", "affiliation_color",
+                  "edit_history", "created_at", "send_confirmation", "send_update",
                   "email_template_id",
                   "repeat", "repeat_until", "edit_scope",
                   "confirmation_sent_at", "cancellation_sent_at",
@@ -161,7 +165,7 @@ class ActivitySerializer(serializers.ModelSerializer):
         repeat       = validated_data.pop("repeat", None)        # None = not changed
         repeat_until = validated_data.pop("repeat_until", None)
         # Fields safe to broadcast across all events in a series
-        propagatable = {k: validated_data[k] for k in ("title", "activity_type", "location", "notes") if k in validated_data}
+        propagatable = {k: validated_data[k] for k in ("title", "activity_type", "location", "notes", "affiliation") if k in validated_data}
 
         # Detect cancellation before saving
         new_status = validated_data.get("status")

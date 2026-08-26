@@ -18,7 +18,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     serializer_class   = ActivitySerializer
     permission_classes = [IsAssistantOrAbove]
     filter_backends    = [DjangoFilterBackend]
-    filterset_fields   = ["activity_type", "status", "client", "coach"]
+    filterset_fields   = ["activity_type", "status", "client", "coach", "affiliation"]
 
     def get_permissions(self):
         if self.action == "destroy":
@@ -30,7 +30,7 @@ class ActivityViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = Activity.objects.filter(workspace=user.workspace) \
-                             .select_related("client", "coach")
+                             .select_related("client", "coach", "affiliation")
         if user.role != "business_owner":
             # Scope to activities this person is actually assigned to run — not every
             # activity belonging to a client who happens to be nominally "theirs".
