@@ -90,6 +90,8 @@ export const settingsApi = {
   getZoomSettings:      ()                   => api.get('/api/settings/zoom/'),
   saveZoomSettings:     (d: any)             => api.post('/api/settings/zoom/', d),
   createZoomMeeting:    (d: any)             => api.post('/api/settings/zoom/create-meeting/', d),
+  getStripeSettings:    ()                   => api.get('/api/settings/stripe/'),
+  saveStripeSettings:   (d: any)             => api.patch('/api/settings/stripe/', d),
 }
 export const clientsApi = {
   list:         (p?: any)              => api.get('/api/clients/', { params: p }),

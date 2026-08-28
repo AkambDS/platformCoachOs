@@ -536,6 +536,7 @@ function IssueRefundModal({ inv, onClose, onSaved }: {
   inv: any; onClose: () => void; onSaved: () => void
 }) {
   const qc = useQueryClient()
+  const { show: showToast, el: toastEl } = useToast()
   const totalPaid       = Number(inv.amount_paid)
   const alreadyRefunded = Number(inv.refund_amount || 0)
   const refundable      = Math.max(0, totalPaid - alreadyRefunded)
@@ -556,12 +557,19 @@ function IssueRefundModal({ inv, onClose, onSaved }: {
       qc.invalidateQueries({ queryKey: ['invoices'] })
       qc.invalidateQueries({ queryKey: ['invoice', inv.id] })
       onSaved()
-    } catch { } finally { setSaving(false) }
+    } catch (e: any) {
+      // A Stripe-paid invoice's refund actually calls Stripe's API server-side — a
+      // decline, disconnected account, or multi-charge invoice comes back as a real
+      // error here and must surface, not fail silently as if nothing happened.
+      showToast(e?.response?.data?.detail || 'Refund failed — no money was moved.', 'error')
+    } finally { setSaving(false) }
   }
 
   const newStatus = refundAmt >= refundable ? 'Refunded' : 'Partially Refunded'
 
   return (
+    <>
+    {toastEl}
     <Modal
       title="Issue Refund"
       size="lg"
@@ -672,6 +680,7 @@ function IssueRefundModal({ inv, onClose, onSaved }: {
         </div>
       </div>
     </Modal>
+    </>
   )
 }
 

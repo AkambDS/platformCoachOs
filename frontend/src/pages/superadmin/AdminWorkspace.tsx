@@ -329,7 +329,7 @@ export default function AdminWorkspace() {
         {tab === 'audit' && (
           <div>
             <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
-              Last 10 access events — notes, files, goals
+              Last 20 access events — clients, team, notes, files, goals
             </div>
             {(auditLogs as any[]).length === 0 ? (
               <div style={{ color: 'var(--muted)', fontSize: 13 }}>No access events recorded yet.</div>

@@ -219,15 +219,125 @@ Then `docker compose -f docker-compose.prod.yml up -d --build` picks it up (use 
 
 ---
 
-## Stripe Webhook Setup
+## Stripe Payments (per-workspace — "bring your own account")
 
-After deployment, register your webhook in Stripe dashboard:
-```
-URL: https://yourdomain.com/api/stripe/webhook/
-Events: invoice.payment_succeeded, invoice.payment_failed, charge.refunded
-```
+Each workspace connects its **own** Stripe account from Settings → Integrations →
+Stripe — client invoice payments go straight to that coach's Stripe balance, not
+through a shared CoachOS platform account (same model as Bonsai). This is entirely
+unrelated to the `STRIPE_*`/`DJSTRIPE_*` settings and the "Stripe Webhook Setup" note
+further down this file, which are leftover scaffolding for a platform-level CoachOS-
+bills-its-coaches feature that was never actually built (`apps.superadmin`'s
+`PlatformInvoice`/`PlatformPayment` billing is 100% manual today, no Stripe involved) —
+don't configure those for this feature, and don't confuse their webhook with the one
+below.
 
-Copy the webhook signing secret → set `DJSTRIPE_WEBHOOK_SECRET` in backend/.env
+### How it works
+
+- **Code**: `apps/invoicing/public_views.py` (`InvoicePayView`, `InvoicePaySuccessView`,
+  `StripeWebhookView`), `apps/invoicing/tokens.py` (signed pay-link tokens),
+  `apps/invoicing/views.py` (`InvoiceViewSet.issue_refund`), `apps/settings_app/views.py`
+  (`stripe_settings` — connect/disconnect API), `apps/accounts/crypto.py` (Fernet
+  encryption for stored keys). Frontend: Settings → Integrations tab in
+  `frontend/src/pages/coach/Settings.tsx`, "Pay Now" buttons in `InvoiceDetail.tsx` /
+  `ClientPortal.tsx`.
+- **Getting paid**: client clicks "Pay Invoice" (email) or "Pay Now" (client portal) →
+  hits `GET /invoices/pay/<token>/` → a fresh Stripe Checkout Session is created against
+  *that workspace's* secret key and the client is redirected to Stripe's hosted page →
+  Stripe calls back `POST /api/invoices/stripe-webhook/<workspace_id>/` with
+  `checkout.session.completed` → the webhook (not the browser redirect — that's just a
+  confirmation screen) creates a `Payment` row and updates `Invoice.amount_paid` /
+  `status`. This is why the invoice list can lag a few seconds behind the client seeing
+  "Payment received."
+- **Refunding**: a coach clicking Refund on a Stripe-paid invoice
+  (`InvoiceViewSet.issue_refund`) calls Stripe's Refund API directly with that
+  workspace's key — this actually returns the client's money, it's not just a local
+  status flip. If a coach instead refunds straight from their own Stripe Dashboard, the
+  `charge.refunded` webhook event reconciles that back onto the invoice. Both paths write
+  the Stripe refund id to `Invoice.stripe_refund_ids` so the same refund is never double-
+  counted regardless of which path recorded it first.
+- **Recurring invoices** are CoachOS's own scheduling (`tasks.invoicing.dispatch_subscription_invoices`
+  clones + emails a new invoice each period) — each period is still a one-off Stripe
+  Checkout payment, not a Stripe Subscription object.
+
+### Operator setup (once, at deploy time)
+
+1. Set `FIELD_ENCRYPTION_KEY` in `backend/.env` (see `.env.production.template` for the
+   generation command) — required before any workspace can save a Stripe key; encrypts
+   it at rest. Losing this key makes every already-saved Stripe/webhook key
+   undecryptable, so back it up like you would `SECRET_KEY`. Never reuse a dev/test
+   value in production.
+2. Set `BACKEND_URL` in `backend/.env` to your real public HTTPS domain (see
+   `.env.production.template`) — it's used to build both the client-facing "Pay Invoice"
+   link and the webhook URL shown to the coach in Settings. **This is easy to miss**: it
+   defaults to `http://localhost:8000` if unset, which silently ships broken pay links
+   to real clients.
+3. Confirm nginx has a `location /invoices/` block proxying to the backend
+   (`nginx/nginx.conf`) — `InvoicePayView`/`InvoicePaySuccessView` are registered at the
+   Django root, not under `/api/`, so without this block they fall through to the React
+   SPA catch-all and 404 into the app shell instead of reaching Django.
+4. Run migrations as usual (`docker compose -f docker-compose.prod.yml exec backend
+   python manage.py migrate`) — picks up `Invoice.stripe_refund_ids` etc.
+
+### Workspace owner setup (per coach, in-app — no server access needed)
+
+From **Settings → Integrations → Stripe**:
+
+1. Paste their Stripe **secret key** (`sk_live_...` for real payments, `sk_test_...` for
+   testing) from `dashboard.stripe.com/apikeys` and click Connect.
+2. Copy the **webhook URL** the page now shows
+   (`https://yourdomain.com/api/invoices/stripe-webhook/<workspace_id>/`), add it as a
+   webhook endpoint in their own Stripe Dashboard, and select both:
+   - `checkout.session.completed` — required; without it, payments never mark the
+     invoice paid.
+   - `charge.refunded` — required to catch refunds issued directly from their Stripe
+     Dashboard instead of from CoachOS.
+3. Paste the webhook's signing secret (`whsec_...`) back into the same Settings page.
+
+Once "Webhook configured" shows green, every invoice with a balance due automatically
+gets a working pay link the next time it's sent (`tasks/email.py` regenerates
+`stripe_payment_link` on send/reminder) — no per-invoice setup needed.
+
+### Testing locally
+
+The `api` container already exposes `localhost:8000` directly (see `docker-compose.yml`),
+so `backend/.env`'s default `BACKEND_URL=http://localhost:8000` is correct as-is for
+local testing — no nginx involved in dev.
+
+1. **Get test keys**: `dashboard.stripe.com/test/apikeys` (toggle "Test mode" on) →
+   `sk_test_...`. `backend/.env` already has a placeholder under `STRIPE_TEST_SECRET_KEY`
+   — that env var is for the *unused platform* feature, though; the per-workspace key is
+   entered in-app, not via `.env`.
+2. **Connect it in-app**: log in as a coach → Settings → Integrations → Stripe → paste
+   the `sk_test_...` key → Connect.
+3. **Forward webhooks with the Stripe CLI** (`brew install stripe/stripe-cli/stripe`,
+   then `stripe login`):
+   ```
+   stripe listen --forward-to localhost:8000/api/invoices/stripe-webhook/<workspace_id>/
+   ```
+   `<workspace_id>` is in the webhook URL the Settings page shows once a key is
+   connected. This prints a `whsec_...` — paste that into the Settings page's Webhook
+   Signing Secret field (it's session-specific and changes every time you restart
+   `stripe listen`, so re-copy it each session rather than reusing an old one).
+4. **Pay an invoice**: create/send an invoice to a test client, open its pay link
+   (`http://localhost:8000/invoices/pay/<token>/`), and complete Checkout with a
+   [Stripe test card](https://docs.stripe.com/testing#cards) (`4242 4242 4242 4242`, any
+   future expiry/CVC/ZIP). Watch the `stripe listen` terminal for the
+   `checkout.session.completed` event and the `celery_worker`/`api` container logs
+   (`docker compose logs -f api`) to confirm the webhook fired; the invoice should flip
+   to Paid within a second or two.
+5. **Test a refund**: click Refund on that now-paid invoice in CoachOS. Because this
+   calls Stripe's Refund API for real (even in test mode), you should see the refund
+   appear in the Stripe Dashboard's test-mode Payments list immediately, and the
+   `charge.refunded` event go by in the `stripe listen` terminal — that event should
+   no-op on arrival (the id it carries is already in `Invoice.stripe_refund_ids` from
+   the direct API call), confirming the dedup logic works rather than double-refunding.
+6. **Test dashboard-initiated refunds** (the other path): instead of using CoachOS's
+   Refund button, refund the same payment from the Stripe test Dashboard directly —
+   confirm the invoice flips to Refunded/Partially Refunded in CoachOS via the
+   `charge.refunded` webhook alone.
+7. Trigger a failure path without a real card: `stripe trigger payment_intent.payment_failed`
+   or just decline with test card `4000 0000 0000 0002` — confirm the invoice stays
+   unpaid rather than incorrectly flipping to Paid.
 
 ---
 

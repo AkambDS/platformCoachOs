@@ -212,20 +212,6 @@ function ProfileTab() {
   const teamMembers: any[] = teamData?.results || teamData || []
   const workspaceOwner = teamMembers.find((m: any) => m.role === 'business_owner')
 
-  const { data: meData } = useQuery({
-    queryKey: ['me-integrations'],
-    queryFn: () => authApi.me().then(r => r.data),
-  })
-  const googleCalendarConnected = !!meData?.google_calendar_connected
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search)
-    if (params.get('google_calendar') === 'connected') {
-      show('Google Calendar connected')
-      window.history.replaceState({}, '', window.location.pathname)
-    }
-  }, [])
-
   const [form, setForm] = useState({
     full_name:     user?.full_name     || '',
     user_timezone: (user as any)?.user_timezone || 'America/New_York',
@@ -373,35 +359,6 @@ function ProfileTab() {
             <button className="btn btn-dark" onClick={handleChangePassword} disabled={savingPw}>
               {savingPw ? 'Updating…' : 'Change Password'}
             </button>
-          </div>
-
-          {/* ── Integrations ── */}
-          {secHdr(<CalendarDays size={13} />, 'Integrations')}
-
-          <div style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '14px 16px', border: '1px solid var(--border)', borderRadius: 8,
-          }}>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>Google Calendar</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
-                {googleCalendarConnected
-                  ? 'Connected — sessions sync to your calendar and client RSVPs update automatically.'
-                  : 'Connect to sync scheduled sessions and track client accept/decline responses.'}
-              </div>
-            </div>
-            {googleCalendarConnected ? (
-              <span style={{
-                padding: '5px 14px', borderRadius: 20, fontSize: 11, fontWeight: 600,
-                background: '#e8f5e9', color: '#2d6a2d', whiteSpace: 'nowrap',
-              }}>
-                ✓ Connected
-              </span>
-            ) : (
-              <a href="/api/auth/google-calendar/connect/" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
-                Connect Google Calendar
-              </a>
-            )}
           </div>
 
         </div>
@@ -2160,20 +2117,168 @@ function AuditLogTab() {
   )
 }
 
+// ── Stripe card — each workspace connects its OWN account, "bring your own key" ────
+function StripePaymentsCard() {
+  const { show } = useToast()
+  const [status, setStatus] = useState({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
+  const [secretKey, setSecretKey] = useState('')
+  const [webhookSecret, setWebhookSecret] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  const load = () => {
+    settingsApi.getStripeSettings().then(r => setStatus(r.data)).catch(() => {}).finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function saveKey() {
+    if (!secretKey.trim()) return
+    setSaving(true)
+    try {
+      const r = await settingsApi.saveStripeSettings({ secret_key: secretKey.trim() })
+      setStatus(s => ({ ...s, ...r.data }))
+      setSecretKey('')
+      show('Stripe key saved', 'success')
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Failed to save Stripe key', 'error')
+    } finally { setSaving(false) }
+  }
+
+  async function saveWebhookSecret() {
+    if (!webhookSecret.trim()) return
+    setSaving(true)
+    try {
+      const r = await settingsApi.saveStripeSettings({ webhook_secret: webhookSecret.trim() })
+      setStatus(s => ({ ...s, ...r.data }))
+      setWebhookSecret('')
+      show('Webhook secret saved', 'success')
+    } catch { show('Failed to save webhook secret', 'error') } finally { setSaving(false) }
+  }
+
+  async function disconnect() {
+    if (!confirm('Disconnect Stripe? Clients will no longer be able to pay invoices online until you reconnect.')) return
+    setSaving(true)
+    try {
+      const r = await settingsApi.saveStripeSettings({ disconnect: true })
+      setStatus(s => ({ ...s, ...r.data, webhook_url: s.webhook_url }))
+      show('Stripe disconnected', 'success')
+    } catch { show('Failed to disconnect', 'error') } finally { setSaving(false) }
+  }
+
+  const copyWebhookUrl = () => {
+    navigator.clipboard.writeText(status.webhook_url)
+    show('Webhook URL copied', 'success')
+  }
+
+  if (loading) return null
+
+  return (
+    <div className="card" style={{ marginBottom: 20 }}>
+      <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <span>💳 Stripe — Accept Online Card Payments</span>
+        {status.connected && (
+          <span className="pill pill-green" style={{ fontSize: 10 }}>
+            Connected {status.mode && `(${status.mode} mode, ••${status.last4})`}
+          </span>
+        )}
+      </div>
+      <div className="card-body">
+        <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
+          Connect your <strong>own</strong> Stripe account — client payments go straight to you, not
+          through CoachOS. Get your Secret Key from{' '}
+          <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
+            Stripe Dashboard → Developers → API keys
+          </a>.
+        </p>
+
+        <div className="fgroup">
+          <label className="flabel">Stripe Secret Key</label>
+          <input className="finput" type="password" value={secretKey} onChange={e => setSecretKey(e.target.value)}
+            placeholder={status.connected ? `sk_${status.mode}_••••${status.last4}` : 'sk_test_… or sk_live_…'} />
+        </div>
+        <div style={{ display: 'flex', gap: 10, marginBottom: 20 }}>
+          <button className="btn btn-dark btn-sm" onClick={saveKey} disabled={saving || !secretKey.trim()}>
+            {saving ? 'Saving…' : status.connected ? 'Update Key' : 'Connect Stripe'}
+          </button>
+          {status.connected && (
+            <button className="btn btn-outline btn-sm" onClick={disconnect} disabled={saving} style={{ color: '#b91c1c' }}>
+              Disconnect
+            </button>
+          )}
+        </div>
+
+        {status.connected && (
+          <>
+            <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: 10 }}>
+                Step 2 — Webhook (so payments update this app automatically)
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.6 }}>
+                In your Stripe Dashboard, add a webhook endpoint pointing to the URL below (or run{' '}
+                <code style={{ background: '#f5f3ef', padding: '1px 4px', borderRadius: 3 }}>stripe listen --forward-to &lt;url&gt;</code>{' '}
+                for local testing), selecting the <code style={{ background: '#f5f3ef', padding: '1px 4px', borderRadius: 3 }}>checkout.session.completed</code> and{' '}
+                <code style={{ background: '#f5f3ef', padding: '1px 4px', borderRadius: 3 }}>charge.refunded</code> events (the second keeps invoices in sync if
+                you ever issue a refund directly from Stripe instead of from here). Then paste the signing secret it gives you below.
+              </p>
+              <div className="fgroup">
+                <label className="flabel">Your Webhook URL</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input className="finput" readOnly value={status.webhook_url} style={{ flex: 1, fontFamily: 'monospace', fontSize: 12 }} />
+                  <button className="btn btn-outline btn-sm" onClick={copyWebhookUrl} type="button">Copy</button>
+                </div>
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Webhook Signing Secret</label>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input className="finput" type="password" value={webhookSecret} onChange={e => setWebhookSecret(e.target.value)}
+                    placeholder={status.webhook_configured ? 'whsec_•••••••• (configured)' : 'whsec_…'} style={{ flex: 1 }} />
+                  <button className="btn btn-outline btn-sm" onClick={saveWebhookSecret} disabled={saving || !webhookSecret.trim()}>
+                    Save
+                  </button>
+                </div>
+                {status.webhook_configured && (
+                  <div style={{ fontSize: 11, color: '#2d6a2d', marginTop: 6 }}>✓ Webhook configured — payments will mark invoices paid automatically.</div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Integrations Tab ──────────────────────────────────────────────────────────
 function IntegrationsTab() {
+  const { user } = useAuthStore()
+  const isOwner = user?.role === 'business_owner'
   const { show } = useToast()
   const [zoom, setZoom] = useState({ account_id: '', client_id: '', client_secret: '' })
   const [configured, setConfigured] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testing, setTesting] = useState(false)
 
+  const { data: meData } = useQuery({
+    queryKey: ['me-integrations'],
+    queryFn: () => authApi.me().then(r => r.data),
+  })
+  const googleCalendarConnected = !!meData?.google_calendar_connected
+
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('google_calendar') === 'connected') {
+      show('Google Calendar connected')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isOwner) return
     settingsApi.getZoomSettings().then(r => {
       setZoom({ account_id: r.data.account_id, client_id: r.data.client_id, client_secret: r.data.client_secret })
       setConfigured(r.data.configured)
     }).catch(() => {})
-  }, [])
+  }, [isOwner])
 
   async function save() {
     setSaving(true)
@@ -2201,44 +2306,71 @@ function IntegrationsTab() {
         <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow.</p>
       </div>
 
-      <div className="card">
+      <div className="card" style={{ marginBottom: 20 }}>
         <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>📹 Zoom — Auto-generate Meeting Links</span>
-          {configured && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
+          <span>📅 Google Calendar — Sync Your Sessions</span>
+          {googleCalendarConnected && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
         </div>
         <div className="card-body">
-          <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
-            Use a <strong>Server-to-Server OAuth</strong> app from{' '}
-            <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
-              Zoom Marketplace
-            </a>. Create an app of type "Server-to-Server OAuth", then copy the credentials below.
-          </p>
-
-          <div className="fgroup">
-            <label className="flabel">Account ID</label>
-            <input className="finput" value={zoom.account_id} onChange={e => setZoom(z => ({ ...z, account_id: e.target.value }))} placeholder="Your Zoom Account ID" />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Client ID</label>
-            <input className="finput" value={zoom.client_id} onChange={e => setZoom(z => ({ ...z, client_id: e.target.value }))} placeholder="OAuth Client ID" />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Client Secret</label>
-            <input className="finput" type="password" value={zoom.client_secret} onChange={e => setZoom(z => ({ ...z, client_secret: e.target.value }))} placeholder={configured ? '••••••••' : 'OAuth Client Secret'} />
-          </div>
-
-          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-            <button className="btn btn-dark btn-sm" onClick={save} disabled={saving}>
-              {saving ? 'Saving…' : 'Save Credentials'}
-            </button>
-            {configured && (
-              <button className="btn btn-outline btn-sm" onClick={test} disabled={testing}>
-                {testing ? 'Testing…' : 'Test Connection'}
-              </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
+            <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
+              {googleCalendarConnected
+                ? 'Connected — sessions sync to your calendar and client RSVPs update automatically.'
+                : 'Connect your own Google Calendar to sync scheduled sessions and track client accept/decline responses.'}
+            </p>
+            {!googleCalendarConnected && (
+              <a href="/api/auth/google-calendar/connect/" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
+                Connect Google Calendar
+              </a>
             )}
           </div>
         </div>
       </div>
+
+      {isOwner && (
+        <>
+          <StripePaymentsCard />
+
+          <div className="card">
+            <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              <span>📹 Zoom — Auto-generate Meeting Links</span>
+              {configured && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
+            </div>
+            <div className="card-body">
+              <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
+                Use a <strong>Server-to-Server OAuth</strong> app from{' '}
+                <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
+                  Zoom Marketplace
+                </a>. Create an app of type "Server-to-Server OAuth", then copy the credentials below.
+              </p>
+
+              <div className="fgroup">
+                <label className="flabel">Account ID</label>
+                <input className="finput" value={zoom.account_id} onChange={e => setZoom(z => ({ ...z, account_id: e.target.value }))} placeholder="Your Zoom Account ID" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Client ID</label>
+                <input className="finput" value={zoom.client_id} onChange={e => setZoom(z => ({ ...z, client_id: e.target.value }))} placeholder="OAuth Client ID" />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Client Secret</label>
+                <input className="finput" type="password" value={zoom.client_secret} onChange={e => setZoom(z => ({ ...z, client_secret: e.target.value }))} placeholder={configured ? '••••••••' : 'OAuth Client Secret'} />
+              </div>
+
+              <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                <button className="btn btn-dark btn-sm" onClick={save} disabled={saving}>
+                  {saving ? 'Saving…' : 'Save Credentials'}
+                </button>
+                {configured && (
+                  <button className="btn btn-outline btn-sm" onClick={test} disabled={testing}>
+                    {testing ? 'Testing…' : 'Test Connection'}
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -2259,7 +2391,7 @@ export default function Settings() {
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Generic Templates', icon: <Mail size={13} />,        ownerOnly: true  },
-    { key: 'Integrations',    icon: <Plus size={13} />,          ownerOnly: true  },
+    { key: 'Integrations',    icon: <Plus size={13} />,          ownerOnly: false },
     { key: 'Audit Log',       icon: <ClipboardList size={13} />, ownerOnly: true  },
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
@@ -2294,7 +2426,7 @@ export default function Settings() {
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
         {tab === 'Generic Templates' && isOwner && <GenericTemplatesTab />}
-        {tab === 'Integrations'    && isOwner && <IntegrationsTab />}
+        {tab === 'Integrations'    && <IntegrationsTab />}
         {tab === 'Audit Log'       && isOwner && <AuditLogTab />}
       </div>
     </AppShell>

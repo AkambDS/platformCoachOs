@@ -26,4 +26,7 @@ minio_data/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local-only reference docs (not part of the repo)
+docs/stripe-setup-guide.html
 backend/library/
