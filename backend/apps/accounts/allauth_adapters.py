@@ -24,3 +24,12 @@ class SocialAccountAdapter(DefaultSocialAccountAdapter):
         if email:
             user.email = email
         return user
+
+    def get_connect_redirect_url(self, request, socialaccount):
+        """
+        allauth's default sends "connect" flows to its own built-in
+        /accounts/3rdparty/ management page, not into our SPA — override so the
+        browser lands back on Settings with the confirmation toast instead.
+        """
+        from django.conf import settings
+        return f"{settings.FRONTEND_URL}/settings?google_calendar=connected"

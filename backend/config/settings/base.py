@@ -201,6 +201,9 @@ AUTHENTICATION_BACKENDS = [
 ACCOUNT_EMAIL_REQUIRED        = True
 ACCOUNT_USERNAME_REQUIRED     = False
 ACCOUNT_AUTHENTICATION_METHOD = "email"
+# Our User model has no username field at all (see apps.accounts.models.User) —
+# without this, allauth's default user_display() crashes on getattr(user, "username").
+ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "SCOPE": ["profile", "email", "https://www.googleapis.com/auth/calendar"],
