@@ -83,6 +83,11 @@ class Invoice(WorkspaceModel):
     refund_amount     = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     refund_reason     = models.CharField(max_length=300, blank=True)
     refunded_at       = models.DateTimeField(null=True, blank=True)
+    # Stripe refund ids already applied to refund_amount — dedupes a refund issued via
+    # issue_refund (which calls Stripe directly) against the charge.refunded webhook that
+    # fires moments later for that same refund, and against a refund issued straight from
+    # the Stripe Dashboard (which the webhook applies here instead).
+    stripe_refund_ids = models.JSONField(default=list, blank=True)
     # PDF
     pdf_s3_key        = models.CharField(max_length=500, blank=True)
     # Hides a closed-out invoice (paid/void/refunded) from the default list without

@@ -909,7 +909,7 @@ def workspace_audit_log(request, pk):
 
     logs = (AccessLog.objects
             .filter(workspace=ws)
-            .order_by("-created_at")[:10])
+            .order_by("-created_at")[:20])
     return Response([{
         "id":          l.id,
         "user_name":   l.user_name,

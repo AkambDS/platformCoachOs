@@ -32,20 +32,8 @@ from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusi
 
 
 def _log(request, client, action, **metadata):
-    """Fire-and-forget audit log write."""
-    try:
-        from apps.audit.models import AccessLog
-        AccessLog.objects.create(
-            workspace=request.user.workspace,
-            user=request.user,
-            user_name=request.user.full_name,
-            client_id=client.pk if client else None,
-            client_name=client.full_name if client else "",
-            action=action,
-            metadata=metadata or {},
-        )
-    except Exception:
-        pass
+    from apps.audit.utils import log_access
+    log_access(request, action, client=client, **metadata)
 
 
 # Formats CSV import will accept for birth_date, tried in order — covers our own
@@ -125,6 +113,7 @@ class ClientViewSet(viewsets.ModelViewSet):
 
     def perform_destroy(self, instance):
         from apps.invoicing.models import Invoice, Payment
+        _log(self.request, instance, "deleted_client")
         # Payment.invoice is PROTECT; Invoice.client is PROTECT — delete in order
         invoice_ids = Invoice.objects.filter(client=instance).values_list("id", flat=True)
         Payment.objects.filter(invoice_id__in=invoice_ids).delete()
@@ -145,6 +134,11 @@ class ClientViewSet(viewsets.ModelViewSet):
             workspace=self.request.user.workspace,
             coach=coach,
         )
+        _log(self.request, serializer.instance, "created_client")
+
+    def perform_update(self, serializer):
+        serializer.save()
+        _log(self.request, serializer.instance, "updated_client")
 
     @action(detail=True, methods=["post"], url_path="invite-portal")
     def invite_portal(self, request, pk=None):

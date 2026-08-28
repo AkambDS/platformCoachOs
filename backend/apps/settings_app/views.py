@@ -902,3 +902,92 @@ def zoom_create_meeting(request):
         return Response({"join_url": data["join_url"], "meeting_id": data["id"]})
     except Exception as e:
         return Response({"detail": f"Failed to create Zoom meeting: {e}"}, status=400)
+
+
+# ── Stripe integration (per-workspace — "bring your own account") ──────────────
+# Each workspace connects its OWN Stripe account so client invoice payments go
+# straight to them, not through a shared CoachOS platform account. Unlike Zoom's
+# credentials above (stored plaintext), the Stripe secret/webhook keys are encrypted
+# at rest via apps/accounts/crypto.py — they grant direct access to move money, so
+# they get a stricter bar than a meeting-scheduling API key.
+
+def _stripe_key_meta(secret_key: str) -> dict:
+    """Derive display-safe metadata from a raw secret key without storing the key itself."""
+    if secret_key.startswith("sk_live_"):
+        mode = "live"
+    elif secret_key.startswith("sk_test_"):
+        mode = "test"
+    else:
+        mode = ""
+    return {"mode": mode, "last4": secret_key[-4:] if len(secret_key) >= 4 else ""}
+
+
+@api_view(["GET", "PATCH"])
+@permission_classes([IsWorkspaceMember])
+def stripe_settings(request):
+    """
+    GET   /api/settings/stripe/ — connection status + the webhook URL to configure.
+          Never returns the actual secret/webhook keys, only derived display metadata.
+    PATCH /api/settings/stripe/ — set/replace this workspace's Stripe secret key
+          and/or webhook signing secret. Business-owner only (enforced below, not via
+          decorator, so GET stays available to any workspace member).
+    Body (PATCH): { secret_key?, publishable_key?, webhook_secret?, disconnect? }
+    """
+    from django.conf import settings as dj_settings
+    from apps.accounts.crypto import encrypt_secret
+
+    workspace    = request.user.workspace
+    integrations = workspace.integrations or {}
+    cfg          = integrations.get("stripe", {})
+
+    if request.method == "GET":
+        backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/") or "http://localhost:8000"
+        return Response({
+            "connected":          bool(cfg.get("secret_key_encrypted")),
+            "mode":               cfg.get("mode", ""),
+            "last4":              cfg.get("last4", ""),
+            "publishable_key":    cfg.get("publishable_key", ""),
+            "webhook_configured": bool(cfg.get("webhook_secret_encrypted")),
+            "webhook_url":        f"{backend_base}/api/invoices/stripe-webhook/{workspace.id}/",
+        })
+
+    if request.user.role not in ("business_owner", "platform_admin"):
+        return Response({"detail": "Only the workspace owner can manage payment settings."}, status=status.HTTP_403_FORBIDDEN)
+
+    data = request.data
+    if data.get("disconnect"):
+        integrations["stripe"] = {}
+        workspace.integrations = integrations
+        workspace.save(update_fields=["integrations"])
+        return Response({"connected": False, "mode": "", "last4": "", "webhook_configured": False})
+
+    secret_key = (data.get("secret_key") or "").strip()
+    if secret_key:
+        if not (secret_key.startswith("sk_test_") or secret_key.startswith("sk_live_")):
+            return Response(
+                {"detail": "That doesn't look like a Stripe secret key — it should start with sk_test_ or sk_live_."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        meta = _stripe_key_meta(secret_key)
+        from django.utils import timezone
+        cfg["secret_key_encrypted"] = encrypt_secret(secret_key)
+        cfg["mode"]         = meta["mode"]
+        cfg["last4"]        = meta["last4"]
+        cfg["connected_at"] = timezone.now().isoformat()
+
+    if "publishable_key" in data:
+        cfg["publishable_key"] = (data.get("publishable_key") or "").strip()
+
+    webhook_secret = (data.get("webhook_secret") or "").strip()
+    if webhook_secret:
+        cfg["webhook_secret_encrypted"] = encrypt_secret(webhook_secret)
+
+    integrations["stripe"] = cfg
+    workspace.integrations = integrations
+    workspace.save(update_fields=["integrations"])
+    return Response({
+        "connected":          bool(cfg.get("secret_key_encrypted")),
+        "mode":               cfg.get("mode", ""),
+        "last4":              cfg.get("last4", ""),
+        "webhook_configured": bool(cfg.get("webhook_secret_encrypted")),
+    })

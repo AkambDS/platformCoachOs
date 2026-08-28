@@ -22,4 +22,5 @@ urlpatterns = [
     path("email-preview/",           views.email_preview,                  name="settings-email-preview"),
     path("zoom/",                    views.zoom_settings,                  name="settings-zoom"),
     path("zoom/create-meeting/",     views.zoom_create_meeting,            name="settings-zoom-create-meeting"),
+    path("stripe/",                  views.stripe_settings,                name="settings-stripe"),
 ]

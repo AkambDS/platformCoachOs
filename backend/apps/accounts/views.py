@@ -275,6 +275,9 @@ def invite_user(request):
         logging.getLogger(__name__).error("send_invite_email failed: %s", exc)
         # email_sent stays False — cron job will retry
 
+    from apps.audit.utils import log_access
+    log_access(request, "invited_team_member", email=invitation.email, role=invitation.role)
+
     return Response({"detail": "Invitation sent.", "token": str(invitation.token)},
                     status=status.HTTP_201_CREATED)
 
@@ -438,6 +441,8 @@ class MeView(generics.RetrieveUpdateAPIView):
                                 status=status.HTTP_400_BAD_REQUEST)
             user.set_password(new_password)
             user.save(update_fields=["password"])
+            from apps.audit.utils import log_access
+            log_access(request, "changed_password")
             return Response({"detail": "Password updated."})
 
         serializer = UserSerializer(user, data=request.data, partial=True)
@@ -496,9 +501,13 @@ def team_member_detail(request, pk):
         if not update_fields:
             return Response({"detail": "No valid fields to update."}, status=400)
         member.save(update_fields=update_fields)
+        from apps.audit.utils import log_access
+        log_access(request, "updated_team_member", member_name=member.full_name)
         return Response(UserSerializer(member).data)
 
     # DELETE
+    from apps.audit.utils import log_access
+    log_access(request, "removed_team_member", member_name=member.full_name)
     member.delete()
     return Response(status=status.HTTP_204_NO_CONTENT)
 
@@ -574,6 +583,8 @@ def add_pending_coach(request):
     )
     user.set_unusable_password()
     user.save()
+    from apps.audit.utils import log_access
+    log_access(request, "invited_team_member", email=user.email, role=user.role)
     return Response(UserSerializer(user).data, status=201)
 
 

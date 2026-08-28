@@ -93,6 +93,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Can only send Draft or Sent invoices."}, status=400)
         from tasks.email import send_invoice_email
         send_invoice_email(str(invoice.id))
+        # send_invoice_email fetches and saves its own Invoice instance (e.g. to sync
+        # stripe_payment_link) — refresh this one before writing, so an unscoped save()
+        # below doesn't clobber that update with this stale in-memory copy.
+        invoice.refresh_from_db()
         invoice.status  = Invoice.Status.SENT
         invoice.sent_at = timezone.now()
         invoice.save()
@@ -138,6 +142,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["post"], url_path="refund")
     def issue_refund(self, request, pk=None):
+        """POST /api/invoices/{id}/refund/ — if the invoice was paid via Stripe, actually
+        moves the money back to the client through Stripe's Refund API before recording
+        it; if paid by cash/bank/cheque, it's bookkeeping-only (there's no gateway to call).
+        The charge.refunded webhook (public_views.StripeWebhookView) reconciles refunds
+        issued directly from the Stripe Dashboard the same way — see stripe_refund_ids."""
         invoice = self.get_object()
         if invoice.status not in (Invoice.Status.PAID, Invoice.Status.PARTIALLY_PAID,
                                    Invoice.Status.PARTIALLY_REFUNDED):
@@ -146,6 +155,49 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         reason = request.data.get("reason", "")
         if amount <= 0:
             return Response({"detail": "Refund amount must be positive."}, status=400)
+        remaining_refundable = invoice.amount_paid - invoice.refund_amount
+        if amount > remaining_refundable:
+            return Response(
+                {"detail": f"Cannot refund more than the outstanding paid balance (${remaining_refundable})."},
+                status=400,
+            )
+
+        stripe_payment = (Payment.objects.filter(invoice=invoice, method=Payment.Method.STRIPE)
+                           .exclude(stripe_payment_id="").order_by("-paid_at").first())
+        if stripe_payment:
+            if amount > stripe_payment.amount:
+                return Response(
+                    {"detail": "This amount spans more than one Stripe charge — issue separate "
+                                "refunds per payment, or refund it directly from your Stripe Dashboard."},
+                    status=400,
+                )
+            cfg = (invoice.workspace.integrations or {}).get("stripe", {})
+            secret_key_enc = cfg.get("secret_key_encrypted")
+            if not secret_key_enc:
+                return Response(
+                    {"detail": "Stripe is no longer connected for this workspace — refund it directly "
+                                "from your Stripe Dashboard."},
+                    status=400,
+                )
+            import stripe
+            from apps.accounts.crypto import decrypt_secret
+            try:
+                refund = stripe.Refund.create(
+                    api_key=decrypt_secret(secret_key_enc),
+                    payment_intent=stripe_payment.stripe_payment_id,
+                    amount=int(amount * 100),
+                    metadata={"invoice_id": str(invoice.id), "workspace_id": str(invoice.workspace_id)},
+                )
+            except stripe.error.StripeError as e:
+                logger.error(f"Stripe refund failed for invoice {invoice.id}: {e}")
+                return Response(
+                    {"detail": f"Stripe refund failed: {getattr(e, 'user_message', None) or str(e)}"},
+                    status=502,
+                )
+            ids = set(invoice.stripe_refund_ids or [])
+            ids.add(refund.id)
+            invoice.stripe_refund_ids = list(ids)
+
         invoice.refund_amount += amount
         invoice.refund_reason  = reason
         invoice.refunded_at    = timezone.now()

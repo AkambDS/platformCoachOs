@@ -14,6 +14,13 @@ class AccessLog(WorkspaceModel):
         DELETED_FILE        = "deleted_file",         "Deleted File"
         VIEWED_GOALS        = "viewed_goals",         "Viewed Goals"
         VIEWED_FEEDBACK     = "viewed_feedback",      "Viewed Feedback"
+        CREATED_CLIENT      = "created_client",       "Created Client"
+        UPDATED_CLIENT      = "updated_client",       "Updated Client"
+        DELETED_CLIENT      = "deleted_client",       "Deleted Client"
+        CHANGED_PASSWORD    = "changed_password",     "Changed Password"
+        INVITED_TEAM_MEMBER = "invited_team_member",  "Invited Team Member"
+        UPDATED_TEAM_MEMBER = "updated_team_member",  "Updated Team Member"
+        REMOVED_TEAM_MEMBER = "removed_team_member",  "Removed Team Member"
 
     user       = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="access_logs")
     user_name  = models.CharField(max_length=200, blank=True)

@@ -179,6 +179,8 @@ BACKEND_URL    = env("BACKEND_URL",    default="http://localhost:8000")
 CRON_SECRET    = env("CRON_SECRET",    default="")
 RESEND_API_KEY = env("RESEND_API_KEY", default="")
 GOOGLE_CALENDAR_WEBHOOK_TOKEN = env("GOOGLE_CALENDAR_WEBHOOK_TOKEN", default="")
+GOOGLE_CLIENT_ID     = env("GOOGLE_CLIENT_ID",     default="")
+GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET", default="")
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(
@@ -266,12 +268,21 @@ CELERY_BEAT_SCHEDULE = {
     },
 }
 
-# ── Stripe ────────────────────────────────────────────────────────────────
+# ── Stripe (platform-level — dj-stripe, CoachOS's own billing) ─────────────
 STRIPE_LIVE_MODE          = env.bool("STRIPE_LIVE_MODE", default=False)
 STRIPE_TEST_SECRET_KEY    = env("STRIPE_TEST_SECRET_KEY", default="")
 STRIPE_LIVE_SECRET_KEY    = env("STRIPE_LIVE_SECRET_KEY", default="")
 DJSTRIPE_WEBHOOK_SECRET   = env("STRIPE_WEBHOOK_SECRET", default="")
 DJSTRIPE_FOREIGN_KEY_TO_FIELD = "id"
+
+# ── Field-level encryption (apps/accounts/crypto.py) ───────────────────────
+# Protects third-party secrets stored in a workspace's `integrations` JSON blob — e.g.
+# each workspace's own Stripe secret/webhook key (see apps/settings_app/views.py
+# stripe_settings), which is unrelated to the platform-level Stripe config above.
+# Comma-separated so a rotation can prepend a new key without invalidating old values —
+# see apps/accounts/crypto.py's module docstring. Generate one with:
+#   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+FIELD_ENCRYPTION_KEYS = [k for k in env("FIELD_ENCRYPTION_KEY", default="").split(",") if k]
 
 # ── File Storage ─────────────────────────────────────────────────────────
 # Dev: set MINIO_ENDPOINT to use local MinIO.

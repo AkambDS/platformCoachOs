@@ -1060,6 +1060,23 @@ def send_invoice_email(invoice_id: str):
     try:
         invoice   = Invoice.objects.select_related("client", "coach", "workspace").prefetch_related("items").get(id=invoice_id)
         workspace = invoice.workspace
+
+        # Keep the invoice's online-payment link in sync with the workspace's current
+        # Stripe connection — recomputed on every send/reminder (not just once at first
+        # send) so connecting Stripe later still lights up an already-sent invoice, and
+        # disconnecting it removes a pay button that would otherwise silently 404.
+        stripe_cfg = (workspace.integrations or {}).get("stripe", {})
+        if stripe_cfg.get("secret_key_encrypted") and invoice.total > invoice.amount_paid:
+            from apps.invoicing.tokens import make_invoice_pay_token
+            backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/") or "http://localhost:8000"
+            new_link = f"{backend_base}/invoices/pay/{make_invoice_pay_token(str(invoice.id))}/"
+            if invoice.stripe_payment_link != new_link:
+                invoice.stripe_payment_link = new_link
+                invoice.save(update_fields=["stripe_payment_link"])
+        elif invoice.stripe_payment_link:
+            invoice.stripe_payment_link = ""
+            invoice.save(update_fields=["stripe_payment_link"])
+
         owner_email, owner_name = _owner_info(workspace)
         due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
 

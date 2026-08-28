@@ -13,6 +13,7 @@ from apps.activities.public_views import (
     SessionConfirmView, SessionCancelView, SessionRescheduleView, GoogleCalendarWebhookView,
 )
 from apps.clients.public_views import ContractSignView
+from apps.invoicing.public_views import InvoicePayView, InvoicePaySuccessView
 
 
 @api_view(["POST"])
@@ -136,6 +137,8 @@ urlpatterns = [
     path("session/cancel/<str:token>/",     csrf_exempt(SessionCancelView.as_view())),
     path("session/reschedule/<str:token>/", csrf_exempt(SessionRescheduleView.as_view())),
     path("contract/sign/<str:token>/",      csrf_exempt(ContractSignView.as_view())),
+    path("invoices/pay/<str:token>/",         csrf_exempt(InvoicePayView.as_view())),
+    path("invoices/pay/<str:token>/success/", csrf_exempt(InvoicePaySuccessView.as_view())),
     path("api/auth/",        include("apps.accounts.urls")),
     path("api/clients/",     include("apps.clients.urls")),
     path("api/activities/",  include("apps.activities.urls")),
