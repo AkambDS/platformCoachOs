@@ -31,6 +31,7 @@ import FeedbackList   from "./pages/coach/FeedbackList"
 import FeedbackDetail from "./pages/coach/FeedbackDetail"
 import AdminDashboard  from "./pages/superadmin/AdminDashboard"
 import AdminWorkspace  from "./pages/superadmin/AdminWorkspace"
+import PrivacyPolicy   from "./pages/legal/PrivacyPolicy"
 
 
 function PrivateRoute({ children }: { children: JSX.Element }) {
@@ -149,6 +150,7 @@ export default function App() {
           <Route path="/accept-invite"    element={<AcceptInvite />} />
           <Route path="/forgot-password"  element={<ForgotPassword />} />
           <Route path="/reset-password"   element={<ResetPassword />} />
+          <Route path="/privacy-policy"   element={<PrivacyPolicy />} />
 
           {/* Coach App */}
           <Route path="/dashboard"     element={<PrivateRoute><Dashboard /></PrivateRoute>} />
