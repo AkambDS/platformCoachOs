@@ -210,6 +210,9 @@ SOCIALACCOUNT_PROVIDERS = {
 # Skip allauth's intermediate "Continue" confirmation page — go straight to Google
 # on GET, so the frontend's "Connect Google Calendar" link works in one click.
 SOCIALACCOUNT_LOGIN_ON_GET = True
+# Our User model has no settable first_name/last_name (see allauth_adapters.py) —
+# without this, every Google connect attempt 500s in allauth's populate_user().
+SOCIALACCOUNT_ADAPTER = "apps.accounts.allauth_adapters.SocialAccountAdapter"
 # Where allauth sends the browser back after the OAuth connect flow completes.
 LOGIN_REDIRECT_URL = f"{FRONTEND_URL}/settings?google_calendar=connected"
 
