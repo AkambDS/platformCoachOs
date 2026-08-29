@@ -1053,12 +1053,26 @@ function ClientStatusesTab() {
 }
 
 // ── Tags Tab ───────────────────────────────────────────────────────────────────
-function TagsTab() {
+// Generic CRUD card for a workspace's tag-config list (name + color) — used for both
+// Client Tags (Client.tags) and Communication Tags (Client.communication_tags), which
+// are separate config lists in the DB but identical in shape and behavior.
+function TagConfigCard({ title, queryKey, placeholder, itemNoun, api: tagApi }: {
+  title: string
+  queryKey: string
+  placeholder: string
+  itemNoun: string
+  api: {
+    list:   () => Promise<{ data: any }>
+    create: (d: any) => Promise<{ data: any }>
+    update: (id: number, d: any) => Promise<{ data: any }>
+    remove: (id: number) => Promise<any>
+  }
+}) {
   const { show, el: toastEl } = useToast()
   const qc = useQueryClient()
   const { data: tags = [], isLoading } = useQuery({
-    queryKey: ['client-tag-configs'],
-    queryFn: () => settingsApi.getClientTags().then(r => r.data),
+    queryKey: [queryKey],
+    queryFn: () => tagApi.list().then(r => r.data),
     staleTime: 0,
   })
   const [showAdd, setShowAdd]           = useState(false)
@@ -1072,10 +1086,10 @@ function TagsTab() {
     if (!newForm.name.trim()) return
     setSaving(true)
     try {
-      await settingsApi.createClientTag(newForm)
-      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
+      await tagApi.create(newForm)
+      qc.invalidateQueries({ queryKey: [queryKey] })
       setShowAdd(false); setNewForm({ name: '', color: '#2d6a9f' })
-      show('Tag added')
+      show(`${itemNoun} added`)
     } catch (e: any) { show(e?.response?.data?.name?.[0] || 'Failed to add', 'error') }
     finally { setSaving(false) }
   }
@@ -1084,9 +1098,9 @@ function TagsTab() {
     if (!editForm.name.trim()) return
     setSaving(true)
     try {
-      await settingsApi.updateClientTag(editTarget.id, editForm)
-      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
-      setEditTarget(null); show('Tag updated')
+      await tagApi.update(editTarget.id, editForm)
+      qc.invalidateQueries({ queryKey: [queryKey] })
+      setEditTarget(null); show(`${itemNoun} updated`)
     } catch (e: any) { show(e?.response?.data?.name?.[0] || 'Failed to update', 'error') }
     finally { setSaving(false) }
   }
@@ -1095,9 +1109,9 @@ function TagsTab() {
     if (!deleteTarget) return
     setSaving(true)
     try {
-      await settingsApi.deleteClientTag(deleteTarget.id)
-      qc.invalidateQueries({ queryKey: ['client-tag-configs'] })
-      setDeleteTarget(null); show('Tag deleted')
+      await tagApi.remove(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: [queryKey] })
+      setDeleteTarget(null); show(`${itemNoun} deleted`)
     } catch (e: any) { show(e?.response?.data?.detail || 'Failed to delete', 'error') }
     finally { setSaving(false) }
   }
@@ -1105,17 +1119,17 @@ function TagsTab() {
   if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
 
   return (
-    <div className="card" style={{ maxWidth: 600 }}>
+    <div className="card" style={{ maxWidth: 600, marginBottom: 24 }}>
       <div className="card-hdr">
-        Client Tags
+        {title}
         <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
-          <Plus size={13} /> Add Tag
+          <Plus size={13} /> Add {itemNoun}
         </button>
       </div>
       <div className="card-body" style={{ padding: 0 }}>
         {(tags as any[]).length === 0 && (
           <div style={{ padding: '16px 18px', fontSize: 13, color: 'var(--muted)' }}>
-            No tags yet. Add tags to categorise clients with colors.
+            No {itemNoun.toLowerCase()}s yet. {placeholder}
           </div>
         )}
         {(tags as any[]).map((t: any) => (
@@ -1137,16 +1151,16 @@ function TagsTab() {
       </div>
 
       {showAdd && (
-        <Modal title="Add Tag" onClose={() => setShowAdd(false)} footer={
+        <Modal title={`Add ${itemNoun}`} onClose={() => setShowAdd(false)} footer={
           <>
             <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
             <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
           </>
         }>
           <div className="fgroup">
-            <label className="flabel">Tag Name *</label>
+            <label className="flabel">{itemNoun} Name *</label>
             <input className="finput" value={newForm.name} onChange={e => setNewForm(f => ({ ...f, name: e.target.value }))}
-              placeholder="e.g. VIP, Executive, On Hold" onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
+              placeholder={placeholder} onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
           </div>
           <div className="fgroup">
             <label className="flabel">Color</label>
@@ -1156,14 +1170,14 @@ function TagsTab() {
       )}
 
       {editTarget && (
-        <Modal title="Edit Tag" onClose={() => setEditTarget(null)} footer={
+        <Modal title={`Edit ${itemNoun}`} onClose={() => setEditTarget(null)} footer={
           <>
             <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
             <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
           </>
         }>
           <div className="fgroup">
-            <label className="flabel">Tag Name *</label>
+            <label className="flabel">{itemNoun} Name *</label>
             <input className="finput" value={editForm.name} onChange={e => setEditForm(f => ({ ...f, name: e.target.value }))}
               onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
           </div>
@@ -1175,7 +1189,7 @@ function TagsTab() {
       )}
 
       {deleteTarget && (
-        <Modal title="Delete Tag" onClose={() => setDeleteTarget(null)} footer={
+        <Modal title={`Delete ${itemNoun}`} onClose={() => setDeleteTarget(null)} footer={
           <>
             <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
             <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
@@ -1185,7 +1199,164 @@ function TagsTab() {
           </>
         }>
           <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
-            Delete tag <strong>"{deleteTarget.name}"</strong>? Clients will keep the tag text; only the color config is removed.
+            Delete {itemNoun.toLowerCase()} <strong>"{deleteTarget.name}"</strong>? Clients will keep the {itemNoun.toLowerCase()} text; only the color config is removed.
+          </div>
+        </Modal>
+      )}
+      {toastEl}
+    </div>
+  )
+}
+
+function TagsTab() {
+  return (
+    <div>
+      <TagConfigCard
+        title="Client Tags"
+        queryKey="client-tag-configs"
+        itemNoun="Tag"
+        placeholder="e.g. VIP, Executive, On Hold"
+        api={{
+          list:   settingsApi.getClientTags,
+          create: settingsApi.createClientTag,
+          update: settingsApi.updateClientTag,
+          remove: settingsApi.deleteClientTag,
+        }}
+      />
+      <TagConfigCard
+        title="Communication Tags"
+        queryKey="communication-tag-configs"
+        itemNoun="Tag"
+        placeholder="e.g. Check-in, Billing, Re-engagement"
+        api={{
+          list:   settingsApi.getCommunicationTags,
+          create: settingsApi.createCommunicationTag,
+          update: settingsApi.updateCommunicationTag,
+          remove: settingsApi.deleteCommunicationTag,
+        }}
+      />
+    </div>
+  )
+}
+
+// ── Lead Sources Tab ───────────────────────────────────────────────────────────
+function LeadSourcesTab() {
+  const { show, el: toastEl } = useToast()
+  const qc = useQueryClient()
+  const { data: sources = [], isLoading } = useQuery({
+    queryKey: ['lead-source-configs'],
+    queryFn: () => settingsApi.getLeadSources().then(r => r.data),
+  })
+  const [showAdd, setShowAdd]           = useState(false)
+  const [editTarget, setEditTarget]     = useState<any>(null)
+  const [deleteTarget, setDeleteTarget] = useState<any>(null)
+  const [newLabel, setNewLabel]         = useState('')
+  const [editLabel, setEditLabel]       = useState('')
+  const [saving, setSaving]             = useState(false)
+
+  const handleAdd = async () => {
+    if (!newLabel.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.createLeadSource({ label: newLabel.trim() })
+      qc.invalidateQueries({ queryKey: ['lead-source-configs'] })
+      setShowAdd(false); setNewLabel('')
+      show('Lead source added')
+    } catch (e: any) { show(e?.response?.data?.label?.[0] || 'Failed to add', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleEdit = async () => {
+    if (!editLabel.trim()) return
+    setSaving(true)
+    try {
+      await settingsApi.updateLeadSource(editTarget.id, { label: editLabel.trim() })
+      qc.invalidateQueries({ queryKey: ['lead-source-configs'] })
+      setEditTarget(null); show('Lead source updated')
+    } catch (e: any) { show(e?.response?.data?.label?.[0] || 'Failed to update', 'error') }
+    finally { setSaving(false) }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setSaving(true)
+    try {
+      await settingsApi.deleteLeadSource(deleteTarget.id)
+      qc.invalidateQueries({ queryKey: ['lead-source-configs'] })
+      setDeleteTarget(null); show('Lead source deleted')
+    } catch (e: any) { show(e?.response?.data?.detail || 'Failed to delete', 'error') }
+    finally { setSaving(false) }
+  }
+
+  if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
+
+  return (
+    <div className="card" style={{ maxWidth: 600 }}>
+      <div className="card-hdr">
+        Lead Sources
+        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}>
+          <Plus size={13} /> Add Source
+        </button>
+      </div>
+      <div className="card-body" style={{ padding: 0 }}>
+        {(sources as any[]).map((s: any) => (
+          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
+            <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>
+              {s.label}
+              {s.is_builtin && <span style={{ fontSize: 10, color: 'var(--muted)', marginLeft: 6, fontWeight: 400 }}>built-in</span>}
+            </div>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditLabel(s.label) }} style={{ padding: '2px 6px' }}>
+              <Pencil size={13} />
+            </button>
+            <button className="btn btn-ghost btn-sm" onClick={() => setDeleteTarget(s)} style={{ color: '#c0392b', padding: '2px 6px' }} disabled={s.is_builtin}>
+              <Trash2 size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      {showAdd && (
+        <Modal title="Add Lead Source" onClose={() => setShowAdd(false)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Label *</label>
+            <input className="finput" value={newLabel} onChange={e => setNewLabel(e.target.value)}
+              placeholder="e.g. Podcast, Partner Agency" onKeyDown={e => { if (e.key === 'Enter') handleAdd() }} autoFocus />
+          </div>
+        </Modal>
+      )}
+
+      {editTarget && (
+        <Modal title="Edit Lead Source" onClose={() => setEditTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+          </>
+        }>
+          <div className="fgroup">
+            <label className="flabel">Label *</label>
+            <input className="finput" value={editLabel} onChange={e => setEditLabel(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleEdit() }} autoFocus />
+          </div>
+        </Modal>
+      )}
+
+      {deleteTarget && (
+        <Modal title="Delete Lead Source" onClose={() => setDeleteTarget(null)} footer={
+          <>
+            <button className="btn btn-outline btn-sm" onClick={() => setDeleteTarget(null)}>Cancel</button>
+            <button className="btn btn-sm" onClick={handleDelete} disabled={saving}
+              style={{ background: '#c0392b', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 16px', fontWeight: 700, fontSize: 12, cursor: 'pointer' }}>
+              {saving ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        }>
+          <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+            Delete <strong>"{deleteTarget.label}"</strong>? Clients with this lead source will keep the label text.
           </div>
         </Modal>
       )}
@@ -2388,6 +2559,7 @@ export default function Settings() {
     { key: 'Activity Types',   icon: <CalendarDays size={13} />, ownerOnly: true  },
     { key: 'Affiliation',      icon: <Building2 size={13} />,    ownerOnly: true  },
     { key: 'Client Statuses',  icon: <Plus size={13} />,         ownerOnly: true  },
+    { key: 'Lead Sources',     icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Tags',             icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Services',         icon: <Plus size={13} />,         ownerOnly: true  },
     { key: 'Generic Templates', icon: <Mail size={13} />,        ownerOnly: true  },
@@ -2423,6 +2595,7 @@ export default function Settings() {
         {tab === 'Activity Types'  && isOwner && <ActivityTypesTab />}
         {tab === 'Affiliation'     && isOwner && <AffiliationsTab />}
         {tab === 'Client Statuses' && isOwner && <ClientStatusesTab />}
+        {tab === 'Lead Sources'    && isOwner && <LeadSourcesTab />}
         {tab === 'Tags'            && isOwner && <TagsTab />}
         {tab === 'Services'        && isOwner && <ServicesTab />}
         {tab === 'Generic Templates' && isOwner && <GenericTemplatesTab />}

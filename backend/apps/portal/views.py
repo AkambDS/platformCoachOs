@@ -178,7 +178,7 @@ class PortalGoalsView(APIView):
 
         goals = list(ClientGoal.objects.filter(
             client_id=client_id, workspace_id=workspace_id,
-            status="active",
+            status="active", visible_to_client=True,
         ))
         commitments = Commitment.objects.filter(
             client_id=client_id, workspace_id=workspace_id
@@ -204,7 +204,8 @@ class PortalProgressView(APIView):
         client_id, workspace_id = _get_portal_claims(request)
         try:
             goal = ClientGoal.objects.get(
-                pk=goal_id, client_id=client_id, workspace_id=workspace_id
+                pk=goal_id, client_id=client_id, workspace_id=workspace_id,
+                visible_to_client=True,
             )
         except ClientGoal.DoesNotExist:
             raise NotFound()

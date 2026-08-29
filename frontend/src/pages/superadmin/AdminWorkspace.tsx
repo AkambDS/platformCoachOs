@@ -26,6 +26,18 @@ function timeAgo(dateStr: string | null | undefined): string {
   return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// Shared by the Audit Log table and the Error Log tab's "recent actions" list — both
+// render the same AccessLog shape, just scoped differently (last 20 for the workspace
+// vs. one user's last 5 before a specific error).
+function formatAuditDetail(meta: Record<string, any> | null | undefined): string {
+  const m = meta || {}
+  return m.file_name
+    || m.note_preview
+    || (Object.keys(m).length > 0
+        ? Object.entries(m).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')
+        : '')
+}
+
 export default function AdminWorkspace() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -298,6 +310,29 @@ export default function AdminWorkspace() {
                         <span>{timeAgo(e.created_at)}</span>
                         {e.user && <span>by {e.user} ({e.user_email})</span>}
                       </div>
+                      {/* What this user was doing right before the error — same
+                          AccessLog rows the Audit Log tab shows, scoped to this one
+                          user and capped to just-before this error's timestamp. */}
+                      {(e.recent_actions || []).length > 0 && (
+                        <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed var(--border)' }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 4 }}>
+                            User's actions leading up to this
+                          </div>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                            {e.recent_actions.map((a: any, ai: number) => {
+                              const detail = formatAuditDetail(a.metadata)
+                              return (
+                                <div key={ai} style={{ fontSize: 11.5, color: 'var(--ink)', display: 'flex', gap: 8 }}>
+                                  <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap' }}>{timeAgo(a.created_at)}</span>
+                                  <span style={{ fontWeight: 600 }}>{a.action.replace(/_/g, ' ')}</span>
+                                  {a.client_name && <span style={{ color: 'var(--muted)' }}>· {a.client_name}</span>}
+                                  {detail && <span style={{ color: 'var(--muted)' }}>· {detail}</span>}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     {/* Traceback toggle */}
                     {e.traceback && (
@@ -347,12 +382,7 @@ export default function AdminWorkspace() {
                   </thead>
                   <tbody>
                     {(auditLogs as any[]).map((log: any, i: number) => {
-                      const meta = log.metadata || {}
-                      const detail = meta.file_name
-                        || meta.note_preview
-                        || (Object.keys(meta).length > 0
-                            ? Object.entries(meta).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`).join(' · ')
-                            : '')
+                      const detail = formatAuditDetail(log.metadata)
                       return (
                         <tr key={log.id} style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--white)' : 'var(--surface)' }}>
                           <td style={{ padding: '9px 16px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>{timeAgo(log.created_at)}</td>

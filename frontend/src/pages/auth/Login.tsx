@@ -44,6 +44,32 @@ export default function Login() {
     <div className="auth-split">
       {/* Brand Panel */}
       <div className="auth-brand">
+        {/* Connected-network motif — confined to the space above the headline */}
+        <svg className="auth-brand-motif" viewBox="0 0 400 240" preserveAspectRatio="xMidYMid slice" fill="none" aria-hidden="true">
+          <g stroke="#d4b06a" strokeWidth="0.8" opacity="0.14">
+            <line x1="60" y1="40" x2="150" y2="70" />
+            <line x1="150" y1="70" x2="260" y2="25" />
+            <line x1="150" y1="70" x2="110" y2="130" />
+            <line x1="260" y1="25" x2="340" y2="75" />
+            <line x1="340" y1="75" x2="310" y2="110" />
+            <line x1="110" y1="130" x2="230" y2="150" />
+            <line x1="230" y1="150" x2="310" y2="110" />
+            <line x1="60" y1="40" x2="110" y2="130" />
+            <line x1="40" y1="170" x2="110" y2="130" />
+            <line x1="230" y1="150" x2="190" y2="205" />
+          </g>
+          <g fill="#f7f4ef" opacity="0.75">
+            <circle cx="60" cy="40" r="2.8" />
+            <circle cx="150" cy="70" r="2.8" />
+            <circle cx="260" cy="25" r="2.8" />
+            <circle cx="340" cy="75" r="2.8" />
+            <circle cx="110" cy="130" r="2.8" />
+            <circle cx="230" cy="150" r="2.8" />
+            <circle cx="310" cy="110" r="2.8" />
+            <circle cx="40" cy="170" r="2.8" />
+            <circle cx="190" cy="205" r="2.8" />
+          </g>
+        </svg>
         {/* Logo */}
         <div className="auth-brand-logo">
           <>Coach<span>OS</span></>

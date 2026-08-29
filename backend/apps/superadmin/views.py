@@ -693,12 +693,20 @@ def workspace_invoices(request, pk):
 @permission_classes([IsPlatformAdmin])
 def workspace_errors(request, pk):
     """GET /api/superadmin/workspaces/{pk}/errors/"""
+    from apps.audit.utils import recent_actions_for
     try:
         ws = Workspace.objects.get(pk=pk)
     except Workspace.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
 
     logs = ErrorLog.objects.filter(workspace=ws).select_related("user").order_by("-created_at")[:10]
+
+    def recent_actions(entry):
+        return [
+            {**a, "created_at": a["created_at"].isoformat()}
+            for a in recent_actions_for(entry.user, ws, entry.created_at)
+        ]
+
     return Response([{
         "id":         entry.id,
         "severity":   entry.severity,
@@ -711,6 +719,7 @@ def workspace_errors(request, pk):
         "user_email": entry.user.email if entry.user else None,
         "suggestion": _suggest(entry.error_type, entry.source),
         "created_at": entry.created_at.isoformat(),
+        "recent_actions": recent_actions(entry),
     } for entry in logs])
 
 

@@ -510,6 +510,14 @@ body {
   background: radial-gradient(circle, rgba(255,255,255,.02) 0%, transparent 65%);
   pointer-events: none;
 }
+.auth-brand-motif {
+  position: absolute;
+  top: 90px;
+  left: 0;
+  right: 0;
+  height: 240px;
+  pointer-events: none;
+}
 .auth-brand-logo {
   font-family: 'Cormorant Garamond', serif;
   font-size: 30px;

@@ -23,7 +23,7 @@ class ClientStatusConfig(models.Model):
 
 
 class ClientTagConfig(models.Model):
-    """Per-workspace tag definitions with colors."""
+    """Per-workspace tag definitions with colors — for general client tagging."""
     workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='client_tag_configs')
     name       = models.CharField(max_length=50)
     color      = models.CharField(max_length=7, default='#2d6a9f')
@@ -35,6 +35,40 @@ class ClientTagConfig(models.Model):
 
     def __str__(self):
         return self.name
+
+
+class CommunicationTagConfig(models.Model):
+    """Per-workspace tag definitions for Client.communication_tags — a second, separate
+    tag set from ClientTagConfig, e.g. for categorizing how/why a client is contacted
+    rather than general CRM tagging."""
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='communication_tag_configs')
+    name       = models.CharField(max_length=50)
+    color      = models.CharField(max_length=7, default='#2d6a9f')
+
+    class Meta:
+        db_table       = 'clients_communicationtagconfig'
+        ordering       = ['name']
+        unique_together = [['workspace', 'name']]
+
+    def __str__(self):
+        return self.name
+
+
+class LeadSourceConfig(models.Model):
+    """Per-workspace lead source options — 'Other' is protected (is_builtin) since the
+    edit forms special-case it to also show a free-text box for the actual source."""
+    workspace  = models.ForeignKey(Workspace, on_delete=models.CASCADE, related_name='lead_source_configs')
+    label      = models.CharField(max_length=100)
+    is_builtin = models.BooleanField(default=False)
+    sort_order = models.IntegerField(default=0)
+
+    class Meta:
+        db_table       = 'clients_leadsourceconfig'
+        ordering       = ['sort_order', 'label']
+        unique_together = [['workspace', 'label']]
+
+    def __str__(self):
+        return self.label
 
 
 class Client(WorkspaceModel):
@@ -76,6 +110,12 @@ class Client(WorkspaceModel):
     active_flag  = models.BooleanField(default=False, help_text="Manually set by coach (FR-CRM-03)")
     portal_access = models.BooleanField(default=False, help_text="Enables client portal login (FR-CP-11)")
     lead_source  = models.CharField(max_length=200, blank=True)
+    # Who referred this client — only meaningful when lead_source is "referral", but kept
+    # unconstrained (no FK to Client/User) since a referral is very often someone outside
+    # the system entirely (a friend, another professional), not necessarily an existing record.
+    referral_name = models.CharField(max_length=200, blank=True)
+    # Second, independent tag set from `tags` (general CRM tags) — see CommunicationTagConfig.
+    communication_tags = ArrayField(models.CharField(max_length=50), default=list, blank=True)
     birth_date   = models.DateField(null=True, blank=True)
     anniversary_date = models.DateField(null=True, blank=True)
     notes        = models.TextField(blank=True)
@@ -157,6 +197,7 @@ class ClientGoal(WorkspaceModel):
     description = models.TextField(blank=True)
     target_date = models.DateField(null=True, blank=True)
     status      = models.CharField(max_length=20, choices=Status.choices, default=Status.ACTIVE)
+    visible_to_client = models.BooleanField(default=False, help_text="Share this goal with the client in their portal")
     created_by  = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
     created_at  = models.DateTimeField(auto_now_add=True)
     updated_at  = models.DateTimeField(auto_now=True)
@@ -251,6 +292,7 @@ class EmailLog(WorkspaceModel):
         ACTIVITY_CANCELLATION = "activity_cancellation",  "Session Cancelled"
         CLIENT_MESSAGE        = "client_message",         "Client Message"
         PORTAL_INVITE         = "portal_invite",           "Portal Invite"
+        GOAL_SHARED           = "goal_shared",             "Goal Shared"
 
     id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client          = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name="email_logs")

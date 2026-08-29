@@ -91,24 +91,44 @@ class ClientViewSet(viewsets.ModelViewSet):
         if self.action in ("csv_import", "csv_export"):
             return [IsCoachOrAbove(), require_tab("clients", "view")()]
         return [IsAssistantOrAbove(), require_tab("clients", "view")()]
-    filter_backends    = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    # No OrderingFilter — archived/inactive clients need to always sort last regardless of
+    # which field the user sorts by, which get_queryset below handles directly. Leaving
+    # OrderingFilter in would re-apply a plain `.order_by(ordering)` afterward and silently
+    # discard that grouping.
+    filter_backends    = [DjangoFilterBackend, SearchFilter]
     filterset_fields   = ["active_flag", "status", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]
     ordering_fields    = ["first_name", "last_name", "created_at"]
-    ordering           = ["last_name"]
 
     def get_queryset(self):
-        from apps.activities.models import Activity
+        from apps.pipeline.models import Deal
+        from django.db.models import Case, When, Value, IntegerField
         qs = _client_qs(self.request).select_related("coach")
         tags = self.request.query_params.getlist("tag")
         if tags:
             qs = qs.filter(tags__contains=tags)
         if self.action == "list":
-            last_act = Activity.objects.filter(client=OuterRef("pk")).order_by("-start_at")
-            qs = qs.annotate(
-                last_activity_type=Subquery(last_act.values("activity_type")[:1]),
-                last_activity_at=Subquery(last_act.values("start_at")[:1]),
+            # Deal's own Meta.ordering (-updated_at) makes [:1] the most-recently-touched
+            # deal — matches how ClientDetail.tsx already picks "the" deal for a client.
+            last_deal = Deal.objects.filter(client=OuterRef("pk"))
+            status_rank = Case(
+                When(status__iexact="archive", then=Value(2)),
+                When(status__iexact="inactive", then=Value(1)),
+                default=Value(0),
+                output_field=IntegerField(),
             )
+            qs = qs.annotate(
+                pipeline_stage=Subquery(last_deal.values("stage")[:1]),
+                # Lets a caller (bulk edit) target the existing deal with a PATCH instead
+                # of blindly creating a second one — pipeline_stage alone only says what
+                # stage it's in, not which Deal row that is.
+                pipeline_deal_id=Subquery(last_deal.values("id")[:1]),
+                _status_rank=status_rank,
+            )
+            ordering = self.request.query_params.get("ordering") or "last_name"
+            if ordering.lstrip("-") not in self.ordering_fields:
+                ordering = "last_name"
+            qs = qs.order_by("_status_rank", ordering)
         return qs
 
     def perform_destroy(self, instance):
@@ -174,22 +194,42 @@ class ClientViewSet(viewsets.ModelViewSet):
         if not request.user.workspace_id:
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
 
+        from apps.pipeline.models import Deal
+
         # Column order matches a common external CRM export layout (name/birthday/
         # company, then phone 1/2 groups, then email, then address) so a coach who's
         # used to that format can find things where they expect — our own field names
         # underneath differ, but csv_import reads by header name, not position, so
-        # this order has no effect on what re-imports correctly.
+        # this order has no effect on what re-imports correctly. communication_tag and
+        # pipeline are appended at the very end (rather than inserted alongside their
+        # renamed siblings) so a script or spreadsheet already built around this layout
+        # only ever sees columns added past what it expects, never shifted.
         fields = ["first_name", "last_name", "birth_date", "company",
                   "phone_1", "phone_1_ext", "phone_1_type",
                   "phone_2", "phone_2_ext", "phone_2_type",
                   "email_1", "email_2",
                   "street_address_1", "street_address_2", "city", "state", "zip",
-                  "job_title", "status", "lead_source", "coach_email", "tags", "notes"]
+                  "job_title", "client_status", "lead_source", "coach_email", "client_tag", "notes",
+                  "communication_tag", "pipeline"]
+
+        # Most-recently-updated deal per client (Deal's own Meta.ordering makes this the
+        # "current" one), translated slug → label so the export reads the same stage
+        # name a coach sees on the Pipeline board rather than a raw internal slug.
+        last_deal = Deal.objects.filter(client=OuterRef("pk")).order_by("-updated_at")
+        clients_qs = _client_qs(request).annotate(
+            _pipeline_stage=Subquery(last_deal.values("stage")[:1])
+        ).order_by("last_name")
+        from apps.pipeline.models import PipelineStageConfig
+        stage_labels = {
+            s.slug: s.label
+            for s in PipelineStageConfig.objects.filter(workspace=request.user.workspace)
+        }
 
         def rows():
             yield ",".join(fields) + "\r\n"
-            for c in _client_qs(request).order_by("last_name"):
+            for c in clients_qs:
                 addr = c.primary_address or {}
+                pipeline_label = stage_labels.get(c._pipeline_stage, c._pipeline_stage or "")
                 row = [
                     c.first_name, c.last_name,
                     c.birth_date.isoformat() if c.birth_date else "",
@@ -203,6 +243,8 @@ class ClientViewSet(viewsets.ModelViewSet):
                     c.coach.email if c.coach else "",
                     "|".join(c.tags or []),
                     (c.notes or "").replace("\r\n", " ").replace("\n", " "),
+                    "|".join(c.communication_tags or []),
+                    pipeline_label,
                 ]
                 yield ",".join(f'"{v.replace(chr(34), chr(34)+chr(34))}"' for v in row) + "\r\n"
 
@@ -216,8 +258,12 @@ class ClientViewSet(viewsets.ModelViewSet):
         """POST /api/clients/import/ — CSV bulk import. Column set mirrors the New Client
         form: first_name/last_name/email_1 are mandatory (same fields marked * there);
         everything else (email_2, phone_1[_ext/_type], phone_2[_ext/_type], job_title,
-        company, status, lead_source, birth_date, street_address_1/2, city, state, zip,
-        coach_email, tags, notes) is optional."""
+        company, client_status, lead_source, birth_date, street_address_1/2, city, state,
+        zip, coach_email, client_tag, notes, communication_tag, pipeline) is optional.
+        "status"/"tags" are still accepted as pre-rename aliases for client_status/
+        client_tag. "pipeline" is the only column with no matching Client field — a
+        non-blank value creates a Deal for the row at that stage, same as "Create deal"
+        on the New Client form."""
         if not request.user.workspace_id:
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
         file = request.FILES.get("file")
@@ -251,6 +297,21 @@ class ClientViewSet(viewsets.ModelViewSet):
             for u in User.objects.filter(workspace=request.user.workspace, role="coach")
         }
 
+        # "pipeline" is optional and, unlike every other column, doesn't map onto a
+        # Client field at all — a non-blank value creates a Deal for the row's new
+        # client at that stage (same as checking "Create deal" on the New Client form,
+        # just with an explicit stage instead of always defaulting to Lead – New).
+        # Accepts either the stage's display label (what export writes, e.g. "Lead –
+        # New") or its raw slug (e.g. "lead_new"), matched case-insensitively.
+        from apps.pipeline.models import Deal, StageHistory, PipelineStageConfig
+        from apps.settings_app.views import _seed_pipeline_stages
+        _seed_pipeline_stages(request.user.workspace)
+        stage_by_label = {
+            s.label.strip().lower(): s.slug
+            for s in PipelineStageConfig.objects.filter(workspace=request.user.workspace)
+        }
+        valid_slugs = set(stage_by_label.values())
+
         reader  = csv.DictReader(io.StringIO(text))
         created  = 0
         skipped  = 0
@@ -278,7 +339,14 @@ class ClientViewSet(viewsets.ModelViewSet):
             "phone_2", "phone_2_ext", "phone_2_type",
             "company", "job_title", "lead_source", "birth_date",
             "street_address_1", "street_address", "street_address_2",
-            "city", "state", "zip", "coach_email", "tags", "status", "notes",
+            "city", "state", "zip", "coach_email", "notes",
+            # "tags"/"status" are the pre-rename names (a CSV exported before Client Tags
+            # were split from Communication Tags, and status from pipeline stage) —
+            # recognized alongside their replacements so an already-downloaded template
+            # or a file re-exported from an older version of this app still imports
+            # cleanly with no changes required.
+            "client_tag", "tags", "communication_tag",
+            "client_status", "status", "pipeline",
         }
         found_columns = {f.strip() for f in fieldnames if f and f.strip()}
         has_name  = "first_name" in found_columns or "last_name" in found_columns
@@ -364,10 +432,19 @@ class ClientViewSet(viewsets.ModelViewSet):
             # warning instead so it's still imported, with a nudge to double-check.
             name_already_seen = name_key in existing_names
 
-            raw_tags = row.get("tags", "").strip()
+            raw_tags = get_any(row, "client_tag", "tags")
             tags = [t.strip() for t in raw_tags.replace(",", "|").split("|") if t.strip()]
-            client_status = row.get("status", "Lead").strip() or "Lead"
+            raw_comm_tags = get_any(row, "communication_tag", "communication_tags")
+            communication_tags = [t.strip() for t in raw_comm_tags.replace(",", "|").split("|") if t.strip()]
+            client_status = get_any(row, "client_status", "status") or "Lead"
             active = client_status.lower() == "active"
+
+            pipeline_raw = get_any(row, "pipeline")
+            pipeline_slug = None
+            if pipeline_raw:
+                pipeline_slug = stage_by_label.get(pipeline_raw.strip().lower())
+                if not pipeline_slug and pipeline_raw.strip().lower() in valid_slugs:
+                    pipeline_slug = pipeline_raw.strip().lower()
 
             # Tries several common date formats (see _DATE_FORMATS) — optional field,
             # so a date we still can't parse is dropped rather than failing the row.
@@ -394,7 +471,7 @@ class ClientViewSet(viewsets.ModelViewSet):
             coach = coaches_by_email.get(coach_email)
 
             try:
-                Client.objects.create(
+                client_obj = Client.objects.create(
                     workspace=request.user.workspace,
                     coach=coach,
                     first_name=first,
@@ -413,6 +490,7 @@ class ClientViewSet(viewsets.ModelViewSet):
                     birth_date=birth_date,
                     primary_address=primary_address,
                     tags=tags,
+                    communication_tags=communication_tags,
                     status=client_status,
                     active_flag=active,
                     notes=row.get("notes", "").strip(),
@@ -420,6 +498,21 @@ class ClientViewSet(viewsets.ModelViewSet):
                 created += 1
                 existing_emails.add(email_key)
                 existing_names.add(name_key)
+                if pipeline_raw and not pipeline_slug:
+                    warnings.append({
+                        "row": i,
+                        "warning": f'"{display_name}" — pipeline value "{pipeline_raw}" didn\'t match any '
+                                   f'configured stage (Settings → Pipeline); client was imported without a deal.',
+                    })
+                elif pipeline_slug:
+                    deal = Deal.objects.create(
+                        workspace=request.user.workspace, client=client_obj,
+                        coach=coach, stage=pipeline_slug,
+                    )
+                    StageHistory.objects.create(
+                        workspace=request.user.workspace, deal=deal,
+                        to_stage=pipeline_slug, changed_by=request.user,
+                    )
                 if recovered is not None:
                     warnings.append({
                         "row": i,
@@ -1012,6 +1105,15 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
         client = get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
         serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        was_visible = serializer.instance.visible_to_client
+        goal = serializer.save()
+        # Only the share action itself (False -> True) notifies — editing an
+        # already-shared goal's title/date, or unsharing it, stays silent.
+        if not was_visible and goal.visible_to_client:
+            from tasks.email import send_goal_shared_email
+            send_goal_shared_email(str(goal.id))
 
 
 # ── Email Communication tab ─────────────────────────────────────────────────────

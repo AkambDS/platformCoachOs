@@ -9,7 +9,7 @@ def capture_error(exc, workspace=None, user=None, endpoint="", source="api", sev
     """Write one ErrorLog row. Never raises — logging must not break the request."""
     try:
         from apps.accounts.models import ErrorLog
-        ErrorLog.objects.create(
+        entry = ErrorLog.objects.create(
             workspace=workspace,
             user=user,
             severity=severity,
@@ -21,6 +21,19 @@ def capture_error(exc, workspace=None, user=None, endpoint="", source="api", sev
         )
     except Exception:
         logger.exception("ErrorLog.capture_error failed")
+        return
+
+    # Real-time alert — nobody was watching the super-admin dashboard while a live
+    # customer hit this, so it needs to reach someone immediately rather than sit in
+    # the Error Log tab until the next time a human happens to check it. Runs inline
+    # (matches how every other email task in this codebase is triggered, e.g.
+    # send_invoice_email) — its own try/except means a slow or failed send never
+    # affects the ErrorLog write above or the original request/response.
+    try:
+        from tasks.email import send_error_alert_email
+        send_error_alert_email(str(entry.id))
+    except Exception:
+        logger.exception("send_error_alert_email dispatch failed")
 
 
 def drf_exception_handler(exc, context):

@@ -72,11 +72,15 @@ class AssessmentSerializer(serializers.ModelSerializer):
 class ClientGoalSerializer(serializers.ModelSerializer):
     progress_count = serializers.IntegerField(
         source="progress_entries.count", read_only=True)
+    # Model keeps target_date nullable for old rows created before this was required —
+    # enforced here instead so new creates/full updates can't skip it (PATCH from the
+    # goals list's Share toggle stays partial, so this doesn't block that).
+    target_date = serializers.DateField(required=True)
 
     class Meta:
         model  = ClientGoal
         fields = ["id", "title", "description", "target_date",
-                  "status", "created_by", "created_at", "progress_count"]
+                  "status", "visible_to_client", "created_by", "created_at", "progress_count"]
         read_only_fields = ["id", "created_at", "created_by"]
 
 
@@ -90,15 +94,17 @@ class CommitmentSerializer(serializers.ModelSerializer):
 class ClientListSerializer(serializers.ModelSerializer):
     """Lightweight serializer for list views."""
     coach_name         = serializers.CharField(source="coach.full_name", read_only=True)
-    last_activity_type = serializers.CharField(read_only=True, allow_null=True, default=None)
-    last_activity_at   = serializers.DateTimeField(read_only=True, allow_null=True, default=None)
+    # Annotated in ClientViewSet.get_queryset — the client's most-recently-updated
+    # pipeline deal, if any (a client isn't required to have one).
+    pipeline_stage     = serializers.CharField(read_only=True, allow_null=True, default=None)
+    pipeline_deal_id   = serializers.UUIDField(read_only=True, allow_null=True, default=None)
 
     class Meta:
         model  = Client
         fields = ["id", "first_name", "last_name", "job_title", "company", "email",
                   "phone", "active_flag", "status", "portal_access", "lead_source",
-                  "tags", "coach_name", "created_at",
-                  "last_activity_type", "last_activity_at"]
+                  "tags", "communication_tags", "coach_name", "created_at",
+                  "pipeline_stage", "pipeline_deal_id"]
 
 
 class ClientDetailSerializer(serializers.ModelSerializer):

@@ -11,11 +11,12 @@ from .serializers import (
     BrandingSerializer, SchedulingSerializer, WorkspaceSerializer,
     PipelineStageConfigSerializer, ActivityTypeConfigSerializer,
     ClientStatusConfigSerializer, ClientTagConfigSerializer,
+    CommunicationTagConfigSerializer, LeadSourceConfigSerializer,
     AffiliationConfigSerializer,
 )
 from apps.pipeline.models import PipelineStageConfig
 from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES, AffiliationConfig
-from apps.clients.models import ClientStatusConfig, ClientTagConfig
+from apps.clients.models import ClientStatusConfig, ClientTagConfig, CommunicationTagConfig, LeadSourceConfig
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
 
 
@@ -636,11 +637,12 @@ def email_preview(request):
     return Response({"html": html})
 
 
+_INACTIVE_GREY = "#b8b2ab"  # also the app-wide fallback color for an unrecognized status
 _BUILTIN_CLIENT_STATUSES = [
-    {"label": "Lead",     "color": "#8c8279", "sort_order": 0},
-    {"label": "Active",   "color": "#4a7c59", "sort_order": 1},
-    {"label": "Inactive", "color": "#b8b2ab", "sort_order": 2},
-    {"label": "Archive",  "color": "#c8c4bc", "sort_order": 3},
+    {"label": "Lead",     "color": "#8c8279",     "sort_order": 0},
+    {"label": "Active",   "color": "#4a7c59",     "sort_order": 1},
+    {"label": "Inactive", "color": _INACTIVE_GREY, "sort_order": 2},
+    {"label": "Archive",  "color": _INACTIVE_GREY, "sort_order": 3},
 ]
 
 
@@ -731,6 +733,113 @@ def client_tag_config_detail(request, pk):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
     ser = ClientTagConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def communication_tag_configs(request):
+    """GET /api/settings/communication-tags/ — list; POST — create tag.
+    A second, independent tag set from client-tags (Client.communication_tags)."""
+    workspace = request.user.workspace
+
+    if request.method == "GET":
+        qs = CommunicationTagConfig.objects.filter(workspace=workspace)
+        return Response(CommunicationTagConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = CommunicationTagConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def communication_tag_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/communication-tags/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = CommunicationTagConfig.objects.get(pk=pk, workspace=workspace)
+    except CommunicationTagConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = CommunicationTagConfigSerializer(obj, data=request.data, partial=True)
+    if ser.is_valid():
+        ser.save()
+        return Response(ser.data)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+_BUILTIN_LEAD_SOURCES = [
+    # Lowercase to exactly match Client.lead_source values already stored under the old
+    # hardcoded LEAD_SOURCES array — changing casing here would silently break the
+    # dropdown match for every already-saved client.
+    {"label": "referral",       "sort_order": 0},
+    {"label": "website",        "sort_order": 1},
+    {"label": "linkedin",       "sort_order": 2},
+    {"label": "conference",     "sort_order": 3},
+    {"label": "cold outreach",  "sort_order": 4},
+    {"label": "other",          "sort_order": 5},
+]
+
+
+def _seed_lead_sources(workspace):
+    if LeadSourceConfig.objects.filter(workspace=workspace, is_builtin=True).exists():
+        return
+    for s in _BUILTIN_LEAD_SOURCES:
+        LeadSourceConfig.objects.get_or_create(
+            workspace=workspace, label=s["label"],
+            defaults={**s, "is_builtin": True},
+        )
+
+
+@api_view(["GET", "POST"])
+@permission_classes([IsWorkspaceMember])
+def lead_source_configs(request):
+    """GET /api/settings/lead-sources/ — list; POST — create custom lead source."""
+    workspace = request.user.workspace
+    _seed_lead_sources(workspace)
+
+    if request.method == "GET":
+        qs = LeadSourceConfig.objects.filter(workspace=workspace)
+        return Response(LeadSourceConfigSerializer(qs, many=True).data)
+
+    if request.user.role != "business_owner":
+        return Response({"detail": "Forbidden."}, status=status.HTTP_403_FORBIDDEN)
+    ser = LeadSourceConfigSerializer(data=request.data)
+    if ser.is_valid():
+        ser.save(workspace=workspace, is_builtin=False)
+        return Response(ser.data, status=status.HTTP_201_CREATED)
+    return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+@api_view(["PATCH", "DELETE"])
+@permission_classes([IsBusinessOwner])
+def lead_source_config_detail(request, pk):
+    """PATCH/DELETE /api/settings/lead-sources/<pk>/"""
+    workspace = request.user.workspace
+    try:
+        obj = LeadSourceConfig.objects.get(pk=pk, workspace=workspace)
+    except LeadSourceConfig.DoesNotExist:
+        return Response(status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        if obj.is_builtin:
+            return Response({"detail": "Cannot delete built-in lead sources."}, status=status.HTTP_400_BAD_REQUEST)
+        obj.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    ser = LeadSourceConfigSerializer(obj, data=request.data, partial=True)
     if ser.is_valid():
         ser.save()
         return Response(ser.data)

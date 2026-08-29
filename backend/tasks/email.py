@@ -1961,3 +1961,128 @@ def send_contract_signed_notice(draft_id: str):
         logger.info(f"Contract-signed notice sent for draft {draft_id}")
     except Exception as e:
         logger.error(f"send_contract_signed_notice failed: {e}")
+
+
+@shared_task(name="tasks.email.send_goal_shared_email")
+def send_goal_shared_email(goal_id: str):
+    """Notifies the client that their coach shared a new goal — triggered from
+    ClientGoalViewSet.perform_update the moment visible_to_client flips False -> True.
+    Sharing itself only ever set that flag with no other side effect; nothing told the
+    client it happened until they next logged into their portal on their own."""
+    from apps.clients.models import ClientGoal, EmailLog
+    try:
+        goal = ClientGoal.objects.select_related("client", "client__workspace", "client__coach").get(id=goal_id)
+        client = goal.client
+        workspace = client.workspace
+        if not client.email:
+            return
+
+        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
+        portal_url   = f"{frontend_url}/client-portal"
+        coach_name   = client.coach.full_name if client.coach else workspace.name
+        owner_email, owner_name = _owner_info(workspace)
+        logo_url = _logo_src(workspace)
+        target_date_str = goal.target_date.strftime("%B %d, %Y") if goal.target_date else ""
+
+        subject = f"New goal shared — {workspace.name}"
+        plain = (
+            f"Hi {client.first_name},\n\n"
+            f"{coach_name} shared a new goal with you:\n\n"
+            f"{goal.title}\n"
+            + (f"{goal.description}\n\n" if goal.description else "\n")
+            + (f"Target date: {target_date_str}\n\n" if target_date_str else "\n")
+            + f"View it in your client portal: {portal_url}\n\n"
+            f"— {workspace.name}"
+        )
+
+        logo_img = (
+            f'<img src="{logo_url}" alt="{workspace.name}" '
+            f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;" />'
+        ) if logo_url else f'<span style="font-family:Georgia,serif;font-size:20px;color:#f7f4ef;">{workspace.name}</span>'
+        html = f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/></head>
+<body style="margin:0;padding:0;background:#faf8f4;">
+<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
+  <tr><td align="center">
+  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:8px;overflow:hidden;">
+    <tr><td style="background:#1a2f4e;padding:22px;text-align:center;">{logo_img}</td></tr>
+    <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d9b96a,#b8922e);"></td></tr>
+    <tr><td style="padding:32px 36px;font-family:Arial,sans-serif;">
+      <p style="margin:0 0 16px;font-size:15px;color:#3a3530;">Hi {client.first_name},</p>
+      <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.6;">{coach_name} shared a new goal with you:</p>
+      <div style="border:1px solid #ede9e1;border-radius:8px;padding:18px 20px;margin-bottom:24px;">
+        <div style="font-family:Georgia,serif;font-size:19px;color:#16130f;margin-bottom:6px;">{goal.title}</div>
+        {f'<div style="font-size:14px;color:#6e6560;line-height:1.6;margin-bottom:8px;">{goal.description}</div>' if goal.description else ''}
+        {f'<div style="font-size:12.5px;color:#9e9890;">Target date: {target_date_str}</div>' if target_date_str else ''}
+      </div>
+      <a href="{portal_url}" style="display:inline-block;background:#1a2f4e;color:#fff;text-decoration:none;
+         padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">View in Your Portal</a>
+      <p style="margin:28px 0 0;font-size:12.5px;color:#9e9890;">Questions? Reply to this email or contact {owner_name or owner_email}.</p>
+    </td></tr>
+  </table>
+  </td></tr>
+</table>
+</body></html>"""
+
+        msg = EmailMultiAlternatives(
+            subject=subject, body=plain,
+            from_email=_workspace_from_email(workspace),
+            to=[client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Goal-shared email sent to {client.email} for goal {goal_id}")
+
+        EmailLog.log(workspace=workspace, category=EmailLog.Category.GOAL_SHARED,
+                     client=client, subject=subject, recipient_email=client.email,
+                     related_id=goal_id, body_html=html)
+    except Exception as e:
+        logger.error(f"send_goal_shared_email failed: {e}")
+
+
+@shared_task(name="tasks.email.send_error_alert_email")
+def send_error_alert_email(error_log_id):
+    """Fires immediately from apps.accounts.error_logging.capture_error whenever a real
+    (non-warning) error is captured — a live paying customer hitting an error with no
+    one watching the super-admin dashboard is exactly the case this exists for. Emails
+    every platform_admin the same troubleshooting context the Error Log tab shows:
+    the stack trace plus whatever the affected user was doing right before it happened."""
+    from apps.accounts.models import ErrorLog, User
+    from apps.audit.utils import recent_actions_for
+    try:
+        entry = ErrorLog.objects.select_related("user", "workspace").get(id=error_log_id)
+        if entry.severity == "warning":
+            return
+        to_addrs = list(User.objects.filter(role="platform_admin").exclude(email="").values_list("email", flat=True))
+        if not to_addrs:
+            logger.warning("send_error_alert_email: no platform_admin recipients configured")
+            return
+
+        actions = recent_actions_for(entry.user, entry.workspace, entry.created_at)
+        actions_block = "\n".join(
+            f"  {a['created_at'].strftime('%H:%M:%S')}  {a['action']}"
+            f"{' — ' + a['client_name'] if a['client_name'] else ''}"
+            f"{' (' + ', '.join(f'{k}={v}' for k, v in a['metadata'].items()) + ')' if a['metadata'] else ''}"
+            for a in actions
+        ) or "  (no prior actions recorded for this user)"
+
+        subject = f"[CoachOS {entry.severity.upper()}] {entry.error_type} — {entry.workspace.name if entry.workspace else 'no workspace'}"
+        body = (
+            f"{entry.severity.upper()} in {entry.source} at {entry.created_at.strftime('%Y-%m-%d %H:%M:%S %Z')}\n\n"
+            f"Workspace: {entry.workspace.name if entry.workspace else '—'}\n"
+            f"User:      {entry.user.full_name if entry.user else '—'} ({entry.user.email if entry.user else '—'})\n"
+            f"Endpoint:  {entry.endpoint or '—'}\n"
+            f"Error:     {entry.error_type}: {entry.message}\n\n"
+            f"User's actions leading up to this:\n{actions_block}\n\n"
+            f"Traceback:\n{entry.traceback or '(none captured)'}\n"
+        )
+        msg = EmailMessage(
+            subject=subject, body=body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            to=to_addrs,
+        )
+        msg.send()
+    except Exception as e:
+        # Must never raise — this runs inline in capture_error, itself inline in the
+        # request/exception-handling path of the very error being reported.
+        logger.error(f"send_error_alert_email failed: {e}")

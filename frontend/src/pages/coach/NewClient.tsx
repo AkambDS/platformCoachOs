@@ -1,11 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, settingsApi, authApi } from '../../api/client'
+import { clientsApi, settingsApi, authApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { useToast } from '../../components/ui'
 
-const LEAD_SOURCES = ['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other']
 const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
 
 export default function NewClient() {
@@ -25,6 +24,18 @@ export default function NewClient() {
     staleTime: 0,
   })
 
+  const { data: commTagConfigs = [] } = useQuery({
+    queryKey: ['communication-tag-configs'],
+    queryFn: () => settingsApi.getCommunicationTags().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const { data: leadSourceConfigs = [] } = useQuery({
+    queryKey: ['lead-source-configs'],
+    queryFn: () => settingsApi.getLeadSources().then(r => r.data),
+    staleTime: 0,
+  })
+
   const { data: teamMembers = [] } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -35,8 +46,10 @@ export default function NewClient() {
     first_name: '', last_name: '', email: '', email_2: '',
     phone: '', phone_ext: '', phone_type: '',
     phone_2: '', phone_2_ext: '', phone_2_type: '',
-    company: '', job_title: '', lead_source: '', birth_date: '',
-    notes: '', tags: [] as string[], status: 'Lead', create_deal: true,
+    company: '', job_title: '', lead_source: '', referral_name: '', birth_date: '',
+    website: '', linkedin_url: '',
+    notes: '', tags: [] as string[], communication_tags: [] as string[],
+    status: 'Lead', create_deal: true,
     lead_source_other: '',
     address: '', address2: '', city: '', state: '', zip: '',
     coach: '',
@@ -47,15 +60,18 @@ export default function NewClient() {
   const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
   const toggleTag = (t: string) =>
     set('tags', form.tags.includes(t) ? form.tags.filter(x => x !== t) : [...form.tags, t])
+  const toggleCommTag = (t: string) =>
+    set('communication_tags', form.communication_tags.includes(t) ? form.communication_tags.filter(x => x !== t) : [...form.communication_tags, t])
 
   const handleSave = async () => {
     if (!form.first_name || !form.email) { setError('First name and email are required'); return }
     setSaving(true); setError('')
     try {
-      const { lead_source_other, address, address2, city, state, zip, coach, ...rest } = form
+      const { lead_source_other, address, address2, city, state, zip, coach, create_deal, ...rest } = form
       const merged: any = {
         ...rest,
         lead_source: form.lead_source === 'other' ? (lead_source_other.trim() || 'other') : form.lead_source,
+        ...(form.lead_source !== 'referral' ? { referral_name: '' } : {}),
         ...(coach ? { coach } : {}),
       }
       if (address || address2 || city || state || zip) {
@@ -67,6 +83,20 @@ export default function NewClient() {
       )
       const res = await clientsApi.create(payload)
       qc.invalidateQueries({ queryKey: ['clients'] })
+      // "Create deal" only set a checkbox in local form state — nothing actually called the
+      // Pipeline API, so checking it silently created no deal at all. The endpoint itself
+      // needs nothing beyond `client`: stage defaults to lead_new, workspace/coach are
+      // injected server-side (DealSerializer.create).
+      if (create_deal) {
+        try {
+          await pipelineApi.create({ client: res.data.id, ...(coach ? { coach } : {}) })
+          qc.invalidateQueries({ queryKey: ['pipeline'] })
+        } catch {
+          showToast('Client created, but the pipeline deal failed to create — add it from the Pipeline tab', 'error')
+          navigate(`/clients/${res.data.id}`)
+          return
+        }
+      }
       showToast('Client created')
       navigate(`/clients/${res.data.id}`)
     } catch (e: any) {
@@ -190,7 +220,7 @@ export default function NewClient() {
                 <input className="finput" value={form.company} onChange={e => set('company', e.target.value)} placeholder="NovaBridge Capital" />
               </div>
               <div className="fgroup">
-                <label className="flabel">Status</label>
+                <label className="flabel">Client Status</label>
                 <select className="fselect" value={form.status} onChange={e => set('status', e.target.value)}>
                   {(statusConfigs as any[]).map((s: any) => (
                     <option key={s.label} value={s.label}>{s.label}</option>
@@ -204,8 +234,8 @@ export default function NewClient() {
                 <label className="flabel">Lead Source</label>
                 <select className="fselect" value={form.lead_source} onChange={e => set('lead_source', e.target.value)}>
                   <option value="">Select source…</option>
-                  {LEAD_SOURCES.map(s => (
-                    <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                  {(leadSourceConfigs as any[]).map((s: any) => (
+                    <option key={s.label} value={s.label}>{s.label.charAt(0).toUpperCase() + s.label.slice(1)}</option>
                   ))}
                 </select>
                 {form.lead_source === 'other' && (
@@ -218,9 +248,24 @@ export default function NewClient() {
                   />
                 )}
               </div>
+              {form.lead_source === 'referral' && (
+                <div className="fgroup">
+                  <label className="flabel">Referred By</label>
+                  <input className="finput" placeholder="Name of the person who referred them"
+                    value={form.referral_name} onChange={e => set('referral_name', e.target.value)} />
+                </div>
+              )}
               <div className="fgroup">
                 <label className="flabel">Birth Date</label>
                 <input className="finput" type="date" value={form.birth_date} onChange={e => set('birth_date', e.target.value)} />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">Website</label>
+                <input className="finput" placeholder="https://example.com" value={form.website} onChange={e => set('website', e.target.value)} />
+              </div>
+              <div className="fgroup">
+                <label className="flabel">LinkedIn</label>
+                <input className="finput" placeholder="https://linkedin.com/in/…" value={form.linkedin_url} onChange={e => set('linkedin_url', e.target.value)} />
               </div>
             </div>
           </div>
@@ -271,7 +316,7 @@ export default function NewClient() {
               </select>
             </div>
             <div className="fgroup" style={{ marginBottom: 20 }}>
-              <label className="flabel">Tags</label>
+              <label className="flabel">Client Tags</label>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
                 {(tagConfigs as any[]).map((tc: any) => {
                   const selected = form.tags.includes(tc.name)
@@ -292,6 +337,32 @@ export default function NewClient() {
                   )
                 })}
                 {(tagConfigs as any[]).length === 0 && (
+                  <div style={{ fontSize: 12, color: 'var(--muted)' }}>No tags configured — add some in Settings → Tags</div>
+                )}
+              </div>
+            </div>
+            <div className="fgroup" style={{ marginBottom: 20 }}>
+              <label className="flabel">Communication Tags</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                {(commTagConfigs as any[]).map((tc: any) => {
+                  const selected = form.communication_tags.includes(tc.name)
+                  return (
+                    <button
+                      key={tc.name}
+                      type="button"
+                      onClick={() => toggleCommTag(tc.name)}
+                      style={{
+                        padding: '5px 14px', fontSize: 12, cursor: 'pointer',
+                        fontFamily: "'DM Sans', sans-serif", transition: 'all .15s',
+                        border: `1px solid ${tc.color}60`,
+                        background: selected ? tc.color : tc.color + '18',
+                        color: selected ? '#fff' : tc.color,
+                        fontWeight: selected ? 600 : 400,
+                      }}
+                    >{tc.name}</button>
+                  )
+                })}
+                {(commTagConfigs as any[]).length === 0 && (
                   <div style={{ fontSize: 12, color: 'var(--muted)' }}>No tags configured — add some in Settings → Tags</div>
                 )}
               </div>

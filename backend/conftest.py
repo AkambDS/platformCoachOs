@@ -57,3 +57,23 @@ def api_client(db, business_owner):
     refresh["role"]         = business_owner.role
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {str(refresh.access_token)}")
     return client
+
+
+@pytest.fixture
+def portal_api_client(db):
+    """Factory: portal_api_client(client_record, workspace) -> APIClient authenticated
+    as that client via a portal_client-scoped JWT (mirrors PortalLoginView's token)."""
+    from rest_framework.test import APIClient
+    from rest_framework_simplejwt.tokens import AccessToken
+
+    def _make(client_record, workspace):
+        token = AccessToken()
+        token["client_id"]    = str(client_record.id)
+        token["workspace_id"] = str(workspace.id)
+        token["role"]         = "portal_client"
+        token["email"]        = client_record.email
+        api = APIClient()
+        api.credentials(HTTP_AUTHORIZATION=f"Bearer {str(token)}")
+        return api
+
+    return _make

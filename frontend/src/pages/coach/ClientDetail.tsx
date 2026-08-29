@@ -397,13 +397,18 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
     description:      goal?.description      || '',
     target_date:      goal?.target_date ? goal.target_date.slice(0, 10) : '',
     status:           goal?.status           || 'active',
-    visible_to_client: goal?.visible_to_client ?? false,
   })
   const [saving, setSaving] = useState(false)
+  const [errors, setErrors] = useState<{ title?: string; target_date?: string }>({})
   const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
 
   const handleSave = async () => {
-    if (!form.title) return
+    const nextErrors: { title?: string; target_date?: string } = {}
+    if (!form.title.trim()) nextErrors.title = 'Goal title is required.'
+    if (!form.target_date) nextErrors.target_date = 'Target date is required.'
+    setErrors(nextErrors)
+    if (Object.keys(nextErrors).length > 0) return
+
     setSaving(true)
     try {
       if (isEdit) {
@@ -428,6 +433,7 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
       <div className="fgroup">
         <label className="flabel">Goal Title</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Improve executive presence" />
+        {errors.title && <div style={{ fontSize: 12, color: 'var(--danger, #c0392b)', marginTop: 4 }}>{errors.title}</div>}
       </div>
       <div className="fgroup">
         <label className="flabel">Description</label>
@@ -435,8 +441,9 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
       </div>
       <div className="fgrid">
         <div className="fgroup">
-          <label className="flabel">Target Date</label>
+          <label className="flabel">Target Date <span style={{ color: 'var(--danger, #c0392b)' }}>*</span></label>
           <input className="finput" type="date" value={form.target_date} onChange={e => set('target_date', e.target.value)} />
+          {errors.target_date && <div style={{ fontSize: 12, color: 'var(--danger, #c0392b)', marginTop: 4 }}>{errors.target_date}</div>}
         </div>
         <div className="fgroup">
           <label className="flabel">Status</label>
@@ -444,14 +451,6 @@ function GoalModal({ clientId, goal, onClose, onSaved }: any) {
             {GOAL_STATUSES.map(s => <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
           </select>
         </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '12px 0 4px', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-        <input type="checkbox" id="goal-visible" checked={form.visible_to_client}
-          onChange={e => setForm(f => ({ ...f, visible_to_client: e.target.checked }))}
-          style={{ width: 15, height: 15, accentColor: 'var(--gold)', cursor: 'pointer' }} />
-        <label htmlFor="goal-visible" style={{ fontSize: 13, color: 'var(--ink)', cursor: 'pointer', userSelect: 'none' }}>
-          Share with client <span style={{ fontSize: 12, color: 'var(--muted)' }}>(visible in client portal)</span>
-        </label>
       </div>
     </Modal>
   )
@@ -1911,8 +1910,13 @@ export default function ClientDetail() {
 
   const { data: goals } = useQuery<any, Error>({
     queryKey: ['client-goals', id],
+    // goalList (below) is only ever rendered inside the Goals tab itself — fetching it
+    // on Overview too (as this previously did) meant every profile view silently hit
+    // GET /clients/{id}/goals/, and that endpoint logs a "viewed_goals" audit event on
+    // every call regardless of why it was fetched. The result: "viewed goals" dominated
+    // the audit log for clients who were never actually taken to that tab.
     queryFn: () => clientsApi.listGoals(id!).then(r => r.data),
-    enabled: tab === 'Goals' || tab === 'Overview',
+    enabled: tab === 'Goals',
   })
 
   const { data: invoices } = useQuery<any, Error>({
@@ -1967,6 +1971,23 @@ export default function ClientDetail() {
     return m
   }, [tagConfigs])
 
+  const { data: commTagConfigs = [], refetch: refetchCommTags } = useQuery({
+    queryKey: ['communication-tag-configs'],
+    queryFn: () => settingsApi.getCommunicationTags().then(r => r.data),
+    staleTime: 0,
+  })
+  const commTagMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    ;(commTagConfigs as any[]).forEach((t: any) => { m[t.name] = t.color })
+    return m
+  }, [commTagConfigs])
+
+  const { data: leadSourceConfigs = [] } = useQuery({
+    queryKey: ['lead-source-configs'],
+    queryFn: () => settingsApi.getLeadSources().then(r => r.data),
+    staleTime: 0,
+  })
+
   const { data: teamMembers = [] } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -1986,6 +2007,20 @@ export default function ClientDetail() {
       setEditForm((f: any) => ({ ...f, tags: [...(f?.tags || []), name] }))
       setNewTagName('')
     } finally { setAddingTag(false) }
+  }
+
+  const [newCommTagName, setNewCommTagName] = useState('')
+  const [addingCommTag, setAddingCommTag] = useState(false)
+  const handleAddCommTag = async () => {
+    const name = newCommTagName.trim()
+    if (!name) return
+    setAddingCommTag(true)
+    try {
+      await settingsApi.createCommunicationTag({ name, color: '#7c4d9f' })
+      await refetchCommTags()
+      setEditForm((f: any) => ({ ...f, communication_tags: [...(f?.communication_tags || []), name] }))
+      setNewCommTagName('')
+    } finally { setAddingCommTag(false) }
   }
 
   const handleSave = async () => {
@@ -2167,10 +2202,15 @@ export default function ClientDetail() {
 
         {/* ── Overview ── */}
         {tab === 'Overview' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 320px', gap: 20, alignItems: 'start' }}>
+          <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+            {/* Left and right columns flow independently — each sized to its own content
+                rather than sharing row tracks, so a long Client Details form (in edit mode
+                especially) doesn't stretch Engagement History's row and strand Pipeline Deal
+                far below it. */}
+            <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
 
-              {/* CLIENT DETAILS — row 1, col 1 */}
-              <div className="card" style={{ gridColumn: 1, gridRow: 1 }}>
+              {/* CLIENT DETAILS */}
+              <div className="card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Client Details</span>
                   {!editMode ? (
@@ -2188,6 +2228,16 @@ export default function ClientDetail() {
 
                 {editMode ? (
                   <div style={{ padding: '20px 24px' }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">First Name</label>
+                        <input className="finput" value={ef.first_name || ''} onChange={e => setEditForm((f: any) => ({ ...f, first_name: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Last Name</label>
+                        <input className="finput" value={ef.last_name || ''} onChange={e => setEditForm((f: any) => ({ ...f, last_name: e.target.value }))} />
+                      </div>
+                    </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
                       <div className="fgroup" style={{ marginBottom: 14 }}>
                         <label className="flabel">Email 1</label>
@@ -2236,7 +2286,7 @@ export default function ClientDetail() {
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0 16px' }}>
                       <div className="fgroup" style={{ marginBottom: 14 }}>
-                        <label className="flabel">Status</label>
+                        <label className="flabel">Client Status</label>
                         <select className="fselect" value={(ef as any).status || 'Lead'} onChange={e => setEditForm((f: any) => ({ ...f, status: e.target.value }))}>
                           {(statusConfigs as any[]).map((s: any) => <option key={s.label} value={s.label}>{s.label}</option>)}
                           {(statusConfigs as any[]).length === 0 && <option value="Lead">Lead</option>}
@@ -2251,7 +2301,7 @@ export default function ClientDetail() {
                         <input className="finput" value={ef.job_title || ''} onChange={e => setEditForm((f: any) => ({ ...f, job_title: e.target.value }))} />
                       </div>
                       {(() => {
-                        const KNOWN = ['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other', '']
+                        const KNOWN = (leadSourceConfigs as any[]).map((s: any) => s.label).concat([''])
                         const cur = (ef as any).lead_source || ''
                         const isCustom = cur !== '' && !KNOWN.includes(cur)
                         const dropVal = isCustom ? 'other' : cur
@@ -2259,26 +2309,48 @@ export default function ClientDetail() {
                           <div className="fgroup" style={{ marginBottom: 14 }}>
                             <label className="flabel">Lead Source</label>
                             <select className="fselect" value={dropVal}
-                              onChange={e => {
-                                if (e.target.value === 'other') setEditForm((f: any) => ({ ...f, lead_source: '' }))
-                                else setEditForm((f: any) => ({ ...f, lead_source: e.target.value }))
-                              }}>
+                              onChange={e => setEditForm((f: any) => ({ ...f, lead_source: e.target.value }))}>
                               <option value="">Select source…</option>
-                              {['referral', 'website', 'linkedin', 'conference', 'cold outreach', 'other'].map(s => (
-                                <option key={s} value={s}>{s.charAt(0).toUpperCase() + s.slice(1)}</option>
+                              {(leadSourceConfigs as any[]).map((s: any) => (
+                                <option key={s.label} value={s.label}>{s.label.charAt(0).toUpperCase() + s.label.slice(1)}</option>
                               ))}
                             </select>
                             {dropVal === 'other' && (
+                              // "other" is itself a valid, already-seeded lead source label, so selecting
+                              // it needs no special-casing on change — the previous version cleared
+                              // lead_source to '' here specifically to trigger this box, but dropVal is
+                              // derived FROM lead_source, so clearing it made the dropdown reset to blank
+                              // on the very next render and this box never actually appeared. Left as
+                              // literal "other" (not typed into yet), show the placeholder instead of the
+                              // word "other" sitting in the box.
                               <input className="finput" style={{ marginTop: 8 }} placeholder="Specify…"
-                                value={isCustom ? cur : (ef as any).lead_source || ''}
+                                value={cur === 'other' ? '' : cur}
                                 onChange={e => setEditForm((f: any) => ({ ...f, lead_source: e.target.value }))} />
                             )}
                           </div>
                         )
                       })()}
+                      {(ef as any).lead_source === 'referral' && (
+                        <div className="fgroup" style={{ marginBottom: 14 }}>
+                          <label className="flabel">Referred By</label>
+                          <input className="finput" placeholder="Name of the person who referred them"
+                            value={(ef as any).referral_name || ''}
+                            onChange={e => setEditForm((f: any) => ({ ...f, referral_name: e.target.value }))} />
+                        </div>
+                      )}
                       <div className="fgroup" style={{ marginBottom: 14 }}>
                         <label className="flabel">Birth Date</label>
                         <input className="finput" type="date" value={(ef as any).birth_date || ''} onChange={e => setEditForm((f: any) => ({ ...f, birth_date: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Website</label>
+                        <input className="finput" placeholder="https://example.com"
+                          value={(ef as any).website || ''} onChange={e => setEditForm((f: any) => ({ ...f, website: e.target.value }))} />
+                      </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">LinkedIn</label>
+                        <input className="finput" placeholder="https://linkedin.com/in/…"
+                          value={(ef as any).linkedin_url || ''} onChange={e => setEditForm((f: any) => ({ ...f, linkedin_url: e.target.value }))} />
                       </div>
                     </div>
                     {(() => {
@@ -2320,7 +2392,7 @@ export default function ClientDetail() {
                       </select>
                     </div>
                     <div className="fgroup">
-                      <label className="flabel">Tags</label>
+                      <label className="flabel">Client Tags</label>
                       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
                         {(tagConfigs as any[]).map((tc: any) => {
                           const selected = (ef.tags || []).includes(tc.name)
@@ -2355,6 +2427,53 @@ export default function ClientDetail() {
                         </button>
                       </div>
                     </div>
+                    <div className="fgroup">
+                      <label className="flabel">Communication Tags</label>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 6 }}>
+                        {(commTagConfigs as any[]).map((tc: any) => {
+                          const selected = ((ef as any).communication_tags || []).includes(tc.name)
+                          return (
+                            <button key={tc.name} type="button"
+                              onClick={() => setEditForm((f: any) => ({
+                                ...f,
+                                communication_tags: selected
+                                  ? f.communication_tags.filter((t: string) => t !== tc.name)
+                                  : [...(f.communication_tags || []), tc.name]
+                              }))}
+                              style={{
+                                padding: '4px 12px', fontSize: 12, cursor: 'pointer',
+                                fontFamily: "'DM Sans', sans-serif",
+                                border: `1px solid ${tc.color}60`,
+                                background: selected ? tc.color : tc.color + '18',
+                                color: selected ? '#fff' : tc.color,
+                                fontWeight: selected ? 600 : 400,
+                              }}>{tc.name}</button>
+                          )
+                        })}
+                      </div>
+                      <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+                        <input
+                          className="finput"
+                          style={{ flex: 1, fontSize: 12, padding: '5px 10px' }}
+                          placeholder="New tag name…"
+                          value={newCommTagName}
+                          onChange={e => setNewCommTagName(e.target.value)}
+                          onKeyDown={e => e.key === 'Enter' && (e.preventDefault(), handleAddCommTag())}
+                        />
+                        <button type="button" className="btn btn-outline btn-sm" onClick={handleAddCommTag} disabled={addingCommTag || !newCommTagName.trim()}>
+                          {addingCommTag ? '…' : '+ Add'}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="fgroup">
+                      <label className="flabel">Notes</label>
+                      <textarea
+                        className="ftextarea" rows={3}
+                        value={(ef as any).notes || ''}
+                        onChange={e => setEditForm((f: any) => ({ ...f, notes: e.target.value }))}
+                        placeholder="Initial context, referral source, coaching goals…"
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div style={{ padding: '16px 24px' }}>
@@ -2375,9 +2494,13 @@ export default function ClientDetail() {
                           ...((client as any).phone_2 ? [{ label: 'Phone 2', value: fmtPhone((client as any).phone_2, (client as any).phone_2_ext || '', (client as any).phone_2_type || '') }] : []),
                           { label: 'Company', value: client.company || '—' },
                           { label: 'Title',   value: client.job_title || '—' },
-                          { label: 'Status',  value: (client as any).status || 'Lead' },
+                          { label: 'Pipeline', value: deal ? (stageMap[deal.stage]?.label || deal.stage) : '—' },
                           { label: 'Source',  value: client.lead_source ? client.lead_source.charAt(0).toUpperCase() + client.lead_source.slice(1) : '—' },
+                          ...(client.lead_source === 'referral' && (client as any).referral_name
+                            ? [{ label: 'Referred By', value: (client as any).referral_name }] : []),
                           { label: 'Birth Date', value: client.birth_date ? fmtDate(client.birth_date) : '—' },
+                          { label: 'Website', value: (client as any).website || '—' },
+                          { label: 'LinkedIn', value: (client as any).linkedin_url || '—' },
                           { label: 'Coach',   value: (client as any).coach_name || '—' },
                           { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
                         ]
@@ -2401,7 +2524,7 @@ export default function ClientDetail() {
                     })()}
                     {(client.tags || []).length > 0 && (
                       <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0' }}>
-                        <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Tags</span>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Client Tags</span>
                         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                           {(client.tags || []).map((t: string) => {
                             const color = tagMap[t]
@@ -2412,12 +2535,68 @@ export default function ClientDetail() {
                         </div>
                       </div>
                     )}
+                    {((client as any).communication_tags || []).length > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0' }}>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 6 }}>Communication Tags</span>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {((client as any).communication_tags || []).map((t: string) => {
+                            const color = commTagMap[t]
+                            return color ? (
+                              <span key={t} style={{ fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 10, background: color + '20', color, border: `1px solid ${color}40` }}>{t}</span>
+                            ) : <span key={t} className="tag">{t}</span>
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    {client.notes && (
+                      <div style={{ display: 'flex', flexDirection: 'column', padding: '10px 0' }}>
+                        <span style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 3 }}>Notes</span>
+                        <span style={{ fontSize: 13, color: 'var(--ink)', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{client.notes}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* ENGAGEMENT HISTORY — row 1, col 2 */}
-              <div className="card" style={{ gridColumn: 2, gridRow: 1 }}>
+              {/* INVOICES */}
+              {canViewInvoices && (
+              <div className="card">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                    Invoices{invList.length > 5 ? ` (${top5Invoices.length} of ${invList.length})` : ''}
+                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    {invList.length > 5 && (
+                      <button onClick={() => setTab('Invoices')}
+                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
+                        View all →
+                      </button>
+                    )}
+                    {canEditInvoices && (
+                      <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>+ New</button>
+                    )}
+                  </div>
+                </div>
+                {invList.length === 0 ? (
+                  <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>No invoices yet.</div>
+                ) : (
+                  <div style={{ padding: 16, overflowX: 'auto' }}>
+                    <InvoiceTables
+                      invoices={top5Invoices} clients={[]} navigate={navigate}
+                      handleRemind={handleRemind} reminding={reminding}
+                      showClientColumn={false}
+                    />
+                  </div>
+                )}
+              </div>
+              )}
+
+            </div>
+
+            <div style={{ width: 320, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 20 }}>
+
+              {/* ENGAGEMENT HISTORY */}
+              <div className="card">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                   <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Engagement History</span>
                   <button onClick={() => setTab('Activities')}
@@ -2469,47 +2648,14 @@ export default function ClientDetail() {
                 </div>
               </div>
 
-              {/* INVOICES — row 2, col 1 */}
-              {canViewInvoices && (
-              <div className="card" style={{ gridColumn: 1, gridRow: 2 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
-                  <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                    Invoices{invList.length > 5 ? ` (${top5Invoices.length} of ${invList.length})` : ''}
-                  </span>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                    {invList.length > 5 && (
-                      <button onClick={() => setTab('Invoices')}
-                        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 12, color: 'var(--muted)', fontFamily: "'DM Sans', sans-serif" }}>
-                        View all →
-                      </button>
-                    )}
-                    {canEditInvoices && (
-                      <button className="btn btn-dark btn-sm" onClick={() => navigate('/invoices/new', { state: { clientId: id } })}>+ New</button>
-                    )}
-                  </div>
-                </div>
-                {invList.length === 0 ? (
-                  <div style={{ padding: '20px', fontSize: 13, color: 'var(--muted)' }}>No invoices yet.</div>
-                ) : (
-                  <div style={{ padding: 16, overflowX: 'auto' }}>
-                    <InvoiceTables
-                      invoices={top5Invoices} clients={[]} navigate={navigate}
-                      handleRemind={handleRemind} reminding={reminding}
-                      showClientColumn={false}
-                    />
-                  </div>
-                )}
-              </div>
-              )}
-
-              {/* PIPELINE DEAL — row 2, col 2 */}
+              {/* PIPELINE DEAL */}
               {deal && (() => {
                 const stageConfig = stageMap[deal.stage]
                 const stageLabel  = stageConfig?.label || (deal.stage || '').replace(/_/g, ' ')
                 const stageColor  = stageConfig?.color || '#1B3A6B'
                 const dealValue   = deal.deal_value ? parseFloat(deal.deal_value) : null
                 return (
-                  <div className="card" style={{ gridColumn: 2, gridRow: 2 }}>
+                  <div className="card">
                     <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)' }}>
                       <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.14em', textTransform: 'uppercase', color: 'var(--muted)' }}>Pipeline Deal</span>
                     </div>
@@ -2529,6 +2675,7 @@ export default function ClientDetail() {
                 )
               })()}
 
+            </div>
           </div>
         )}
 
@@ -2584,7 +2731,19 @@ export default function ClientDetail() {
                       {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Target: {fmtDate(g.target_date)}</div>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-                      {g.visible_to_client && <span className="pill pill-green" style={{ fontSize: 10 }}>Shared</span>}
+                      <button
+                        className={`pill ${g.visible_to_client ? 'pill-green' : ''}`}
+                        style={{
+                          fontSize: 10, cursor: 'pointer', border: g.visible_to_client ? 'none' : '1px solid var(--border)',
+                          background: g.visible_to_client ? undefined : 'transparent', color: g.visible_to_client ? undefined : 'var(--muted)',
+                        }}
+                        title={g.visible_to_client ? 'Visible to client in their portal — click to unshare' : 'Not shared — click to share with client'}
+                        onClick={async () => {
+                          await clientsApi.updateGoal(id!, g.id, { visible_to_client: !g.visible_to_client })
+                          qc.invalidateQueries({ queryKey: ['client-goals', id] })
+                          showToast(g.visible_to_client ? 'Goal unshared' : 'Goal shared with client')
+                        }}
+                      >{g.visible_to_client ? 'Shared' : 'Share with client'}</button>
                       <StatusBadge status={g.status} />
                       <button
                         className="btn btn-ghost btn-sm"

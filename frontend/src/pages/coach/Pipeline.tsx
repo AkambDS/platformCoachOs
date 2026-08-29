@@ -16,6 +16,15 @@ function fmtDate(d: string) {
   return new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+const DEAL_TYPE_LABELS: Record<string, string> = {
+  '1_1_coaching':      '1:1 Coaching',
+  'group_program':     'Group Program',
+  'corporate_training': 'Corporate Training',
+  'workshop':          'Workshop',
+  'retainer':          'Retainer',
+  'other':             'Other',
+}
+
 const FIELD_LABELS: Record<string, string> = {
   deal_value: 'Deal Value',
   source:     'Source',
@@ -121,7 +130,17 @@ function DealCard({ deal, stageColor, followUpDays, isActive, onClick }: {
         {deal.client_name}
       </div>
       {deal.client_company && (
-        <div style={{ fontSize: 12, color: '#9e9890', marginBottom: 8 }}>{deal.client_company}</div>
+        <div style={{ fontSize: 12, color: '#9e9890', marginBottom: 6 }}>{deal.client_company}</div>
+      )}
+      {deal.deal_type && (
+        // Distinguishes concurrent deals for the same client (e.g. a 1:1 Coaching deal
+        // running alongside a separate Corporate Training deal) — without this, two cards
+        // for the same person were visually identical apart from which column they're in.
+        <div style={{
+          display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '.03em',
+          padding: '2px 8px', borderRadius: 4, marginBottom: 8,
+          background: '#f0ece4', color: '#7a6f5f',
+        }}>{DEAL_TYPE_LABELS[deal.deal_type] || deal.deal_type}</div>
       )}
       {tags.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 8 }}>
@@ -263,6 +282,13 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
             </div>
             {deal.client_company && (
               <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>{deal.client_company}</div>
+            )}
+            {deal.deal_type && (
+              <div style={{
+                display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '.03em',
+                padding: '2px 8px', borderRadius: 4, marginTop: 8,
+                background: 'rgba(255,255,255,.6)', color: '#7a6f5f',
+              }}>{DEAL_TYPE_LABELS[deal.deal_type] || deal.deal_type}</div>
             )}
           </div>
           <div style={{ textAlign: 'right', flexShrink: 0 }}>
@@ -575,10 +601,15 @@ export default function Pipeline() {
         <div style={{ padding: 60, textAlign: 'center', color: 'var(--muted)' }}>Loading…</div>
       ) : viewMode === 'board' ? (
         <div className="pipeline-board" style={{
-          overflowX: 'auto', overflowY: 'visible', padding: '24px 28px 32px',
+          overflowY: 'visible', padding: '24px 28px 32px',
           background: '#f5f4f1', minHeight: 'calc(100vh - 120px)',
         }}>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', minWidth: 'max-content' }}>
+          {/* Fixed-width flex columns forced horizontal scroll once there were more than
+              ~5 stages, hiding whichever stage fell off the right edge. A grid with equal
+              1fr columns instead always fits every stage in the viewport width, at the
+              cost of narrower columns on smaller screens — each column's own deal list
+              scrolls vertically (below) rather than the page needing to scroll sideways. */}
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${Math.max(stages.length, 1)}, minmax(0, 1fr))`, gap: 14 }}>
             {stages.map((stage: any) => {
               const stageDeals   = deals.filter(d => d.stage === stage.slug)
               const stageColor   = stage.color || '#1a2f4e'
@@ -586,14 +617,17 @@ export default function Pipeline() {
               const isActive     = stage.slug === 'active_client'
               const colValue     = stageDeals.reduce((s, d) => s + Number(d.deal_value || 0), 0)
               return (
-                <div key={stage.slug} style={{ width: 240, flexShrink: 0 }}>
+                <div key={stage.slug} style={{ minWidth: 0 }}>
                   <div style={{ paddingBottom: 10, marginBottom: 12, borderBottom: `2.5px solid ${stageColor}` }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', color: 'var(--ink)', textTransform: 'uppercase' }}>
+                      <span style={{
+                        fontSize: 11, fontWeight: 700, letterSpacing: '.1em', color: 'var(--ink)', textTransform: 'uppercase',
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      }} title={stage.label}>
                         {stage.label}
                       </span>
                       <span style={{
-                        fontSize: 11, fontWeight: 700, borderRadius: 10, padding: '2px 8px',
+                        fontSize: 11, fontWeight: 700, borderRadius: 10, padding: '2px 8px', flexShrink: 0, marginLeft: 6,
                         background: stageDeals.length > 0 ? '#e8e5df' : '#f0ece8',
                         color: stageDeals.length > 0 ? 'var(--ink)' : 'var(--muted)',
                       }}>
@@ -606,7 +640,10 @@ export default function Pipeline() {
                       </div>
                     )}
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  <div style={{
+                    display: 'flex', flexDirection: 'column', gap: 10,
+                    maxHeight: 'calc(100vh - 320px)', overflowY: 'auto', paddingRight: 2,
+                  }}>
                     {stageDeals.map(deal => (
                       <DealCard key={deal.id} deal={deal} stageColor={stageColor}
                         followUpDays={followUpDays} isActive={isActive} onClick={() => setSelectedDeal(deal)} />
@@ -633,6 +670,7 @@ export default function Pipeline() {
                 <tr>
                   <th className="pl-th" onClick={() => toggleSort('client_name')}>CLIENT{sortIcon('client_name')}</th>
                   <th className="pl-th" onClick={() => toggleSort('client_company')}>COMPANY{sortIcon('client_company')}</th>
+                  <th className="pl-th" onClick={() => toggleSort('deal_type')}>TYPE{sortIcon('deal_type')}</th>
                   <th className="pl-th" onClick={() => toggleSort('stage')}>STAGE{sortIcon('stage')}</th>
                   <th className="pl-th">TAGS</th>
                   <th className="pl-th" onClick={() => toggleSort('deal_value')} style={{ textAlign: 'right' }}>VALUE{sortIcon('deal_value')}</th>
@@ -653,6 +691,7 @@ export default function Pipeline() {
                         <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 15, fontWeight: 600 }}>{deal.client_name}</span>
                       </td>
                       <td className="pl-td" style={{ color: 'var(--muted)', fontSize: 12 }}>{deal.client_company || '—'}</td>
+                      <td className="pl-td" style={{ color: 'var(--muted)', fontSize: 12 }}>{DEAL_TYPE_LABELS[deal.deal_type] || deal.deal_type || '—'}</td>
                       <td className="pl-td">
                         <span style={{ fontSize: 11, fontWeight: 600, padding: '3px 8px', borderRadius: 10,
                           background: st?.color ? st.color + '22' : '#e8e5df', color: st?.color || 'var(--ink)',

@@ -1,41 +1,16 @@
 import { useState, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { clientsApi, settingsApi } from '../../api/client'
+import { clientsApi, settingsApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { EmptyState, useToast, Modal } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
 
 const AVATAR_COLS = ['c1', 'c2', 'c3', 'c4', 'c5']
+const NO_CHANGE = '__no_change__'
 
 function initials(first: string, last: string) {
   return ((first?.[0] || '') + (last?.[0] || '')).toUpperCase()
-}
-
-function timeAgo(dateStr: string | null | undefined): string {
-  if (!dateStr) return ''
-  const diff = Date.now() - new Date(dateStr).getTime()
-  if (diff < 0) return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-  const mins  = Math.floor(diff / 60_000)
-  const hours = Math.floor(diff / 3_600_000)
-  const days  = Math.floor(diff / 86_400_000)
-  const weeks = Math.floor(days / 7)
-  if (mins  < 60)  return `${mins}m ago`
-  if (hours < 24)  return `${hours}h ago`
-  if (days  < 7)   return `${days}d ago`
-  if (weeks < 5)   return `${weeks}w ago`
-  return new Date(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
-}
-
-function lastActivityLabel(c: any): { label: string; when: string } | null {
-  if (c.last_activity_type && c.last_activity_at) {
-    const type = c.last_activity_type.charAt(0).toUpperCase() + c.last_activity_type.slice(1)
-    return { label: type, when: timeAgo(c.last_activity_at) }
-  }
-  if (c.created_at) {
-    return { label: 'Created', when: timeAgo(c.created_at) }
-  }
-  return null
 }
 
 export default function Clients() {
@@ -69,6 +44,13 @@ export default function Clients() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [bulkEditOpen, setBulkEditOpen] = useState(false)
+  const [bulkEditStatus, setBulkEditStatus] = useState(NO_CHANGE)
+  const [bulkEditLeadSource, setBulkEditLeadSource] = useState(NO_CHANGE)
+  const [bulkEditPipeline, setBulkEditPipeline] = useState(NO_CHANGE)
+  const [bulkEditTags, setBulkEditTags] = useState<string[]>([])
+  const [bulkEditCommTags, setBulkEditCommTags] = useState<string[]>([])
+  const [bulkEditing, setBulkEditing] = useState(false)
 
   // Changing a filter can shrink the result set below the page you were on (e.g. you're
   // on page 3 of "All" and switch to a status with only 1 page of results) — reset to
@@ -88,6 +70,24 @@ export default function Clients() {
     queryFn: () => settingsApi.getClientTags().then(r => r.data),
     staleTime: 0,
   })
+
+  const { data: commTagConfigs = [] } = useQuery({
+    queryKey: ['communication-tag-configs'],
+    queryFn: () => settingsApi.getCommunicationTags().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const { data: leadSourceConfigs = [] } = useQuery({
+    queryKey: ['lead-source-configs'],
+    queryFn: () => settingsApi.getLeadSources().then(r => r.data),
+    staleTime: 0,
+  })
+
+  const { data: stageConfigs = [] } = useQuery({
+    queryKey: ['pipeline-stage-configs'],
+    queryFn: () => settingsApi.getPipelineStages().then(r => r.data),
+    staleTime: 0,
+  })
   const statusMap = useMemo(() => {
     const m: Record<string, any> = {}
     ;(statusConfigs as any[]).forEach(s => { m[s.label] = s })
@@ -99,6 +99,18 @@ export default function Clients() {
     ;(tagConfigs as any[]).forEach(t => { m[t.name] = t.color })
     return m
   }, [tagConfigs])
+
+  const commTagMap = useMemo(() => {
+    const m: Record<string, string> = {}
+    ;(commTagConfigs as any[]).forEach(t => { m[t.name] = t.color })
+    return m
+  }, [commTagConfigs])
+
+  const stageMap = useMemo(() => {
+    const m: Record<string, any> = {}
+    ;(stageConfigs as any[]).forEach(s => { m[s.slug] = s })
+    return m
+  }, [stageConfigs])
 
   async function handleExport() {
     const { data } = await clientsApi.exportCsv()
@@ -186,6 +198,10 @@ export default function Clients() {
     () => (tagConfigs as any[]).map(t => t.name).sort(),
     [tagConfigs]
   )
+  const allCommTags = useMemo(
+    () => (commTagConfigs as any[]).map(t => t.name).sort(),
+    [commTagConfigs]
+  )
 
   const pageIds = useMemo(() => clients.map((c: any) => c.id), [clients])
   const allOnPageSelected = pageIds.length > 0 && pageIds.every(id => selectedIds.has(id))
@@ -203,12 +219,79 @@ export default function Clients() {
     })
   }
 
+  async function handleBulkEdit() {
+    const addTags = bulkEditTags.filter(t => t.trim())
+    const addCommTags = bulkEditCommTags.filter(t => t.trim())
+    const changingPipeline = bulkEditPipeline !== NO_CHANGE
+    if (bulkEditStatus === NO_CHANGE && bulkEditLeadSource === NO_CHANGE && !changingPipeline
+        && addTags.length === 0 && addCommTags.length === 0) return
+
+    setBulkEditing(true)
+    const ids = Array.from(selectedIds)
+    const results = await Promise.allSettled(ids.map(async id => {
+      const payload: Record<string, any> = {}
+      if (bulkEditStatus !== NO_CHANGE) payload.status = bulkEditStatus
+      if (bulkEditLeadSource !== NO_CHANGE) payload.lead_source = bulkEditLeadSource
+      const current = clients.find((c: any) => c.id === id)
+      if (addTags.length > 0) {
+        // Additive, not a replace — a client keeps whatever tags it already had.
+        // Falls back to just addTags if this client's current tags aren't in the
+        // currently-loaded page (e.g. selection survived a filter change).
+        const existing: string[] = current?.tags || []
+        payload.tags = Array.from(new Set([...existing, ...addTags]))
+      }
+      if (addCommTags.length > 0) {
+        const existing: string[] = current?.communication_tags || []
+        payload.communication_tags = Array.from(new Set([...existing, ...addCommTags]))
+      }
+      if (Object.keys(payload).length > 0) {
+        await clientsApi.patch(id, payload)
+      }
+      if (changingPipeline) {
+        // Pipeline stage lives on a separate Deal record, not the Client — a client
+        // isn't required to already have one, so this moves the existing deal if
+        // there is one (pipeline_deal_id, annotated server-side) or creates one at
+        // the chosen stage otherwise, same as picking a stage on a fresh CSV import row.
+        // Uses the same advance() endpoint the board's "Move to X" button calls, not a
+        // plain PATCH — patching `stage` directly skips Deal.advance_stage(), leaving
+        // stage_changed_at stale and no StageHistory entry, which breaks the board's
+        // "days in stage" tracking for that deal.
+        if (current?.pipeline_deal_id) {
+          await pipelineApi.advance(current.pipeline_deal_id, bulkEditPipeline)
+        } else {
+          await pipelineApi.create({ client: id, stage: bulkEditPipeline })
+        }
+      }
+    }))
+    const failed = results.filter(r => r.status === 'rejected').length
+    queryClient.invalidateQueries({ queryKey: ['clients'] })
+    if (changingPipeline) queryClient.invalidateQueries({ queryKey: ['pipeline'] })
+    // The list query and a client's own detail page (ClientDetail.tsx, key ['client', id])
+    // are cached separately — invalidating only 'clients' left the detail page showing
+    // stale values (e.g. the old lead_source) until a hard refresh forced a refetch.
+    ids.forEach(id => queryClient.invalidateQueries({ queryKey: ['client', id] }))
+    setSelectedIds(new Set())
+    setBulkEditOpen(false)
+    setBulkEditStatus(NO_CHANGE)
+    setBulkEditLeadSource(NO_CHANGE)
+    setBulkEditPipeline(NO_CHANGE)
+    setBulkEditTags([])
+    setBulkEditCommTags([])
+    setBulkEditing(false)
+    if (failed > 0) {
+      toast(`Updated ${ids.length - failed} of ${ids.length} clients — ${failed} failed`, 'error')
+    } else {
+      toast(`Updated ${ids.length} client${ids.length !== 1 ? 's' : ''}`)
+    }
+  }
+
   async function handleBulkDelete() {
     setBulkDeleting(true)
     const ids = Array.from(selectedIds)
     const results = await Promise.allSettled(ids.map(id => clientsApi.delete(id)))
     const failed = results.filter(r => r.status === 'rejected').length
     queryClient.invalidateQueries({ queryKey: ['clients'] })
+    ids.forEach(id => queryClient.invalidateQueries({ queryKey: ['client', id] }))
     setSelectedIds(new Set())
     setBulkDeleteConfirm(false)
     setBulkDeleting(false)
@@ -280,7 +363,9 @@ export default function Clients() {
                       Field notes
                     </div>
                     <div><strong>birth_date:</strong> YYYY-MM-DD preferred</div>
-                    <div><strong>tags:</strong> separate with | or ,</div>
+                    <div><strong>client_tag / communication_tag:</strong> separate multiple with | or , ("tags" still works as an alias for client_tag)</div>
+                    <div><strong>client_status:</strong> a label from Settings → Client Statuses ("status" still works as an alias)</div>
+                    <div><strong>pipeline:</strong> a stage label from Settings → Pipeline — creates a deal at that stage; leave blank for no deal</div>
                     <div><strong>coach_email:</strong> must match a coach in this workspace, else left unassigned</div>
                   </div>
                 )}
@@ -405,12 +490,13 @@ export default function Clients() {
         {isOwner && selectedIds.size > 0 && (
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            background: '#fdf4f4', border: '1px solid #e5b4b4', borderRadius: 8,
+            background: '#f7f4ef', border: '1px solid var(--border)', borderRadius: 8,
             padding: '8px 14px', marginBottom: 12,
           }}>
             <span style={{ fontSize: 13, color: 'var(--ink)' }}>{selectedIds.size} selected</span>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="btn btn-outline btn-sm" onClick={() => setSelectedIds(new Set())}>Clear</button>
+              <button className="btn btn-dark btn-sm" onClick={() => setBulkEditOpen(true)}>Edit Selected</button>
               <button
                 className="btn btn-sm"
                 onClick={() => setBulkDeleteConfirm(true)}
@@ -448,15 +534,21 @@ export default function Clients() {
                 <th>Client</th>
                 <th>Status</th>
                 <th>Tags</th>
+                <th>Communication Tags</th>
                 <th>Coach</th>
-                <th>Last Activity</th>
                 <th></th>
                 {isOwner && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {clients.map((c: any, i: number) => (
-                <tr key={c.id} onClick={() => navigate(`/clients/${c.id}`)}>
+              {clients.map((c: any, i: number) => {
+                // Every configured status gets a faint row tint in its own color, not just
+                // Archive/Inactive — makes a client's status scannable at a glance down the
+                // whole list without needing to read the Client Status column text.
+                const rowStatusColor = statusMap[c.status]?.color
+                return (
+                <tr key={c.id} onClick={() => navigate(`/clients/${c.id}`)}
+                  style={{ background: rowStatusColor ? rowStatusColor + '12' : undefined }}>
                   {isOwner && (
                     <td onClick={e => e.stopPropagation()}>
                       <input
@@ -473,7 +565,10 @@ export default function Clients() {
                         {initials(c.first_name, c.last_name)}
                       </div>
                       <div>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{c.first_name} {c.last_name}</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontWeight: 600, fontSize: 13 }}>{c.first_name} {c.last_name}</span>
+                          {c.portal_access && <span className="pill pill-blue">Portal</span>}
+                        </div>
                         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
                           {c.company
                             ? `${c.company}${c.job_title ? ' · ' + c.job_title : ''}`
@@ -483,19 +578,19 @@ export default function Clients() {
                     </div>
                   </td>
                   <td>
-                    {(() => {
-                      const cfg = statusMap[c.status] || null
-                      const color = cfg?.color || '#b8b2ab'
+                    {c.pipeline_stage ? (() => {
+                      const cfg = stageMap[c.pipeline_stage]
+                      const label = cfg?.label || c.pipeline_stage.replace(/_/g, ' ')
+                      const color = cfg?.color || '#1B3A6B'
                       return (
                         <span style={{
                           display: 'inline-block', fontSize: 11, fontWeight: 600,
                           padding: '2px 10px', borderRadius: 12,
-                          background: color + '20', color, border: `1px solid ${color}40`,
-                        }}>{c.status || 'Lead'}</span>
+                          background: color + '18', color, border: `1px solid ${color}30`,
+                        }}>{label}</span>
                       )
-                    })()}
-                    {c.portal_access && (
-                      <span className="pill pill-blue" style={{ marginLeft: 4 }}>Portal</span>
+                    })() : (
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>—</span>
                     )}
                   </td>
                   <td>
@@ -525,16 +620,21 @@ export default function Clients() {
                       })}
                     </div>
                   </td>
+                  <td>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {(c.communication_tags || []).map((t: string) => {
+                        const color = commTagMap[t]
+                        return color ? (
+                          <span key={t} style={{
+                            fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 10,
+                            background: color + '20', color, border: `1px solid ${color}40`,
+                          }}>{t}</span>
+                        ) : <span key={t} className="tag">{t}</span>
+                      })}
+                    </div>
+                  </td>
                   <td style={{ fontSize: 13, color: 'var(--muted)' }}>
                     {c.coach_name || '—'}
-                  </td>
-                  <td style={{ fontSize: 12, color: 'var(--muted)' }}>
-                    {(() => {
-                      const la = lastActivityLabel(c)
-                      return la
-                        ? <><span style={{ color: 'var(--ink)', fontWeight: 500 }}>{la.label}</span> · {la.when}</>
-                        : '—'
-                    })()}
                   </td>
                   <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
                   {isOwner && (
@@ -549,7 +649,7 @@ export default function Clients() {
                     </td>
                   )}
                 </tr>
-              ))}
+              )})}
             </tbody>
           </table>
         )}
@@ -584,6 +684,117 @@ export default function Clients() {
               disabled={bulkDeleting}
               style={{ background: '#c0392b', color: '#fff', border: 'none' }}
             >{bulkDeleting ? 'Deleting…' : `Delete ${selectedIds.size} Client${selectedIds.size !== 1 ? 's' : ''}`}</button>
+          </div>
+        </Modal>
+      )}
+
+      {bulkEditOpen && (
+        <Modal title="Edit Selected Clients" onClose={() => !bulkEditing && setBulkEditOpen(false)}>
+          <div style={{ padding: '4px 0 20px', fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
+            Applies to <strong style={{ color: 'var(--ink)' }}>{selectedIds.size} client{selectedIds.size !== 1 ? 's' : ''}</strong>.
+            Leave a field on "No change" to skip it.
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Client Status</label>
+            <select className="fselect" value={bulkEditStatus} onChange={e => setBulkEditStatus(e.target.value)}>
+              <option value={NO_CHANGE}>— No change —</option>
+              {(statusConfigs as any[]).map((s: any) => (
+                <option key={s.label} value={s.label}>{s.label}</option>
+              ))}
+            </select>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Pipeline Status</label>
+            <select className="fselect" value={bulkEditPipeline} onChange={e => setBulkEditPipeline(e.target.value)}>
+              <option value={NO_CHANGE}>— No change —</option>
+              {(stageConfigs as any[]).map((s: any) => (
+                <option key={s.slug} value={s.slug}>{s.label}</option>
+              ))}
+            </select>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+              Moves each client's existing deal to this stage, or creates one if they don't have a deal yet.
+            </div>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Lead Source</label>
+            <select className="fselect" value={bulkEditLeadSource} onChange={e => setBulkEditLeadSource(e.target.value)}>
+              <option value={NO_CHANGE}>— No change —</option>
+              {(leadSourceConfigs as any[]).map((s: any) => (
+                <option key={s.label} value={s.label}>{s.label.charAt(0).toUpperCase() + s.label.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Add Tags</label>
+            {allTags.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                No tags configured yet — add some under Settings → Tags first.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {allTags.map((t: string) => {
+                  const active = bulkEditTags.includes(t)
+                  const color = tagMap[t] || 'var(--muted)'
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setBulkEditTags(prev => active ? prev.filter(x => x !== t) : [...prev, t])}
+                      style={{
+                        fontSize: 12, padding: '5px 12px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${color}${active ? 'cc' : '40'}`,
+                        background: active ? `${color}1f` : 'transparent',
+                        color: active ? color : 'var(--ink)',
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >{t}</button>
+                  )
+                })}
+              </div>
+            )}
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+              Adds to each client's existing tags — doesn't remove any.
+            </div>
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Add Communication Tags</label>
+            {allCommTags.length === 0 ? (
+              <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                No tags configured yet — add some under Settings → Tags first.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {allCommTags.map((t: string) => {
+                  const active = bulkEditCommTags.includes(t)
+                  const color = commTagMap[t] || 'var(--muted)'
+                  return (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setBulkEditCommTags(prev => active ? prev.filter(x => x !== t) : [...prev, t])}
+                      style={{
+                        fontSize: 12, padding: '5px 12px', borderRadius: 20, cursor: 'pointer',
+                        border: `1px solid ${color}${active ? 'cc' : '40'}`,
+                        background: active ? `${color}1f` : 'transparent',
+                        color: active ? color : 'var(--ink)',
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >{t}</button>
+                  )
+                })}
+              </div>
+            )}
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
+              Adds to each client's existing communication tags — doesn't remove any.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 8 }}>
+            <button className="btn btn-outline btn-sm" onClick={() => setBulkEditOpen(false)} disabled={bulkEditing}>Cancel</button>
+            <button
+              className="btn btn-dark btn-sm"
+              onClick={handleBulkEdit}
+              disabled={bulkEditing || (bulkEditStatus === NO_CHANGE && bulkEditLeadSource === NO_CHANGE && bulkEditPipeline === NO_CHANGE && bulkEditTags.length === 0 && bulkEditCommTags.length === 0)}
+            >{bulkEditing ? 'Updating…' : `Update ${selectedIds.size} Client${selectedIds.size !== 1 ? 's' : ''}`}</button>
           </div>
         </Modal>
       )}
