@@ -363,11 +363,13 @@ def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email:
 # lauratreonze.com is added in Resend but not yet DNS-verified. Re-add once verified:
 #     "laura.lmtconsulting@gmail.com": "lauratreonze.com",
 _OWNER_SENDING_DOMAIN: dict[str, str] = {}
-# NOT YET DNS-verified in Resend (SPF/DKIM) as of this change — outgoing mail from this
-# domain may fail to send or land in spam until that's done. Set anyway per explicit
-# request; switch back to "rass-consulting.com" (or whatever the last known-good verified
-# domain is) if sending breaks.
-_DEFAULT_SENDING_DOMAIN = "lmtconsulting.com"
+# lmtconsulting.com was set here before being DNS-verified in Resend (see prior comment
+# history) — confirmed broken in production 2026-08-29 (Resend 550: "domain is not
+# verified"), silently failing every outgoing email for every workspace using the
+# default. Reverted to the last known-good verified domain per that comment's own
+# instruction. Switch back to "lmtconsulting.com" once it's actually verified in
+# https://resend.com/domains (SPF/DKIM records confirmed, not just added).
+_DEFAULT_SENDING_DOMAIN = "rass-consulting.com"
 
 
 def _workspace_from_email(workspace) -> str:
