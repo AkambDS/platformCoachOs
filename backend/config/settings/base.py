@@ -210,6 +210,10 @@ SOCIALACCOUNT_PROVIDERS = {
         "AUTH_PARAMS": {"access_type": "offline", "prompt": "consent"},
     }
 }
+# Defaults to False in allauth — without this, SocialAccount rows get created on
+# connect but the actual access/refresh token is discarded, so tasks.calendar's
+# Google Calendar API calls silently no-op forever ("No Google token — skipping").
+SOCIALACCOUNT_STORE_TOKENS = True
 # Skip allauth's intermediate "Continue" confirmation page — go straight to Google
 # on GET, so the frontend's "Connect Google Calendar" link works in one click.
 SOCIALACCOUNT_LOGIN_ON_GET = True
