@@ -56,11 +56,16 @@ LOGGING = {
     },
     "handlers": {
         "console": {"class": "logging.StreamHandler", "formatter": "verbose"},
+        # Mirrors ERROR-level logs from any tasks.* module into ErrorLog — most task
+        # failures are caught-and-logged internally rather than raised, so Celery's own
+        # task_failure signal (see register_celery_failure_handler) misses them.
+        "task_error_log": {"class": "apps.accounts.error_logging.TaskErrorLogHandler"},
     },
     "root": {"handlers": ["console"], "level": "WARNING"},
     "loggers": {
         "django":         {"handlers": ["console"], "level": "ERROR", "propagate": False},
         "django.request": {"handlers": ["console"], "level": "ERROR", "propagate": False},
+        "tasks":          {"handlers": ["console", "task_error_log"], "level": "ERROR", "propagate": False},
     },
 }
 

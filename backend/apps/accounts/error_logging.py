@@ -54,6 +54,38 @@ def drf_exception_handler(exc, context):
     return response
 
 
+class TaskErrorLogHandler(logging.Handler):
+    """Captures ERROR-level logs from tasks.* modules into ErrorLog.
+
+    Most task failures in this codebase are caught internally (try/except around the
+    whole function body, logged, never re-raised) — see tasks/calendar.py and
+    tasks/email.py. Since the exception never escapes, Celery's own task_failure
+    signal (register_celery_failure_handler below) never fires for these, so they were
+    previously invisible outside raw container logs. Attached to the "tasks" logger in
+    LOGGING settings — catches every task module via propagation, not just today's.
+    Deliberately swallows its own failures with no logger call, to avoid any risk of
+    a logging failure here re-triggering itself.
+    """
+    def emit(self, record):
+        try:
+            from apps.accounts.models import ErrorLog
+            exc_type = ""
+            traceback_str = ""
+            if record.exc_info and record.exc_info[0]:
+                exc_type = record.exc_info[0].__name__
+                traceback_str = "".join(tb.format_exception(*record.exc_info))[:10000]
+            ErrorLog.objects.create(
+                severity="error",
+                source="celery",
+                error_type=exc_type or record.name,
+                message=record.getMessage()[:2000],
+                traceback=traceback_str,
+                endpoint=f"celery:{record.name}",
+            )
+        except Exception:
+            pass
+
+
 def register_celery_failure_handler():
     """Connect Celery task_failure signal to ErrorLog. Call once from AppConfig.ready()."""
     try:
