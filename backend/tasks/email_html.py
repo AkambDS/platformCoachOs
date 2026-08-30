@@ -298,14 +298,6 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
     if activity.location:
         location_row = _divider() + _detail_row("Location", activity.location)
 
-    notes_block = ""
-    if activity.notes:
-        notes_block = f"""
-        <div style="margin-top:24px;padding:16px 20px;
-                    background:#faf8f4;border-left:3px solid #b8922e;border-radius:0 4px 4px 0;">
-          <p style="margin:0;font-size:13px;color:#6e6560;line-height:1.7;">{activity.notes}</p>
-        </div>"""
-
     coach_display = (
         f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
         f'{coach_name}</a>'
@@ -357,7 +349,6 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
       {_detail_row("Coach", coach_display)}
     </table>
 
-    {notes_block}
     {_action_buttons(confirm_url, cancel_url, reschedule_url)}
     {_calendar_block(google_cal_url)}
 

@@ -205,6 +205,9 @@ export const adminApi = {
   workspaceActivity: (id: string)           => api.get(`/api/superadmin/workspaces/${id}/activity/`),
   workspaceErrors:   (id: string)           => api.get(`/api/superadmin/workspaces/${id}/errors/`),
   workspaceAuditLog: (id: string)           => api.get(`/api/superadmin/workspaces/${id}/audit-log/`),
+  workspaceEmailDiagnostics: (id: string)   => api.get(`/api/superadmin/workspaces/${id}/email-diagnostics/`),
+  resendActivityEmail: (wsId: string, activityId: string, category: string) =>
+    api.post(`/api/superadmin/workspaces/${wsId}/activities/${activityId}/resend-email/`, { category }),
   pipelineStages:  (id: string)             => api.get(`/api/superadmin/workspaces/${id}/pipeline-stages/`),
   savePipelineStages: (id: string, d: any)  => api.put(`/api/superadmin/workspaces/${id}/pipeline-stages/`, d),
   tokens:          ()                       => api.get('/api/superadmin/registration-tokens/'),

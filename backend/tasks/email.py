@@ -12,6 +12,23 @@ from datetime import timezone as dt_timezone
 logger = logging.getLogger(__name__)
 
 
+def _report_send_failure(task_name: str, exc: Exception, *, workspace=None, activity_id=None):
+    """Every send_* task below catches its own exceptions so one bad email never fails
+    the whole Celery task — but that also means the exception never reaches Celery's
+    task_failure signal, so apps.accounts.error_logging's automatic ErrorLog + platform-
+    admin alert email never fired for any of these. Call this from each except block to
+    route send failures into that same pipeline (Error Log tab + immediate admin email)
+    instead of them being visible only via `docker compose logs`."""
+    try:
+        from apps.accounts.error_logging import capture_error
+        endpoint = f"tasks.email.{task_name}"
+        if activity_id:
+            endpoint += f"(activity_id={activity_id})"
+        capture_error(exc, workspace=workspace, endpoint=endpoint, source="celery")
+    except Exception:
+        logger.exception(f"_report_send_failure failed for {task_name}")
+
+
 def _logo_src(workspace) -> str:
     """Return a public HTTPS URL for the workspace logo, or empty string if none."""
     if not getattr(workspace, "logo_data", ""):
@@ -700,6 +717,7 @@ def send_activity_confirmation_email(activity_id: str):
         logger.info(f"Confirmation email sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_confirmation_email failed: {e}")
+        _report_send_failure("send_activity_confirmation_email", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_activity_reminder_email")
@@ -830,6 +848,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             logger.info(f"Coach reminder copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
+        _report_send_failure("send_activity_reminder_email", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_activity_reschedule_email")
@@ -975,6 +994,7 @@ def send_activity_reschedule_email(activity_id: str):
             logger.info(f"Coach reschedule copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reschedule_email failed: {e}")
+        _report_send_failure("send_activity_reschedule_email", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_activity_cancellation_email")
@@ -1053,6 +1073,7 @@ def send_activity_cancellation_email(activity_id: str):
         logger.info(f"Cancellation email sent to {client.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_cancellation_email failed: {e}")
+        _report_send_failure("send_activity_cancellation_email", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_invoice_email")
@@ -1578,6 +1599,7 @@ def send_client_confirmation_notice(activity_id: str):
         logger.info(f"Client confirmation notice sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_confirmation_notice failed: {e}")
+        _report_send_failure("send_client_confirmation_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_client_cancellation_notice")
@@ -1613,6 +1635,7 @@ def send_client_cancellation_notice(activity_id: str):
         logger.info(f"Client cancellation notice sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_cancellation_notice failed: {e}")
+        _report_send_failure("send_client_cancellation_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_client_rsvp_notice")
@@ -1647,6 +1670,7 @@ def send_client_rsvp_notice(activity_id: str, response_status: str):
         logger.info(f"RSVP notice ({response_status}) sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_rsvp_notice failed: {e}")
+        _report_send_failure("send_client_rsvp_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
 
 
 @shared_task(name="tasks.email.send_client_reschedule_request")

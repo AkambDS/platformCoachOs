@@ -24,16 +24,40 @@ function typeConfig(type: string) {
   return TYPE_CONFIG[type] || TYPE_CONFIG.custom
 }
 
-// Status shown alongside an activity — status takes priority (cancelled/rescheduled),
-// otherwise the client's RSVP response (confirmed via either the tokenized link or
-// Google Calendar accept/decline). Shared between the calendar cell and detail modal.
-function rsvpStatus(a: any): { label: string; color: string } | null {
-  if (a.status === 'cancelled')   return { label: 'Cancelled',   color: '#b91c1c' }
-  if (a.status === 'rescheduled') return { label: 'Rescheduled', color: '#2d6a9f' }
-  if (a.client_rsvp_status === 'declined')  return { label: 'Declined',  color: '#b91c1c' }
-  if (a.client_rsvp_status === 'tentative') return { label: 'Tentative', color: '#b8922e' }
-  if (a.client_confirmed || a.client_rsvp_status === 'accepted') return { label: 'Confirmed', color: '#2d6a2d' }
+// Client Response — a separate axis from Activity.status (session lifecycle: scheduled/
+// completed/missed/...). This answers "has the client acknowledged the invite," not
+// "did the session happen." status still takes priority for cancelled/rescheduled since
+// there's no meaningful response to show once the session itself has been called off or moved.
+// Shared between the calendar cell and detail modal.
+function rsvpStatus(a: any): { label: string; color: string; icon: string; waiting?: boolean } | null {
+  if (a.status === 'cancelled')   return { label: 'Cancelled',   color: '#b91c1c', icon: '✕' }
+  if (a.status === 'rescheduled') return { label: 'Rescheduled', color: '#2d6a9f', icon: '↻' }
+  if (a.client_rsvp_status === 'declined')  return { label: 'Declined',  color: '#b91c1c', icon: '✕' }
+  if (a.client_rsvp_status === 'tentative') return { label: 'Tentative', color: '#b8922e', icon: '~' }
+  if (a.client_confirmed || a.client_rsvp_status === 'accepted') return { label: 'Confirmed', color: '#2d6a2d', icon: '✓' }
+  // Nothing back yet — only meaningful to show once an invite has actually gone out,
+  // and only while the session itself is still pending (not completed/missed after the fact).
+  if (a.confirmation_sent_at && ['scheduled', 'late'].includes(a.status)) {
+    return { label: 'Awaiting Response', color: '#8c8279', icon: '⋯', waiting: true }
+  }
   return null
+}
+
+function fmtTimestamp(iso: string) {
+  return new Date(iso).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+// Human-readable elapsed time between invite-sent and response-received timestamps.
+function fmtElapsed(fromIso: string, toIso: string) {
+  const ms = new Date(toIso).getTime() - new Date(fromIso).getTime()
+  if (ms < 0) return ''
+  const mins = Math.round(ms / 60000)
+  if (mins < 1) return 'under a minute'
+  if (mins < 60) return `${mins} min`
+  const hours = Math.round(mins / 60)
+  if (hours < 24) return `${hours} hr${hours === 1 ? '' : 's'}`
+  const days = Math.round(hours / 24)
+  return `${days} day${days === 1 ? '' : 's'}`
 }
 
 function toLocalInput(utc: string) {
@@ -920,13 +944,30 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
       </div>
       {rsvp && (
         <div className="kv">
-          <span className="kvl">Response</span>
+          <span className="kvl">Client Response</span>
           <span className="kvv">
             <span style={{
               padding: '2px 10px', borderRadius: 20, fontSize: 11, fontWeight: 600,
               background: rsvp.color + '18', color: rsvp.color,
             }}>
-              {rsvp.label}
+              {rsvp.icon} {rsvp.label}
+            </span>
+          </span>
+        </div>
+      )}
+      {activity.confirmation_sent_at && (
+        <div className="kv">
+          <span className="kvl">Invite sent</span>
+          <span className="kvv">{fmtTimestamp(activity.confirmation_sent_at)}</span>
+        </div>
+      )}
+      {activity.client_confirmed_at && activity.confirmation_sent_at && (
+        <div className="kv">
+          <span className="kvl">Response received</span>
+          <span className="kvv">
+            {fmtTimestamp(activity.client_confirmed_at)}
+            <span style={{ color: 'var(--muted)', marginLeft: 6 }}>
+              ({fmtElapsed(activity.confirmation_sent_at, activity.client_confirmed_at)} later)
             </span>
           </span>
         </div>
@@ -1244,11 +1285,27 @@ export default function Calendar() {
                 return (
                   <div style={{
                     padding: '5px 8px', height: '100%', overflow: 'hidden',
-                    opacity: faded ? .5 : 1, cursor: 'pointer',
+                    opacity: faded ? .5 : 1, cursor: 'pointer', position: 'relative',
                   }}>
+                    {/* Client-response indicator — a fixed-size icon badge rather than a
+                        text label, so it stays visible even on short event blocks where a
+                        third line of text would get clipped (e.g. "CONFIRMED" cut off). */}
+                    {rsvp && (
+                      <div title={rsvp.label} style={{
+                        position: 'absolute', top: 4, right: 4,
+                        width: 15, height: 15, borderRadius: '50%',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 9, fontWeight: 700, lineHeight: 1,
+                        color: '#fff', background: faded ? '#bbb' : rsvp.color,
+                        opacity: rsvp.waiting ? .7 : 1,
+                      }}>
+                        {rsvp.icon}
+                      </div>
+                    )}
                     <div style={{
                       fontSize: 12, fontWeight: 700, color: faded ? '#aaa' : cfg.text,
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                      paddingRight: rsvp ? 18 : 0,
                     }}>
                       {a.title}
                     </div>
@@ -1258,15 +1315,6 @@ export default function Calendar() {
                     }}>
                       {clientFirst} · {startTime}{endTime ? `–${endTime}` : ''}
                     </div>
-                    {rsvp && (
-                      <div style={{
-                        fontSize: 10, fontWeight: 700, color: faded ? '#bbb' : rsvp.color,
-                        marginTop: 2, textTransform: 'uppercase', letterSpacing: '.04em',
-                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      }}>
-                        {rsvp.label}
-                      </div>
-                    )}
                   </div>
                 )
               }}

@@ -7,6 +7,8 @@ urlpatterns = [
     path("workspaces/<str:pk>/",                  views.workspace_detail),
     path("workspaces/<str:pk>/users/",            views.workspace_users),
     path("workspaces/<str:pk>/activity/",         views.workspace_activity),
+    path("workspaces/<str:pk>/email-diagnostics/", views.workspace_email_diagnostics),
+    path("workspaces/<str:pk>/activities/<str:activity_id>/resend-email/", views.workspace_resend_email),
     path("workspaces/<str:pk>/pipeline-stages/",              views.workspace_pipeline_stages),
     path("workspaces/<str:pk>/invoices/",                     views.workspace_invoices),
     path("workspaces/<str:pk>/errors/",                       views.workspace_errors),

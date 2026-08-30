@@ -10,7 +10,7 @@ from datetime import timedelta
 from apps.accounts.models import Workspace, User, WorkspaceInvitation, WorkspaceRegistrationToken, AuditLog, ErrorLog
 from .models import PlatformInvoice, PlatformPayment
 from apps.pipeline.models import PipelineStageConfig
-from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig
+from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig, EmailLog
 from apps.activities.models import Activity
 from apps.invoicing.models import Invoice
 from apps.pipeline.models import Deal
@@ -218,6 +218,140 @@ def workspace_activity(request, pk):
         "user_email": entry.user.email if entry.user else None,
         "created_at": entry.created_at.isoformat(),
     } for entry in logs])
+
+
+# ── Email diagnostics for workspace ────────────────────────────────────────────
+# Reconstructs, per scheduled session: when it was created, when the confirmation/
+# reminder emails actually sent (EmailLog — written right after a successful SMTP
+# send, so its absence is the strongest signal something didn't go out), and how/
+# when the client responded — either the tokenized email link (client_confirmed*)
+# or a native Google Calendar RSVP synced back via the calendar webhook
+# (client_rsvp_status/client_rsvp_synced_at). See tasks/email.py and
+# tasks/calendar.py::_apply_rsvp for where each field gets set.
+
+_EMAIL_DIAG_CATEGORIES = [
+    EmailLog.Category.ACTIVITY_CONFIRMATION,
+    EmailLog.Category.ACTIVITY_REMINDER,
+    EmailLog.Category.ACTIVITY_RESCHEDULE,
+    EmailLog.Category.ACTIVITY_CANCELLATION,
+]
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def workspace_email_diagnostics(request, pk):
+    """GET /api/superadmin/workspaces/{pk}/email-diagnostics/?limit=50
+
+    One row per scheduled session (Activity) in this workspace, with the full
+    schedule → email-sent → client-response timeline needed to troubleshoot a
+    "client never got the email" / "confirmation status looks wrong" report
+    without SSHing into the box.
+    """
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    try:
+        limit = min(int(request.GET.get("limit", 50)), 200)
+    except (TypeError, ValueError):
+        limit = 50
+
+    activities = (
+        Activity.objects.filter(workspace=ws)
+        .select_related("client", "coach")
+        .order_by("-created_at")[:limit]
+    )
+    activity_ids = [str(a.id) for a in activities]
+
+    emails_by_activity: dict[str, list] = {}
+    for log in EmailLog.objects.filter(
+        workspace=ws, category__in=_EMAIL_DIAG_CATEGORIES, related_id__in=activity_ids
+    ).order_by("sent_at"):
+        emails_by_activity.setdefault(log.related_id, []).append({
+            "category":        log.category,
+            "subject":         log.subject,
+            "recipient_email": log.recipient_email,
+            "sent_at":         log.sent_at.isoformat(),
+        })
+
+    def rsvp_method(a):
+        if a.client_rsvp_synced_at:
+            return "google_calendar"
+        if a.client_confirmed_at:
+            return "confirm_link"
+        return None
+
+    return Response({
+        "workspace": {"id": str(ws.id), "name": ws.name},
+        "activities": [{
+            "id":                    str(a.id),
+            "title":                 a.title,
+            "activity_type":         a.activity_type,
+            "status":                a.status,
+            "client_name":           a.client.full_name if a.client else None,
+            "client_email":          a.client.email if a.client else None,
+            "coach_name":            a.coach.full_name if a.coach else None,
+            "start_at":              a.start_at.isoformat(),
+            "created_at":            a.created_at.isoformat(),
+            "google_calendar_synced": bool(a.google_cal_uid),
+            "confirmation_sent_at":  a.confirmation_sent_at.isoformat() if a.confirmation_sent_at else None,
+            "reminder_24h_sent_at":  a.reminder_24h_sent_at.isoformat() if a.reminder_24h_sent_at else None,
+            "reminder_1h_sent_at":   a.reminder_1h_sent_at.isoformat() if a.reminder_1h_sent_at else None,
+            "cancellation_sent_at":  a.cancellation_sent_at.isoformat() if a.cancellation_sent_at else None,
+            "client_confirmed":      a.client_confirmed,
+            "client_confirmed_at":   a.client_confirmed_at.isoformat() if a.client_confirmed_at else None,
+            "client_rsvp_status":    a.client_rsvp_status,
+            "client_rsvp_synced_at": a.client_rsvp_synced_at.isoformat() if a.client_rsvp_synced_at else None,
+            "rsvp_method":           rsvp_method(a),
+            "emails":                emails_by_activity.get(str(a.id), []),
+        } for a in activities],
+    })
+
+
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def workspace_resend_email(request, pk, activity_id):
+    """POST /api/superadmin/workspaces/{pk}/activities/{activity_id}/resend-email/
+    Body: {"category": "confirmation" | "reminder_24h" | "reminder_1h" | "reschedule" | "cancellation"}
+
+    Support tool for a "client says they never got the email" report — manually
+    re-fires one of the client-facing session emails for one activity. Always
+    dispatched through Celery's .delay(), unlike the original booking-time
+    confirmation send which fires via a bare background thread (see
+    apps/activities/serializers.py::_fire) — so this path doesn't inherit that
+    thread's drop-on-worker-recycle risk.
+    """
+    try:
+        ws = Workspace.objects.get(pk=pk)
+    except Workspace.DoesNotExist:
+        return Response({"detail": "Not found."}, status=404)
+
+    try:
+        activity = Activity.objects.get(pk=activity_id, workspace=ws)
+    except Activity.DoesNotExist:
+        return Response({"detail": "Session not found."}, status=404)
+
+    from tasks.email import (
+        send_activity_confirmation_email, send_activity_reminder_email,
+        send_activity_reschedule_email, send_activity_cancellation_email,
+    )
+    category = request.data.get("category")
+    activity_id = str(activity.id)
+    if category == "confirmation":
+        send_activity_confirmation_email.delay(activity_id)
+    elif category == "reminder_24h":
+        send_activity_reminder_email.delay(activity_id, 24)
+    elif category == "reminder_1h":
+        send_activity_reminder_email.delay(activity_id, 1)
+    elif category == "reschedule":
+        send_activity_reschedule_email.delay(activity_id)
+    elif category == "cancellation":
+        send_activity_cancellation_email.delay(activity_id)
+    else:
+        return Response({"detail": f"Unknown category: {category!r}"}, status=400)
+
+    return Response({"queued": True})
 
 
 # ── Pipeline stages for workspace ─────────────────────────────────────────────

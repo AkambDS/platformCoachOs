@@ -1,10 +1,10 @@
-import { useState } from 'react'
+import { useState, Fragment } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AdminShell from '../../components/layout/AdminShell'
 
-type Tab = 'overview' | 'errors' | 'audit'
+type Tab = 'overview' | 'errors' | 'audit' | 'email'
 
 const PLAN_OPTIONS = ['trial', 'starter', 'growth', 'enterprise']
 const PLAN_COLORS: Record<string, string> = {
@@ -29,6 +29,11 @@ function timeAgo(dateStr: string | null | undefined): string {
 // Shared by the Audit Log table and the Error Log tab's "recent actions" list — both
 // render the same AccessLog shape, just scoped differently (last 20 for the workspace
 // vs. one user's last 5 before a specific error).
+function fmtDT(s: string | null | undefined): string | null {
+  if (!s) return null
+  return new Date(s).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 function formatAuditDetail(meta: Record<string, any> | null | undefined): string {
   const m = meta || {}
   return m.file_name
@@ -64,7 +69,31 @@ export default function AdminWorkspace() {
     enabled: !!id && tab === 'audit',
   })
 
+  const { data: emailDiag } = useQuery({
+    queryKey: ['admin', 'workspace', id, 'email-diagnostics'],
+    queryFn: () => adminApi.workspaceEmailDiagnostics(id!).then(r => r.data),
+    enabled: !!id,
+  })
+  const emailActivities: any[] = emailDiag?.activities || []
+  // Flags a session as worth a look: the client has an email on file, the session
+  // wasn't cancelled, but no confirmation email ever recorded as sent.
+  const emailIssueCount = emailActivities.filter(
+    (a) => a.client_email && a.status !== 'cancelled' && !a.confirmation_sent_at
+  ).length
+
   const [expandedError, setExpandedError] = useState<number | null>(null)
+  const [expandedEmailRow, setExpandedEmailRow] = useState<string | null>(null)
+  const [resendCategory, setResendCategory] = useState<Record<string, string>>({})
+
+  const resendEmail = useMutation({
+    mutationFn: ({ activityId, category }: { activityId: string; category: string }) =>
+      adminApi.resendActivityEmail(id!, activityId, category),
+    onSuccess: () => {
+      // Dispatched through Celery, not instant — give the worker a moment to actually
+      // send before pulling fresh EmailLog rows.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['admin', 'workspace', id, 'email-diagnostics'] }), 2500)
+    },
+  })
 
   const patchWs = useMutation({
     mutationFn: (d: any) => adminApi.patchWorkspace(id!, d),
@@ -158,7 +187,7 @@ export default function AdminWorkspace() {
 
         {/* Tabs */}
         <div style={{ display: 'flex', gap: 0, borderTop: '1px solid var(--border)', marginLeft: -36, marginRight: -36, paddingLeft: 36 }}>
-          {(['overview', 'errors', 'audit'] as Tab[]).map(t => (
+          {(['overview', 'errors', 'audit', 'email'] as Tab[]).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -173,7 +202,9 @@ export default function AdminWorkspace() {
               {t === 'overview' ? 'Overview'
                 : t === 'errors'
                   ? <>Error Log{ws.stats?.error_count > 0 && <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 700 }}>{ws.stats.error_count}</span>}</>
-                  : 'Audit Log'}
+                  : t === 'audit'
+                    ? 'Audit Log'
+                    : <>Email Diagnostics{emailIssueCount > 0 && <span style={{ marginLeft: 6, background: '#dc2626', color: '#fff', borderRadius: 10, fontSize: 10, padding: '1px 6px', fontWeight: 700 }}>{emailIssueCount}</span>}</>}
             </button>
           ))}
         </div>
@@ -401,6 +432,155 @@ export default function AdminWorkspace() {
                             {detail || '—'}
                           </td>
                         </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ── Email diagnostics tab ─────────────────────────────
+             Reconstructs, per session: scheduled → confirmation email sent →
+             how/when the client responded (tokenized link vs native Google
+             Calendar RSVP) → reminders sent. Lets support trace a "client
+             never got the email" report without SSHing into the box. */}
+        {tab === 'email' && (
+          <div>
+            <div style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 16 }}>
+              Latest {emailActivities.length} scheduled session{emailActivities.length !== 1 ? 's' : ''} in this workspace.
+              {emailIssueCount > 0 && (
+                <strong style={{ color: '#c0392b' }}> {emailIssueCount} have a client email on file but no confirmation ever recorded as sent.</strong>
+              )}
+            </div>
+            {emailActivities.length === 0 ? (
+              <div style={{ color: 'var(--muted)', fontSize: 13 }}>No sessions scheduled yet.</div>
+            ) : (
+              <div style={{ background: 'var(--white)', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                  <thead>
+                    <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Session</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Client</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Scheduled</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Confirmation Sent</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Client Response</th>
+                      <th style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600 }}>Reminders</th>
+                      <th style={{ padding: '10px 14px' }} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emailActivities.map((a: any, i: number) => {
+                      const noConfirmation = a.client_email && a.status !== 'cancelled' && !a.confirmation_sent_at
+                      const responseLabel =
+                        a.rsvp_method === 'google_calendar'
+                          ? `${a.client_rsvp_status === 'accepted' ? 'Accepted' : a.client_rsvp_status === 'declined' ? 'Declined' : a.client_rsvp_status === 'tentative' ? 'Tentative' : 'Needs action'} · Google Calendar`
+                          : a.rsvp_method === 'confirm_link'
+                            ? 'Confirmed · email link'
+                            : null
+                      const responseAt = a.rsvp_method === 'google_calendar' ? a.client_rsvp_synced_at : a.client_confirmed_at
+                      return (
+                        <Fragment key={a.id}>
+                          <tr style={{ borderBottom: '1px solid var(--border)', background: i % 2 === 0 ? 'var(--white)' : 'var(--surface)' }}>
+                            <td style={{ padding: '9px 14px' }}>
+                              <div style={{ fontWeight: 500 }}>{a.title}</div>
+                              <div style={{ fontSize: 11, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                                <span>{a.activity_type} · {a.status}</span>
+                                <span className={`pill ${a.google_calendar_synced ? 'pill-blue' : 'pill-grey'}`} style={{ fontSize: 9 }} title={a.google_calendar_synced ? 'This session is synced to Google Calendar — the client\'s RSVP path is the native invite, not the email link.' : 'Not synced to Google Calendar — the client confirms via the link in the email.'}>
+                                  {a.google_calendar_synced ? 'GCal synced' : 'no GCal'}
+                                </span>
+                              </div>
+                            </td>
+                            <td style={{ padding: '9px 14px' }}>
+                              <div>{a.client_name || '—'}</div>
+                              {a.client_email && <div style={{ fontSize: 11, color: 'var(--muted)' }}>{a.client_email}</div>}
+                            </td>
+                            <td style={{ padding: '9px 14px', whiteSpace: 'nowrap' }}>
+                              <div>{fmtDT(a.start_at)}</div>
+                              <div style={{ fontSize: 11, color: 'var(--muted)' }}>booked {timeAgo(a.created_at)}</div>
+                            </td>
+                            <td style={{ padding: '9px 14px', whiteSpace: 'nowrap' }}>
+                              {a.confirmation_sent_at ? (
+                                <span style={{ color: '#2e7d4f' }}>{fmtDT(a.confirmation_sent_at)}</span>
+                              ) : a.status === 'cancelled' ? (
+                                <span style={{ color: 'var(--muted)' }}>— cancelled</span>
+                              ) : a.client_email ? (
+                                <span className="pill pill-red" style={{ fontSize: 11 }}>Not sent</span>
+                              ) : (
+                                <span style={{ color: 'var(--muted)' }}>no client email</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 14px', whiteSpace: 'nowrap' }}>
+                              {responseLabel ? (
+                                <>
+                                  <div>{responseLabel}</div>
+                                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtDT(responseAt)}</div>
+                                </>
+                              ) : (
+                                <span style={{ color: 'var(--muted)' }}>No response yet</span>
+                              )}
+                            </td>
+                            <td style={{ padding: '9px 14px', whiteSpace: 'nowrap', fontSize: 12 }}>
+                              <div style={{ color: a.reminder_24h_sent_at ? 'var(--ink)' : 'var(--muted)' }}>24h: {fmtDT(a.reminder_24h_sent_at) || '—'}</div>
+                              <div style={{ color: a.reminder_1h_sent_at ? 'var(--ink)' : 'var(--muted)' }}>1h: {fmtDT(a.reminder_1h_sent_at) || '—'}</div>
+                            </td>
+                            <td style={{ padding: '9px 14px' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-start' }}>
+                                {a.emails.length > 0 && (
+                                  <button className="btn btn-ghost btn-sm" style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                                    onClick={() => setExpandedEmailRow(expandedEmailRow === a.id ? null : a.id)}>
+                                    {expandedEmailRow === a.id ? 'Hide log' : `Email log (${a.emails.length})`}
+                                  </button>
+                                )}
+                                {a.client_email && (
+                                  <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                                    <select
+                                      value={resendCategory[a.id] || 'confirmation'}
+                                      onChange={(e) => setResendCategory({ ...resendCategory, [a.id]: e.target.value })}
+                                      style={{ fontSize: 11, padding: '3px 4px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--white)' }}
+                                    >
+                                      <option value="confirmation">Confirmation</option>
+                                      <option value="reminder_24h">24h reminder</option>
+                                      <option value="reminder_1h">1h reminder</option>
+                                      <option value="reschedule">Reschedule</option>
+                                      <option value="cancellation">Cancellation</option>
+                                    </select>
+                                    <button
+                                      className="btn btn-outline btn-sm" style={{ fontSize: 11, whiteSpace: 'nowrap' }}
+                                      disabled={resendEmail.isPending}
+                                      onClick={() => {
+                                        const category = resendCategory[a.id] || 'confirmation'
+                                        const label = category.replace(/_/g, ' ')
+                                        if (window.confirm(`Send a real "${label}" email to ${a.client_email} right now?`)) {
+                                          resendEmail.mutate({ activityId: a.id, category })
+                                        }
+                                      }}
+                                    >
+                                      Resend
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                          </tr>
+                          {expandedEmailRow === a.id && (
+                            <tr style={{ background: 'var(--paper)' }}>
+                              <td colSpan={7} style={{ padding: '10px 14px 14px' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                  {a.emails.map((e: any, ei: number) => (
+                                    <div key={ei} style={{ display: 'flex', gap: 12, fontSize: 12 }}>
+                                      <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap', minWidth: 130 }}>{fmtDT(e.sent_at)}</span>
+                                      <span className="pill pill-grey" style={{ fontSize: 10, whiteSpace: 'nowrap' }}>{e.category.replace(/_/g, ' ')}</span>
+                                      <span style={{ color: 'var(--muted)' }}>&rarr; {e.recipient_email}</span>
+                                      <span style={{ color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{e.subject}</span>
+                                    </div>
+                                  ))}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </Fragment>
                       )
                     })}
                   </tbody>
