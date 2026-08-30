@@ -238,6 +238,7 @@ def _reconcile_events(service, watch):
 
 def _apply_rsvp(activity, event):
     from django.utils import timezone
+    from apps.activities.models import Activity
 
     client_email = (activity.client.email or "").lower()
     if not client_email:
