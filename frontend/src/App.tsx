@@ -6,6 +6,7 @@ import { useAuthStore } from "./store/auth"
 import { authApi } from "./api/client"
 import { useInactivityTimer } from "./hooks/useInactivityTimer"
 import ClientPortal from "./pages/portal/ClientPortal"
+import Home      from "./pages/Home"
 import Login     from "./pages/auth/Login"
 import Register  from "./pages/auth/Register"
 import AcceptInvite    from "./pages/auth/AcceptInvite"
@@ -146,6 +147,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* Public */}
+          <Route path="/"                 element={<Home />} />
           <Route path="/login"            element={<Login />} />
           <Route path="/register"         element={<Register />} />
           <Route path="/accept-invite"    element={<AcceptInvite />} />
