@@ -576,7 +576,7 @@ function PipelineTab() {
 // vertical space when two pickers sit side by side (e.g. Generic Templates' Header).
 // The native color input + hex field below still allow picking any exact color.
 const PRESET_COLORS = [
-  '#1B3A6B', '#2d6a9f', '#4a7c59', '#16a085',
+  '#ffffff', '#1B3A6B', '#2d6a9f', '#4a7c59', '#16a085',
   '#7c4d9f', '#c2185b', '#c9a84c', '#e67e22',
   '#c0392b', '#607d8b', '#4a4540', '#1a1714',
 ]

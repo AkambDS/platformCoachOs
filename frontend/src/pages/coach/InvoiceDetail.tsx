@@ -91,9 +91,13 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
       {/* ── Header ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 }}>
         <div>
-          <div style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 26, fontWeight: 600, letterSpacing: '-.02em', marginBottom: 4 }}>
-            {workspace?.name || '—'}
-          </div>
+          {workspace?.logo_data ? (
+            <img src={workspace.logo_data} alt={workspace?.name || ''} style={{ maxHeight: 56, maxWidth: 200, objectFit: 'contain', display: 'block', marginBottom: 6 }} />
+          ) : (
+            <div style={{ fontFamily: 'Cormorant Garamond, Georgia, serif', fontSize: 26, fontWeight: 600, letterSpacing: '-.02em', marginBottom: 4 }}>
+              {workspace?.name || '—'}
+            </div>
+          )}
           {workspace?.email && (
             <div style={{ fontSize: 12, color: '#6e6560' }}>{workspace.email}</div>
           )}
@@ -106,9 +110,7 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
           {inv.issue_date && (
             <div style={{ fontSize: 12, color: '#6e6560', marginTop: 4 }}>Issued: {fmtDateShort(inv.issue_date)}</div>
           )}
-          {inv.due_date && (
-            <div style={{ fontSize: 12, color: '#6e6560' }}>Due: {fmtDateShort(inv.due_date)}</div>
-          )}
+          <div style={{ fontSize: 12, color: '#6e6560' }}>Due: {inv.due_date ? fmtDateShort(inv.due_date) : 'Upon Receipt'}</div>
           {/* Status stamp — hidden in PDF/print */}
           <div className="invoice-status-stamp" style={{
             display: 'inline-block',
@@ -130,8 +132,21 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
       {/* ── Divider ── */}
       <div style={{ borderTop: '2px solid #1a2f4e', marginBottom: 24 }} />
 
-      {/* ── Bill To + Payment ── */}
+      {/* ── From + Bill To ── */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, marginBottom: 32 }}>
+        <div>
+          <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.12em', color: '#9e9890', fontWeight: 600, marginBottom: 8 }}>
+            From
+          </div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{workspace?.name || '—'}</div>
+          {workspace?.address && <div style={{ color: '#6e6560', fontSize: 12, marginTop: 1 }}>{workspace.address}</div>}
+          {(workspace?.city || workspace?.state || workspace?.zip_code) && (
+            <div style={{ color: '#6e6560', fontSize: 12 }}>
+              {[workspace?.city, workspace?.state, workspace?.zip_code].filter(Boolean).join(', ')}
+            </div>
+          )}
+          {workspace?.email && <div style={{ color: '#6e6560', fontSize: 12 }}>{workspace.email}</div>}
+        </div>
         <div>
           <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.12em', color: '#9e9890', fontWeight: 600, marginBottom: 8 }}>
             Bill To
@@ -915,7 +930,7 @@ ${el.innerHTML}
             {canSend && (
               <button className="btn btn-dark" onClick={() => { setSendMode('send'); setShowSendReview(true) }}
                 style={{ fontSize: 11, fontWeight: 600, letterSpacing: '.05em' }}>
-                SEND INVOICE →
+                REVIEW & SEND →
               </button>
             )}
           </div>

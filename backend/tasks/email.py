@@ -344,14 +344,27 @@ def _invoice_header_block(show_header: bool, *, header_bg: str, accent_color: st
                            logo_img: str, workspace_name: str) -> str:
     """The invoice email's header (brand bar + accent line) — hand-rolled like
     _invoice_footer_block, for the same reason: the invoice template is its own HTML
-    string rather than going through _email_shell."""
+    string rather than going through _email_shell.
+
+    Shows the logo OR the workspace name, never both — matching _email_shell's brand
+    logic (email_html.py). Previously always rendered both stacked in the same cell:
+    with a logo present, the name text (styled to read against the dark header_bg)
+    ended up sitting directly against/behind the logo's own white box, reading as
+    illegible ghosting rather than a second line of branding.
+
+    Text color also adapts when a coach picks a light/white header — the fallback
+    text was hardcoded light-on-dark, so a white header made it disappear."""
     if not show_header:
         return ""
+    from tasks.email_html import is_light_color
+    text_color = "#1a2f4e" if is_light_color(header_bg) else "#f7f4ef"
+    brand = logo_img or (
+        f'<span style="font-family:Georgia,serif;font-size:22px;color:{text_color};">{workspace_name}</span>'
+    )
     return (
         '<tr>\n'
         f'  <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">\n'
-        f'    {logo_img}\n'
-        f'    <span style="font-family:Georgia,serif;font-size:22px;color:#f7f4ef;">{workspace_name}</span>\n'
+        f'    {brand}\n'
         '  </td>\n'
         '</tr>\n'
         f'<tr><td style="height:3px;background:{accent_color};"></td></tr>'
@@ -1235,7 +1248,7 @@ def send_invoice_email(invoice_id: str):
         pdf_html = build_invoice_pdf_html(
             invoice=invoice,
             workspace_name=workspace.name,
-            logo_url="",
+            logo_url=_logo_url,
             due_str=due_str,
             owner_email=owner_email,
             owner_name=owner_name,

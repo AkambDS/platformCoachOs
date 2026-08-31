@@ -26,6 +26,10 @@ const USE_CASE_SAMPLE: Record<EmailUseCase, { subject: string; intro: string; cl
   },
 }
 
+const HEADER_COLOR_PRESETS = [
+  '#ffffff', '#1a2f4e', '#2d6a9f', '#4a7c59', '#7c4d9f', '#c0392b', '#1a1714',
+]
+
 const PLACEHOLDER_HINTS: Record<EmailUseCase, string[]> = {
   confirmation: ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
   invoice:      ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
@@ -247,10 +251,36 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
               </label>
             </div>
             <fieldset disabled={editing.style.show_header === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_header === false ? 0.5 : 1 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
                 <input type="checkbox" checked={editing.show_logo} onChange={e => setEditing((ed: any) => ({ ...ed, show_logo: e.target.checked }))} />
                 Show workspace logo
               </label>
+              <div className="fgroup" style={{ marginBottom: 0 }}>
+                <label className="flabel">Header Color</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+                  {HEADER_COLOR_PRESETS.map(c => (
+                    <button
+                      key={c} type="button"
+                      onClick={() => setStyle('header_bg', c)}
+                      title={c === '#ffffff' ? 'White' : c}
+                      style={{
+                        width: 18, height: 18, borderRadius: '50%', background: c, cursor: 'pointer',
+                        border: (editing.style.header_bg || '#1a2f4e') === c ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.15)',
+                        boxShadow: (editing.style.header_bg || '#1a2f4e') === c ? `0 0 0 2px white, 0 0 0 3px ${c}` : 'none',
+                        padding: 0,
+                      }}
+                    />
+                  ))}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                  <input
+                    type="color" value={editing.style.header_bg || '#1a2f4e'}
+                    onChange={e => setStyle('header_bg', e.target.value)}
+                    style={{ width: 30, height: 22, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
+                  />
+                  <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{editing.style.header_bg || '#1a2f4e'}</span>
+                </div>
+              </div>
             </fieldset>
           </div>
 
