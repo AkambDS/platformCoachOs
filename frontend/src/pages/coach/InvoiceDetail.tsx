@@ -1201,6 +1201,13 @@ ${el.innerHTML}
                 </select>
               </div>
             )}
+            {/* Templates that only differ by subject line render an identical body below —
+                without showing the subject here, switching templates can look like nothing
+                changed even though the actual send will use different wording. */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '8px 12px', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6 }}>
+              <span style={{ fontWeight: 700, letterSpacing: '.08em', color: 'var(--muted)', fontSize: 10, flexShrink: 0 }}>SUBJECT</span>
+              <span style={{ fontWeight: 500, color: 'var(--ink)' }}>{inv.email_subject || '(default)'}</span>
+            </div>
             <div style={{ height: 440, border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden', background: '#eeebe5' }}>
               <iframe
                 key={inv.email_template_id || 'default'}

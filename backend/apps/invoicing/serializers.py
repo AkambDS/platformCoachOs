@@ -33,6 +33,7 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
     client_phone   = serializers.CharField(source="client.phone",      read_only=True)
     payments       = serializers.SerializerMethodField()
     email_html     = serializers.SerializerMethodField()
+    email_subject  = serializers.SerializerMethodField()
 
     class Meta:
         model  = Invoice
@@ -48,6 +49,9 @@ class InvoiceDetailSerializer(serializers.ModelSerializer):
 
     def get_email_html(self, obj):
         return _build_email_html(obj)
+
+    def get_email_subject(self, obj):
+        return _build_email_subject(obj)
 
     def create(self, validated_data):
         items_data = validated_data.pop("items", [])
@@ -179,13 +183,14 @@ def _build_email_html(invoice: Invoice) -> str:
 
         from tasks.email import (
             _DEFAULT_INVOICE_HTML, _DEFAULT_INVOICE_BODY, _invoice_body_block,
-            _invoice_footer_block, _invoice_header_block,
+            _invoice_footer_block, _invoice_header_block, _invoice_closing_block,
             _invoice_heading_block, _invoice_signature_block,
         )
         raw_body  = tmpl.get("intro", "").strip() or _DEFAULT_INVOICE_BODY
         body_text = _apply_tmpl(raw_body, **tmpl_vars)
         tmpl_vars.update(dict(
             body_para=_invoice_body_block(body_text),
+            closing_block=_invoice_closing_block(_apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)),
             footer_block=_invoice_footer_block(
                 tmpl_style.get("show_footer", True) and not disable_style,
                 body_font_css=_body_font_css, owner_email=owner_email,
@@ -212,5 +217,25 @@ def _build_email_html(invoice: Invoice) -> str:
 
         effective_tmpl = custom_html or _DEFAULT_INVOICE_HTML
         return _apply_tmpl(effective_tmpl, **tmpl_vars)
+    except Exception:
+        return ""
+
+
+def _build_email_subject(invoice: Invoice) -> str:
+    """Subject line for the review-before-sending preview, matching what will be sent.
+    Templates that differ only in subject (a common case — a coach duplicates one and
+    tweaks just the wording) render an identical body, so without this the preview looks
+    the same no matter which template is picked; showing the subject is what actually
+    reveals the difference."""
+    try:
+        from tasks.email import _apply_tmpl, _get_invoice_template
+
+        workspace = invoice.workspace
+        tmpl = _get_invoice_template(invoice)
+        tmpl_vars = dict(
+            client_name=invoice.client.full_name, workspace_name=workspace.name,
+            invoice_number=invoice.number, amount=str(invoice.total),
+        )
+        return _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
     except Exception:
         return ""

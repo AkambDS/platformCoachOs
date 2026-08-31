@@ -525,7 +525,7 @@ def email_preview(request):
         from tasks.email import (
             _apply_tmpl, _DEFAULT_INVOICE_HTML, _DEFAULT_INVOICE_BODY, _invoice_body_block,
             _invoice_footer_block, _invoice_header_block,
-            _invoice_heading_block, _invoice_signature_block,
+            _invoice_heading_block, _invoice_signature_block, _invoice_closing_block,
         )
         _show_logo = tmpl.get("show_logo", True) and not disable_style
         logo_img_tag = (
@@ -577,6 +577,7 @@ def email_preview(request):
                 style.get("show_signature", True) and not disable_style,
                 workspace_name=workspace.name,
             ),
+            closing_block=_invoice_closing_block(custom_closing),
         )
         raw_body = raw_intro.strip() or _DEFAULT_INVOICE_BODY
         preview_vars["body_para"] = _invoice_body_block(_apply_tmpl(raw_body, **preview_vars))

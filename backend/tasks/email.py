@@ -296,6 +296,7 @@ _DEFAULT_INVOICE_HTML = (
     '          {heading_block}\n'
     '          {body_para}\n'
     '          {pay_button}\n'
+    '          {closing_block}\n'
     '          {signature_block}\n'
     '        </td>\n'
     '      </tr>\n'
@@ -379,6 +380,16 @@ def _invoice_signature_block(show_signature: bool, *, workspace_name: str) -> st
         '<p style="margin:0 0 4px;font-size:15px;color:#3a3530;">Thanks!</p>\n'
         f'<p style="margin:0;font-size:15px;color:#3a3530;font-weight:600;">{workspace_name}</p>'
     )
+
+
+def _invoice_closing_block(closing: str) -> str:
+    """Optional closing paragraph, shown above the "Thanks!" sign-off — every other
+    email type (confirmation, reminder, payment receipt, ...) has this slot via
+    custom_closing; the invoice template never did, so the "Body — Closing" field in
+    the editor silently did nothing. Matches the invoice template's own styling."""
+    if not closing.strip():
+        return ""
+    return f'<p style="margin:0 0 20px;font-size:13px;color:#9e9890;line-height:1.7;">{closing}</p>'
 
 
 def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email: str,
@@ -1209,6 +1220,7 @@ def send_invoice_email(invoice_id: str):
                 tmpl_style.get("show_signature", True) and not disable_style,
                 workspace_name=workspace.name,
             ),
+            closing_block=_invoice_closing_block(_apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)),
         ))
 
         plain = (
