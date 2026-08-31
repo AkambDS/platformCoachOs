@@ -59,7 +59,11 @@ class Invoice(WorkspaceModel):
     paid_at           = models.DateTimeField(null=True, blank=True)
     # Stripe link
     stripe_invoice_id     = models.CharField(max_length=100, blank=True, db_index=True)
-    stripe_payment_link   = models.URLField(blank=True)
+    # Default URLField max_length (200) is too short for our signed pay token — the
+    # HMAC-signed, base64-encoded token alone runs ~155 chars, which pushes the full
+    # URL past 200 once a real domain + path is added (confirmed in production: 205
+    # chars), causing every save() here to fail with a DB "value too long" error.
+    stripe_payment_link   = models.URLField(blank=True, max_length=500)
     stripe_subscription_id = models.CharField(max_length=100, blank=True)
     # Dates
     issue_date        = models.DateField(null=True, blank=True)

@@ -100,18 +100,46 @@ def email_template_attachments(request):
     """
     POST   /api/settings/email-template-attachments/?use_case=invoice   (multipart, field: file)
         — attach a file (doc/pdf/any) that gets sent alongside every email using this
-          workspace's default template for the given use case (currently only "invoice").
+          workspace's default template for the given use case.
     DELETE /api/settings/email-template-attachments/?use_case=invoice&s3_key=...
         — remove a previously attached file.
+
+    Pass template_id when the use case already has a named template assigned in
+    generic_templates/template_use_case_map — attachments are written onto that entry
+    directly so they land in the same place the send path (_resolve_generic_template)
+    actually reads from. Without template_id, falls back to the legacy per-workspace
+    email_templates[use_case] dict, for callers that predate the generic-templates system.
     """
     import uuid
     from django.core.files.storage import default_storage
 
-    workspace = request.user.workspace
-    use_case  = request.query_params.get("use_case", "invoice")
-    templates = dict(workspace.email_templates or {})
-    tmpl      = dict(templates.get(use_case, {}))
-    attachments = list(tmpl.get("attachments", []))
+    workspace   = request.user.workspace
+    use_case    = request.query_params.get("use_case", "invoice")
+    template_id = request.query_params.get("template_id")
+
+    generic_templates = list(workspace.generic_templates or [])
+    target = next(
+        (t for t in generic_templates if isinstance(t, dict) and t.get("id") == template_id),
+        None,
+    ) if template_id else None
+
+    if target is not None:
+        attachments = list(target.get("attachments", []))
+    else:
+        templates = dict(workspace.email_templates or {})
+        tmpl = dict(templates.get(use_case, {}))
+        attachments = list(tmpl.get("attachments", []))
+
+    def _save_attachments(new_attachments):
+        if target is not None:
+            target["attachments"] = new_attachments
+            workspace.generic_templates = generic_templates
+            workspace.save(update_fields=["generic_templates"])
+        else:
+            tmpl["attachments"] = new_attachments
+            templates[use_case] = tmpl
+            workspace.email_templates = templates
+            workspace.save(update_fields=["email_templates"])
 
     if request.method == "DELETE":
         s3_key = request.query_params.get("s3_key")
@@ -121,10 +149,7 @@ def email_template_attachments(request):
                 default_storage.delete(s3_key)
             except Exception:
                 pass
-        tmpl["attachments"] = remaining
-        templates[use_case] = tmpl
-        workspace.email_templates = templates
-        workspace.save(update_fields=["email_templates"])
+        _save_attachments(remaining)
         return Response({"attachments": remaining})
 
     file = request.FILES.get("file")
@@ -141,10 +166,7 @@ def email_template_attachments(request):
         return Response({"detail": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     attachments.append({"s3_key": s3_key, "file_name": file.name, "size": file.size})
-    tmpl["attachments"] = attachments
-    templates[use_case] = tmpl
-    workspace.email_templates = templates
-    workspace.save(update_fields=["email_templates"])
+    _save_attachments(attachments)
     return Response({"attachments": attachments})
 
 
@@ -320,7 +342,7 @@ def email_preview(request):
     from tasks.email_html import (build_confirmation_email, build_reschedule_email, build_reminder_email,
                                    build_invoice_email, build_payment_receipt_email, build_portal_invite_email,
                                    build_client_communication_email, build_invite_email, build_pipeline_alert_email)
-    from tasks.email import _logo_src, _owner_info
+    from tasks.email import _logo_src, _owner_info, _resolve_generic_template
 
     email_type = request.query_params.get("type", "confirmation")
     workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
@@ -365,8 +387,13 @@ def email_preview(request):
         except (KeyError, ValueError):
             return text
 
-    # Use request params when present (live preview); fall back to saved DB values
-    tmpl = (workspace.email_templates or {}).get(email_type, {})
+    # Use request params when present (live preview); fall back to saved DB values.
+    # Resolved the same way a real send resolves it (generic_templates/template_use_case_map
+    # first, legacy email_templates dict only as a last resort) — a caller that omits
+    # intro/subject/closing (e.g. "Review before sending") must see the template that's
+    # actually about to go out, not whatever happens to sit in the older, no-longer-written
+    # legacy bucket.
+    tmpl = _resolve_generic_template(workspace, email_type)
     raw_intro   = request.query_params.get("intro",   tmpl.get("intro",   ""))
     raw_closing = request.query_params.get("closing", tmpl.get("closing", ""))
     custom_intro   = apply(raw_intro)

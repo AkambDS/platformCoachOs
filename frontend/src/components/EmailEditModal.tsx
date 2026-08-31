@@ -6,37 +6,29 @@ import { useAuthStore } from '../store/auth'
 
 export type EmailUseCase = 'invoice' | 'confirmation'
 
-// Mirrors backend/tasks/email.py's plain-text defaults for each use case — shown here
-// must match what actually sends when the Body field is left untouched, so the left
-// (editable) and right (preview) panels never show different content.
-const DEFAULT_BODY: Record<EmailUseCase, string> = {
-  invoice:
-    'Hi {client_name},\n' +
-    '\n' +
-    'Please find your invoice attached.\n' +
-    '\n' +
-    "You've received an invoice for ${amount} with payment due on {due_date}.\n" +
-    '\n' +
-    '{view_instructions}',
-  confirmation:
-    'Hi {client_name},\n' +
-    '\n' +
-    'Your session with {coach_name} has been scheduled. We look forward to seeing you.\n' +
-    '\n' +
-    'Need to reschedule or have questions? Contact {coach_name} directly.',
+const USE_CASE_LABEL: Record<EmailUseCase, string> = {
+  invoice: 'Invoice',
+  confirmation: 'Booking Confirmation',
 }
 
-const VARIABLE_HINTS: Record<EmailUseCase, string[]> = {
-  invoice: ['{client_name}', '{invoice_number}', '{amount}', '{due_date}', '{view_instructions}'],
-  confirmation: ['{client_name}', '{coach_name}', '{session_title}', '{session_time}'],
+// Same starting copy as Settings → Generic Templates' USE_CASE_SAMPLES for these two use
+// cases — used only when nothing has ever been assigned to this slot yet.
+const USE_CASE_SAMPLE: Record<EmailUseCase, { subject: string; intro: string; closing: string }> = {
+  confirmation: {
+    subject: 'Confirmed: your session with {coach_name}',
+    intro:   'Hi {client_name}, your session with {coach_name} has been scheduled. We look forward to seeing you.',
+    closing: 'Need to reschedule or have questions? Contact {coach_name} directly.',
+  },
+  invoice: {
+    subject: 'Invoice from {workspace_name}',
+    intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
+    closing: 'Questions about this invoice? Just reply to this email.',
+  },
 }
 
-// Every Layout checkbox starts unchecked for every use case — nothing changes for real
-// emails until a coach deliberately opts in and saves. Keyed by use case (rather than a
-// single flat default) in case a future use case ever needs a different starting point.
-const DEFAULT_LAYOUT_CHECKED: Record<EmailUseCase, boolean> = {
-  invoice: false,
-  confirmation: false,
+const PLACEHOLDER_HINTS: Record<EmailUseCase, string[]> = {
+  confirmation: ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  invoice:      ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
 }
 
 function fmtSize(bytes: number) {
@@ -46,12 +38,44 @@ function fmtSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
-// Edits the workspace's shared default email template for a given use case
-// (workspace.email_templates[useCase]) — currently "invoice" and "confirmation"
-// (the session-scheduled email). Style/font/color editing was removed — sends always
-// use the fixed default look that the backend falls back to when no style is saved.
-// Header/footer/heading/sign-off visibility and attachments are the knobs kept, since
-// they change what's actually delivered rather than just how it looks.
+const blankTemplate = (useCase: EmailUseCase) => {
+  const sample = USE_CASE_SAMPLE[useCase]
+  return {
+    id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    name: USE_CASE_LABEL[useCase],
+    subject: sample.subject, intro: sample.intro, closing: sample.closing,
+    custom_html: '', disable_style: false, show_logo: true,
+    style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true } as Record<string, any>,
+    use_cases: [useCase] as string[],
+    include_client_signature_line: false,
+  }
+}
+
+// The template that will actually be used to send this use case right now — whatever is
+// assigned in template_use_case_map, or (if nothing is assigned yet) built-in starter
+// content. Mirrors Settings' GenericTemplatesTab.getEffectiveDefault exactly, since this
+// modal edits the same underlying data, just entered from the schedule/invoice screens
+// instead of from Settings.
+function getEffectiveTemplate(workspace: any, useCase: EmailUseCase) {
+  const templates  = (workspace?.generic_templates as any[]) || []
+  const useCaseMap = (workspace?.template_use_case_map as Record<string, string>) || {}
+  const assignedId = useCaseMap[useCase]
+  const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
+  if (assigned) {
+    return { ...assigned, style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } }
+  }
+  return blankTemplate(useCase)
+}
+
+// Edits the workspace's default email template for a given use case. Reads from and
+// saves into the SAME storage Settings → Generic Templates uses (workspace.generic_templates
+// + workspace.template_use_case_map) — the two used to be separate systems (this modal wrote
+// into the older, now-unused workspace.email_templates dict), which meant an edit made here
+// could look correct in this modal's own preview yet never be what a real send resolves to,
+// the moment any generic-template default existed for the same use case. Saving here now
+// updates the exact same record that the send path (_resolve_generic_template) reads, and
+// the initial content this modal loads is that same resolved record, so the live preview
+// always reflects what would actually go out if nothing further changes.
 //
 // Used two ways: inline as a tab (no onClose — it's not dismissible, so nothing is
 // lost by an accidental outside click) and inside a Modal (onClose provided, renders
@@ -63,72 +87,61 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
   const { show, el: toastEl } = useToast()
   const qc = useQueryClient()
 
-  const saved      = (workspace as any)?.email_templates?.[useCase] || {}
-  const savedStyle = saved.style || {}
-  const defaultChecked = DEFAULT_LAYOUT_CHECKED[useCase]
-
-  const [subject,    setSubject]    = useState<string>(saved.subject || '')
-  const [body,       setBody]       = useState<string>(saved.intro   || DEFAULT_BODY[useCase])
-  const [showHeader,    setShowHeader]    = useState<boolean>(savedStyle.show_header ?? defaultChecked)
-  const [showFooter,    setShowFooter]    = useState<boolean>(savedStyle.show_footer ?? defaultChecked)
-  const [showHeading,   setShowHeading]   = useState<boolean>(savedStyle.show_heading ?? defaultChecked)
-  const [showSignature, setShowSignature] = useState<boolean>(savedStyle.show_signature ?? defaultChecked)
-  const [attachments,   setAttachments]   = useState<any[]>(saved.attachments || [])
-  const [uploadingFile, setUploadingFile] = useState(false)
+  const [editing, setEditing] = useState<any>(() => getEffectiveTemplate(workspace, useCase))
   const [previewHtml,    setPreviewHtml]    = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving,         setSaving]         = useState(false)
+  const [uploadingFile,  setUploadingFile]  = useState(false)
 
-  const renderPreview = async () => {
+  const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
+
+  const renderPreview = async (t: any) => {
     setPreviewLoading(true)
     try {
-      const { data } = await api.get('/api/settings/email-preview/', {
-        params: {
-          type: useCase, _t: Date.now(), intro: body, closing: '',
-          show_header: showHeader, show_footer: showFooter,
-          show_heading: showHeading, show_signature: showSignature,
-        },
-      })
+      const params: Record<string, string> = {
+        type: useCase, client_name: 'Jane Smith',
+        subject: t.subject || 'Your subject line',
+        intro: t.intro, closing: t.closing, _t: String(Date.now()),
+      }
+      if (t.style.header_bg)    params.header_bg = t.style.header_bg
+      if (t.style.accent_color) params.accent_color = t.style.accent_color
+      if (t.style.header_tagline !== undefined) params.header_tagline = t.style.header_tagline
+      if (t.style.footer_text !== undefined) params.footer_text = t.style.footer_text
+      if (!t.show_logo) params.hide_logo = '1'
+      params.show_header = t.style.show_header === false ? '0' : '1'
+      params.show_footer = t.style.show_footer === false ? '0' : '1'
+      params.show_contact_line = t.style.show_contact_line === false ? '0' : '1'
+      const { data } = await api.get('/api/settings/email-preview/', { params })
       setPreviewHtml(data.html || '')
     } catch { setPreviewHtml('') }
     finally { setPreviewLoading(false) }
   }
 
-  useEffect(() => { renderPreview() }, []) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
-    const t = setTimeout(() => renderPreview(), 700)
+    const t = setTimeout(() => renderPreview(editing), 400)
     return () => clearTimeout(t)
-  }, [body, showHeader, showFooter, showHeading, showSignature]) // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Merges a partial update into the saved template and pushes it into the auth store
-  // so every other open view (Review-before-sending, New/Edit Invoice, Schedule Activity)
-  // reflects it immediately instead of showing whatever was cached before this edit.
-  const patchStoreTemplate = (patch: any) => {
-    const existing = (workspace as any)?.email_templates || {}
-    const updated  = { ...existing, [useCase]: { ...existing[useCase], ...patch } }
-    if (user) rehydrate(user, { ...(workspace as any), email_templates: updated })
-    qc.invalidateQueries({ queryKey: ['invoice'] })
-    qc.invalidateQueries({ queryKey: ['invoices'] })
-    qc.invalidateQueries({ queryKey: ['activities'] })
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing.subject, editing.intro, editing.closing, editing.style.header_bg,
+      editing.style.accent_color, editing.style.header_tagline, editing.style.show_header,
+      editing.style.show_footer, editing.style.footer_text, editing.style.show_contact_line,
+      editing.show_logo])
 
   const handleSave = async () => {
     setSaving(true)
     try {
-      const existing = (workspace as any)?.email_templates || {}
-      const updated  = {
-        ...existing,
-        [useCase]: {
-          ...saved, subject, intro: body, closing: '',
-          style: { ...savedStyle, show_header: showHeader, show_footer: showFooter, show_heading: showHeading, show_signature: showSignature },
-        },
-      }
-      const { data } = await settingsApi.updateWorkspace({ email_templates: updated })
-      if (user) rehydrate(user, { ...(workspace as any), ...data, email_templates: updated })
+      const templates  = ((workspace as any)?.generic_templates as any[]) || []
+      const useCaseMap = ((workspace as any)?.template_use_case_map as Record<string, string>) || {}
+      const tagged = { ...editing, use_cases: Array.from(new Set([...(editing.use_cases || []), useCase])) }
+      const exists = templates.some(t => t.id === tagged.id)
+      const nextTemplates = exists ? templates.map(t => t.id === tagged.id ? tagged : t) : [...templates, tagged]
+      const nextMap = { ...useCaseMap, [useCase]: tagged.id }
+      const { data } = await settingsApi.updateWorkspace({ generic_templates: nextTemplates, template_use_case_map: nextMap })
+      if (user) rehydrate(user, { ...(workspace as any), ...data })
+      setEditing(tagged)
       qc.invalidateQueries({ queryKey: ['invoice'] })
       qc.invalidateQueries({ queryKey: ['invoices'] })
       qc.invalidateQueries({ queryKey: ['activities'] })
-      show('Email template saved')
+      show(`Saved — now the default for ${USE_CASE_LABEL[useCase]}`)
     } catch { show('Failed to save', 'error') }
     finally { setSaving(false) }
   }
@@ -138,31 +151,43 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
   // early testing/typos can leave a real template looking like "Hi Xyz, Pls fin d..."
   // with no easy way back to something presentable short of retyping it from scratch.
   const handleResetToDefault = () => {
-    setSubject('')
-    setBody(DEFAULT_BODY[useCase])
-    setShowHeader(defaultChecked)
-    setShowFooter(defaultChecked)
-    setShowHeading(defaultChecked)
-    setShowSignature(defaultChecked)
+    const blank = blankTemplate(useCase)
+    setEditing((e: any) => ({ ...blank, id: e.id }))
+  }
+
+  // Attachments live on the template record itself. If this template hasn't been saved
+  // yet (a brand-new, not-yet-assigned use case), save it first so the attachment has a
+  // real template to attach to — otherwise the upload would have nowhere durable to land.
+  const ensurePersisted = async (): Promise<any> => {
+    const templates = ((workspace as any)?.generic_templates as any[]) || []
+    if (templates.some(t => t.id === editing.id)) return editing
+    const useCaseMap = ((workspace as any)?.template_use_case_map as Record<string, string>) || {}
+    const tagged = { ...editing, use_cases: Array.from(new Set([...(editing.use_cases || []), useCase])) }
+    const nextMap = { ...useCaseMap, [useCase]: tagged.id }
+    const { data } = await settingsApi.updateWorkspace({ generic_templates: [...templates, tagged], template_use_case_map: nextMap })
+    if (user) rehydrate(user, { ...(workspace as any), ...data })
+    setEditing(tagged)
+    return tagged
   }
 
   const handleUploadAttachment = async (file: File) => {
     setUploadingFile(true)
     try {
-      const { data } = await settingsApi.uploadEmailTemplateAttachment(useCase, file)
-      setAttachments(data.attachments)
-      patchStoreTemplate({ attachments: data.attachments })
+      const persisted = await ensurePersisted()
+      const { data } = await settingsApi.uploadEmailTemplateAttachment(useCase, file, persisted.id)
+      setEditing((e: any) => ({ ...e, attachments: data.attachments }))
     } catch { show('Failed to upload attachment', 'error') }
     finally { setUploadingFile(false) }
   }
 
   const handleRemoveAttachment = async (s3Key: string) => {
     try {
-      const { data } = await settingsApi.removeEmailTemplateAttachment(useCase, s3Key)
-      setAttachments(data.attachments)
-      patchStoreTemplate({ attachments: data.attachments })
+      const { data } = await settingsApi.removeEmailTemplateAttachment(useCase, s3Key, editing.id)
+      setEditing((e: any) => ({ ...e, attachments: data.attachments }))
     } catch { show('Failed to remove attachment', 'error') }
   }
+
+  const attachments: any[] = editing.attachments || []
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -195,47 +220,57 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
           <div className="fgroup">
             <label className="flabel">Subject line</label>
             <input className="finput" placeholder="Leave blank for default"
-              value={subject} onChange={e => setSubject(e.target.value)} />
+              value={editing.subject} onChange={e => setEditing((ed: any) => ({ ...ed, subject: e.target.value }))} />
           </div>
           <div className="fgroup">
-            <label className="flabel">Body</label>
-            <textarea className="finput" rows={9} style={{ resize: 'vertical' }}
-              value={body} onChange={e => setBody(e.target.value)} />
+            <label className="flabel">Body — Opening</label>
+            <textarea className="finput" rows={5} style={{ resize: 'vertical' }}
+              value={editing.intro} onChange={e => setEditing((ed: any) => ({ ...ed, intro: e.target.value }))} />
+          </div>
+          <div className="fgroup">
+            <label className="flabel">Body — Closing</label>
+            <textarea className="finput" rows={3} style={{ resize: 'vertical' }}
+              value={editing.closing} onChange={e => setEditing((ed: any) => ({ ...ed, closing: e.target.value }))} />
             <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              This is the entire email body, exactly as shown in the preview — edit or delete any of it freely.
-              Variables: {VARIABLE_HINTS[useCase].map(v => (
+              Variables: {PLACEHOLDER_HINTS[useCase].map(v => (
                 <code key={v} style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10, marginRight: 4 }}>{v}</code>
               ))}
             </div>
           </div>
 
-          <div className="fgroup">
-            <label className="flabel">Layout</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--ink)' }}>
-                <input type="checkbox" checked={showHeader} onChange={e => setShowHeader(e.target.checked)}
-                  style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} />
-                Show header (brand bar)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--ink)' }}>
-                <input type="checkbox" checked={showFooter} onChange={e => setShowFooter(e.target.checked)}
-                  style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} />
-                Show footer (contact line)
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--ink)' }}>
-                <input type="checkbox" checked={showHeading} onChange={e => setShowHeading(e.target.checked)}
-                  style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} />
-                Show heading ({useCase === 'invoice' ? '"sent you an invoice"' : '"your session is confirmed"'})
-              </label>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer', color: 'var(--ink)' }}>
-                <input type="checkbox" checked={showSignature} onChange={e => setShowSignature(e.target.checked)}
-                  style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} />
-                Show sign-off ("Thanks! / business name")
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Header</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={editing.style.show_header !== false} onChange={e => setStyle('show_header', e.target.checked)} />
+                Show header
               </label>
             </div>
+            <fieldset disabled={editing.style.show_header === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_header === false ? 0.5 : 1 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={editing.show_logo} onChange={e => setEditing((ed: any) => ({ ...ed, show_logo: e.target.checked }))} />
+                Show workspace logo
+              </label>
+            </fieldset>
           </div>
 
-          <div className="fgroup" style={{ flex: 1 }}>
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Footer</div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                <input type="checkbox" checked={editing.style.show_footer !== false} onChange={e => setStyle('show_footer', e.target.checked)} />
+                Show footer
+              </label>
+            </div>
+            <fieldset disabled={editing.style.show_footer === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_footer === false ? 0.5 : 1 }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
+                <input type="checkbox" checked={editing.style.show_contact_line !== false} onChange={e => setStyle('show_contact_line', e.target.checked)} />
+                Show "Questions? Contact us at…" line
+              </label>
+            </fieldset>
+          </div>
+
+          <div className="fgroup" style={{ flex: 1, marginTop: 14 }}>
             <label className="flabel">Attachments</label>
             {attachments.length > 0 && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
@@ -268,10 +303,10 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
           </div>
         </div>
 
-        {/* Right — live preview */}
+        {/* Right — live preview, rendered from the exact content that Save would persist */}
         <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden', position: 'relative' }}>
           <div style={{ padding: '8px 14px', background: '#f5f3ef', border: '1px solid var(--border)', borderBottom: 'none', borderRadius: '6px 6px 0 0', fontSize: 11, color: 'var(--muted)', fontWeight: 600, letterSpacing: '.1em', textTransform: 'uppercase', flexShrink: 0 }}>
-            Live Preview
+            Live Preview — this is what will actually send
           </div>
           {previewLoading && (
             <div style={{ position: 'absolute', top: 36, left: 0, right: 0, bottom: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,.75)', zIndex: 1, fontSize: 12, color: 'var(--muted)' }}>

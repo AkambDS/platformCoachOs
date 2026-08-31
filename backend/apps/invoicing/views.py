@@ -92,7 +92,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if invoice.status not in (Invoice.Status.DRAFT, Invoice.Status.SENT):
             return Response({"detail": "Can only send Draft or Sent invoices."}, status=400)
         from tasks.email import send_invoice_email
-        send_invoice_email(str(invoice.id))
+        try:
+            send_invoice_email(str(invoice.id))
+        except Exception as e:
+            return Response({"detail": f"Failed to send invoice email: {e}"}, status=502)
         # send_invoice_email fetches and saves its own Invoice instance (e.g. to sync
         # stripe_payment_link) — refresh this one before writing, so an unscoped save()
         # below doesn't clobber that update with this stale in-memory copy.
@@ -214,7 +217,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                    Invoice.Status.PARTIALLY_PAID):
             return Response({"detail": "Reminder only for sent/overdue invoices."}, status=400)
         from tasks.email import send_invoice_email
-        send_invoice_email(str(invoice.id))
+        try:
+            send_invoice_email(str(invoice.id))
+        except Exception as e:
+            return Response({"detail": f"Failed to send reminder: {e}"}, status=502)
         return Response({"detail": "Reminder sent."})
 
     @action(detail=True, methods=["post"], url_path="cancel-subscription")

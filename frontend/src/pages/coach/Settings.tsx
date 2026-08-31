@@ -1748,6 +1748,12 @@ function GenericTemplatesTab() {
   const [templates, setTemplates] = useState<any[]>((workspace as any)?.generic_templates || [])
   const [useCaseMap, setUseCaseMap] = useState<Record<string, string>>((workspace as any)?.template_use_case_map || {})
   const [editing, setEditing] = useState<any>(null)
+  // Set only when the editor was opened via a specific use case's "Default" card — the
+  // purpose is already known then, so saving assigns it immediately instead of asking
+  // "where should this be used?" a second time. Cleared for openNew/openEdit, where the
+  // purpose genuinely is ambiguous (a from-scratch template, or an existing one that
+  // might be getting repurposed).
+  const [directAssignUseCase, setDirectAssignUseCase] = useState<string | null>(null)
   const [previewHtml, setPreviewHtml] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -1826,8 +1832,8 @@ function GenericTemplatesTab() {
       editing?.style?.show_footer, editing?.style?.footer_text, editing?.style?.show_contact_line,
       editing?.show_logo, editing?.include_client_signature_line])
 
-  const openNew  = () => setEditing(blankGenericTemplate())
-  const openEdit = (t: any) => setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } })
+  const openNew  = () => { setDirectAssignUseCase(null); setEditing(blankGenericTemplate()) }
+  const openEdit = (t: any) => { setDirectAssignUseCase(null); setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } }) }
   const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
   const handleDelete = async (id: string) => {
@@ -1877,9 +1883,13 @@ function GenericTemplatesTab() {
   // yet, open a new editor pre-filled with the built-in starter content, pre-assigned to
   // this use case — saving it is what actually creates and activates the default.
   const openDefaultEditor = (ucKey: string) => {
+    setDirectAssignUseCase(ucKey)
     const assignedId = useCaseMap[ucKey]
     const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
-    if (assigned) { openEdit(assigned); return }
+    if (assigned) {
+      setEditing({ ...assigned, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } })
+      return
+    }
     const sample = USE_CASE_SAMPLES[ucKey]
     const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
     setEditing({
@@ -1911,6 +1921,27 @@ function GenericTemplatesTab() {
     try {
       const exists = templates.some(t => t.id === editing.id)
       const nextTemplates = exists ? templates.map(t => t.id === editing.id ? editing : t) : [...templates, editing]
+
+      if (directAssignUseCase) {
+        // Opened via a specific use case's "Default" card — the purpose was never
+        // ambiguous, so save + assign happen together instead of behind a second
+        // "where should this be used?" screen. This is exactly the step that was
+        // previously easy to stop short of: saving the template content alone (this
+        // block used to end here) left template_use_case_map untouched, so the
+        // edit — however correct it looked in the live preview — never actually
+        // became what any send path resolves to.
+        const nextMap = { ...useCaseMap, [directAssignUseCase]: editing.id }
+        const taggedTemplates = nextTemplates.map(t => t.id === editing.id
+          ? { ...t, use_cases: Array.from(new Set([...(t.use_cases || []), directAssignUseCase])) }
+          : t
+        )
+        await persist(taggedTemplates, nextMap)
+        show(`Saved — now the default for ${GENERIC_USE_CASES.find(u => u.key === directAssignUseCase)?.label || directAssignUseCase}`)
+        setDirectAssignUseCase(null)
+        setEditing(null)
+        return
+      }
+
       await persist(nextTemplates, useCaseMap)
       // Pre-check based on this template's own use_cases tags, not just whichever one
       // happens to be "the" active default — otherwise a template that's tagged as a

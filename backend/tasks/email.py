@@ -43,6 +43,43 @@ def _logo_url(workspace) -> str:
     return _logo_src(workspace)
 
 
+def _resolve_generic_template(workspace, use_case: str) -> dict:
+    """Whichever named template (Settings -> Generic Templates) a coach has assigned as
+    the default for this use case, via template_use_case_map — the data actually behind
+    every "Default (Settings -> Generic Templates -> ...)" picker option across the app.
+
+    Every send path used to skip generic_templates/template_use_case_map entirely and
+    read straight from the legacy per-use-case `workspace.email_templates` dict instead —
+    a field the Generic Templates UI never writes to. The result: editing and assigning a
+    template in Settings had no effect on the email actually sent when "Default" was
+    picked; previewing there looked right because the preview endpoint (unlike these send
+    functions) does read generic_templates/template_use_case_map correctly.
+
+    Falls back to the legacy dict only when this use case has no assignment in the new
+    system at all (e.g. workspaces that never touched Generic Templates), so nothing
+    regresses for a use case nobody has migrated yet."""
+    use_case_map = getattr(workspace, "template_use_case_map", None) or {}
+    template_id = use_case_map.get(use_case)
+    if template_id:
+        tmpl = next(
+            (t for t in (workspace.generic_templates or [])
+             if isinstance(t, dict) and t.get("id") == template_id),
+            None,
+        )
+        if tmpl:
+            return {
+                "subject":       tmpl.get("subject", ""),
+                "intro":         tmpl.get("intro", ""),
+                "closing":       tmpl.get("closing", ""),
+                "custom_html":   tmpl.get("custom_html", ""),
+                "disable_style": tmpl.get("disable_style", False),
+                "show_logo":     tmpl.get("show_logo", True),
+                "style":         tmpl.get("style", {}),
+                "attachments":   tmpl.get("attachments", []),
+            }
+    return (workspace.email_templates or {}).get(use_case, {})
+
+
 def _get_invoice_template(invoice) -> dict:
     """Resolve which template dict drives this invoice's email. A per-invoice override
     (invoice.email_template_id, set from the "Email template" picker in Review-before-
@@ -67,7 +104,7 @@ def _get_invoice_template(invoice) -> dict:
                 "style":         tmpl.get("style", {}),
                 "attachments":   tmpl.get("attachments", []),
             }
-    return (workspace.email_templates or {}).get("invoice", {})
+    return _resolve_generic_template(workspace, "invoice")
 
 
 def _get_activity_template(activity, use_case: str) -> dict:
@@ -93,7 +130,7 @@ def _get_activity_template(activity, use_case: str) -> dict:
                 "show_logo":     tmpl.get("show_logo", True),
                 "style":         tmpl.get("style", {}),
             }
-    return (workspace.email_templates or {}).get(use_case, {})
+    return _resolve_generic_template(workspace, use_case)
 
 
 def _get_activity_confirmation_template(activity) -> dict:
@@ -122,14 +159,14 @@ def _get_invite_template(invitation) -> dict:
                 "show_logo":     tmpl.get("show_logo", True),
                 "style":         tmpl.get("style", {}),
             }
-    return (workspace.email_templates or {}).get("team_invite", {})
+    return _resolve_generic_template(workspace, "team_invite")
 
 
 def _get_pipeline_template(workspace) -> dict:
     """Resolve the workspace's default "pipeline" template (Settings > Generic Templates).
     Pipeline alerts are dispatched automatically off the stage-tracking cron, not reviewed
     per-deal before sending, so — like reminders — there's no per-record override to check."""
-    return (workspace.email_templates or {}).get("pipeline", {})
+    return _resolve_generic_template(workspace, "pipeline")
 
 
 def _owner_info(workspace) -> tuple:
@@ -744,7 +781,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             session_title=activity.title, session_time=dt,
             workspace_name=workspace.name, time_label=time_label,
         )
-        tmpl = (workspace.email_templates or {}).get(tmpl_key, {})
+        tmpl = _resolve_generic_template(workspace, tmpl_key)
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Reminder: {activity.title} in {time_label}"
@@ -1235,6 +1272,11 @@ def send_invoice_email(invoice_id: str):
                      related_id=invoice_id, body_html=html)
     except Exception as e:
         logger.error(f"send_invoice_email failed: {e}")
+        # Re-raise (unlike the other email tasks in this file) — this one has callers
+        # that mark an invoice "Sent" right after calling it. Swallowing the error here
+        # let that happen unconditionally, so an invoice could show "Sent" in the UI
+        # while the client never received anything.
+        raise
 
 
 def send_payment_receipt_email(invoice_id: str):
@@ -1249,7 +1291,7 @@ def send_payment_receipt_email(invoice_id: str):
         payment_date = (last_payment.paid_at if last_payment else timezone.now()).strftime("%B %d, %Y")
         amount_paid  = f"{invoice.amount_paid:,.2f}"
 
-        tmpl = (workspace.email_templates or {}).get("payment_receipt", {})
+        tmpl = _resolve_generic_template(workspace, "payment_receipt")
         tmpl_vars = dict(
             client_name=invoice.client.full_name, workspace_name=workspace.name,
             invoice_number=invoice.number, amount=amount_paid, payment_date=payment_date,
@@ -1762,7 +1804,7 @@ def send_portal_invite_email(client_id: str):
         coach_name   = client.coach.full_name if client.coach else workspace.name
         owner_email, owner_name = _owner_info(workspace)
 
-        tmpl      = (workspace.email_templates or {}).get("portal_invite", {})
+        tmpl      = _resolve_generic_template(workspace, "portal_invite")
         tmpl_vars = dict(
             client_name=client.full_name,
             workspace_name=workspace.name,

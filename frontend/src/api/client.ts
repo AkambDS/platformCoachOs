@@ -58,15 +58,15 @@ export const settingsApi = {
     return api.post('/api/settings/logo/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
   },
   removeLogo:         ()              => api.delete('/api/settings/logo/'),
-  uploadEmailTemplateAttachment: (useCase: string, file: File) => {
+  uploadEmailTemplateAttachment: (useCase: string, file: File, templateId?: string) => {
     const fd = new FormData(); fd.append('file', file)
     return api.post('/api/settings/email-template-attachments/', fd, {
-      params: { use_case: useCase },
+      params: { use_case: useCase, ...(templateId ? { template_id: templateId } : {}) },
       headers: { 'Content-Type': 'multipart/form-data' },
     })
   },
-  removeEmailTemplateAttachment: (useCase: string, s3Key: string) =>
-    api.delete('/api/settings/email-template-attachments/', { params: { use_case: useCase, s3_key: s3Key } }),
+  removeEmailTemplateAttachment: (useCase: string, s3Key: string, templateId?: string) =>
+    api.delete('/api/settings/email-template-attachments/', { params: { use_case: useCase, s3_key: s3Key, ...(templateId ? { template_id: templateId } : {}) } }),
   getPipelineStages:    ()              => api.get('/api/settings/pipeline-stages/'),
   createPipelineStage:  (d: any)       => api.post('/api/settings/pipeline-stages/', d),
   updatePipelineStage:  (id: number, d: any) => api.patch(`/api/settings/pipeline-stages/${id}/`, d),
