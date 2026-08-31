@@ -206,7 +206,14 @@ ACCOUNT_AUTHENTICATION_METHOD = "email"
 ACCOUNT_USER_MODEL_USERNAME_FIELD = None
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
-        "SCOPE": ["profile", "email", "https://www.googleapis.com/auth/calendar"],
+        # calendar.events (not the full "calendar" scope) — every Calendar API call this
+        # app makes (tasks/calendar.py) is event create/update/delete/watch/list on the
+        # coach's own primary calendar; nothing touches calendar management, sharing/ACLs,
+        # or settings, so the narrower scope covers 100% of actual usage. Matters for
+        # Google's OAuth verification tier — the full "calendar" scope sits in a stricter
+        # tier than "calendar.events" (confirm current tiers on Google's scope docs before
+        # relying on this, they're periodically revised).
+        "SCOPE": ["profile", "email", "https://www.googleapis.com/auth/calendar.events"],
         "AUTH_PARAMS": {"access_type": "offline", "prompt": "consent"},
     }
 }
