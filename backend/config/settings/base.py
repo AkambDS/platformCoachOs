@@ -283,6 +283,14 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.email.retry_pending_invites",
         "schedule": crontab(minute="*/5"),
     },
+    # Site reachability + SSL cert expiry — runs from inside our own infra rather than
+    # depending on the public site being reachable to alert about itself. Added after
+    # the 2026-09 incident where certbot's renewal silently failed for months with
+    # nothing watching for it.
+    "check-site-health": {
+        "task": "tasks.health.check_site_health",
+        "schedule": crontab(minute="*/30"),
+    },
 }
 
 # ── Stripe (platform-level — dj-stripe, CoachOS's own billing) ─────────────
