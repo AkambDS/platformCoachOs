@@ -145,6 +145,13 @@ services:
       - /etc/letsencrypt:/etc/letsencrypt:ro
       - staticfiles:/var/www/static:ro
       - frontdist:/var/www/frontend:ro
+      # Shared with certbot on the host (webroot ACME challenge) — nginx.conf already
+      # expected this path (location /.well-known/acme-challenge/ { root /var/www/certbot; })
+      # but it was never actually mounted, so certbot's standalone renewal (needing
+      # exclusive port 80, which nginx always holds) was the only path that ever worked —
+      # and it silently failed every time since nginx never stops. This makes the
+      # already-configured webroot path actually functional.
+      - ./certbot-webroot:/var/www/certbot:ro
     logging:
       driver: json-file
       options: { max-size: "20m", max-file: "3" }
