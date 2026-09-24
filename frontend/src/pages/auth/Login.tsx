@@ -1,13 +1,18 @@
 import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
-import { authApi, systemApi } from '../../api/client'
+import { authApi, systemApi, demoApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
+import { DEMO_EMAIL, DEMO_PASSWORD, DEMO_START_TOUR_KEY, DEMO_LEAD_EMAIL_KEY } from '../../constants/demo'
+import DemoGateModal from '../../components/DemoGateModal'
 
 export default function Login() {
   const [email, setEmail]       = useState('')
   const [password, setPassword] = useState('')
   const [error, setError]       = useState('')
   const [loading, setLoading]   = useState(false)
+  const [showDemoGate, setShowDemoGate] = useState(false)
+  const [demoLoading, setDemoLoading] = useState(false)
+  const [demoGateError, setDemoGateError] = useState('')
   const [banner, setBanner]     = useState<{ message: string; is_active: boolean } | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
@@ -26,6 +31,24 @@ export default function Login() {
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed. Check your credentials.')
     } finally { setLoading(false) }
+  }
+
+  const handleDemoGateSubmit = async (firstName: string, leadEmail: string) => {
+    setDemoLoading(true); setDemoGateError('')
+    try {
+      // Capture the lead first — if this fails we still let them into the demo rather
+      // than blocking a prospect over an analytics write, but we do try first so a
+      // transient failure doesn't silently lose the lead.
+      try { await demoApi.captureLead({ email: leadEmail, first_name: firstName }) } catch { /* non-fatal */ }
+
+      const { data } = await authApi.login({ email: DEMO_EMAIL, password: DEMO_PASSWORD })
+      login(data.user, data.workspace)
+      sessionStorage.setItem(DEMO_START_TOUR_KEY, '1')
+      sessionStorage.setItem(DEMO_LEAD_EMAIL_KEY, leadEmail)
+      navigate('/dashboard')
+    } catch {
+      setDemoGateError('The live demo is temporarily unavailable — please try again shortly.')
+    } finally { setDemoLoading(false) }
   }
 
   return (
@@ -136,9 +159,38 @@ export default function Login() {
           <p className="auth-footer" style={{ fontSize: 12, color: 'var(--muted)', marginTop: 24 }}>
             Coaches &amp; assistants — use the invite link sent to your email.
           </p>
+
+          <div style={{
+            marginTop: 28, paddingTop: 22, borderTop: '1px solid var(--border, #ede9e1)',
+            textAlign: 'center' as const,
+          }}>
+            <p style={{ fontSize: 12.5, color: 'var(--muted)', margin: '0 0 4px', fontWeight: 600 }}>
+              New here?
+            </p>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 12px', lineHeight: 1.6 }}>
+              Explore a live sample workspace — no signup required. Test login:{' '}
+              <code style={{ fontSize: 11.5 }}>{DEMO_EMAIL}</code>
+            </p>
+            <button
+              type="button"
+              className="auth-btn"
+              onClick={() => { setDemoGateError(''); setShowDemoGate(true) }}
+              style={{ background: 'transparent', color: 'var(--gold, #a97e1f)', border: '1px solid var(--gold, #a97e1f)' }}
+            >
+              ▶ Log In as Demo User & Take the Tour
+            </button>
+          </div>
         </div>
       </div>
     </div>
+    {showDemoGate && (
+      <DemoGateModal
+        loading={demoLoading}
+        error={demoGateError}
+        onClose={() => setShowDemoGate(false)}
+        onSubmit={handleDemoGateSubmit}
+      />
+    )}
     </div>
   )
 }

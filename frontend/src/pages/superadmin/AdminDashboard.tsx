@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AdminShell from '../../components/layout/AdminShell'
 
-type Tab = 'overview' | 'workspaces' | 'invoices' | 'tokens' | 'feedback' | 'banner'
+type Tab = 'overview' | 'workspaces' | 'invoices' | 'tokens' | 'feedback' | 'banner' | 'demo-leads'
 
 function hashToTab(hash: string): Tab {
   if (hash === '#workspaces') return 'workspaces'
@@ -12,6 +12,7 @@ function hashToTab(hash: string): Tab {
   if (hash === '#feedback') return 'feedback'
   if (hash === '#banner') return 'banner'
   if (hash === '#invoices') return 'invoices'
+  if (hash === '#demo-leads') return 'demo-leads'
   return 'overview'
 }
 
@@ -181,6 +182,14 @@ export default function AdminDashboard() {
     queryKey: ['admin', 'banners'],
     queryFn: () => adminApi.listBanners().then(r => r.data),
     enabled: tab === 'banner',
+    staleTime: 0,
+    refetchOnWindowFocus: false,
+  })
+
+  const { data: demoLeads = [], isLoading: demoLeadsLoading } = useQuery({
+    queryKey: ['admin', 'demo-leads'],
+    queryFn: () => adminApi.demoLeads().then(r => r.data),
+    enabled: tab === 'demo-leads',
     staleTime: 0,
     refetchOnWindowFocus: false,
   })
@@ -834,6 +843,63 @@ export default function AdminDashboard() {
             loading={invoicesLoading}
             onRefresh={() => refetchBilling()}
           />
+        )}
+        {/* ── Demo Leads tab ────────────────────────────────── */}
+        {tab === 'demo-leads' && (
+          <div>
+            <div style={{ marginBottom: 18 }}>
+              <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 22, fontWeight: 300, color: 'var(--ink)' }}>
+                Demo Leads
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+                Everyone who entered the "Log In as Demo User" gate on the login screen —
+                follow up with the ones who took the tour.
+              </div>
+            </div>
+
+            {demoLeadsLoading ? (
+              <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center' }}>Loading…</div>
+            ) : (demoLeads as any[]).length === 0 ? (
+              <div style={{ color: 'var(--muted)', padding: 40, textAlign: 'center' }}>No demo leads yet.</div>
+            ) : (
+              <table className="tbl">
+                <thead>
+                  <tr>
+                    <th>First Name</th>
+                    <th>Email</th>
+                    <th>Logins</th>
+                    <th>Tour Started</th>
+                    <th>Tour Completed</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(demoLeads as any[]).map((lead: any) => (
+                    <tr key={lead.id}>
+                      <td style={{ fontWeight: 600, fontSize: 14 }}>{lead.first_name}</td>
+                      <td>
+                        <a href={`mailto:${lead.email}`} style={{ fontSize: 13, color: 'var(--ink)' }}>{lead.email}</a>
+                      </td>
+                      <td style={{ fontSize: 13 }}>{lead.login_count}</td>
+                      <td>
+                        <span className={`pill ${lead.tour_started ? 'pill-blue' : 'pill-grey'}`}>
+                          {lead.tour_started ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                      <td>
+                        <span className={`pill ${lead.tour_completed ? 'pill-green' : 'pill-grey'}`}>
+                          {lead.tour_completed ? 'Yes' : 'No'}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{timeAgo(lead.first_seen_at)}</td>
+                      <td style={{ fontSize: 12, color: 'var(--muted)' }}>{timeAgo(lead.last_seen_at)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
         )}
       </div>
     </AdminShell>

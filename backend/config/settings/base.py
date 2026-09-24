@@ -76,6 +76,7 @@ MIDDLEWARE = [
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
     "config.middleware.WorkspaceTenantMiddleware",
+    "config.middleware.DemoWorkspaceReadOnlyMiddleware",
 ]
 
 ROOT_URLCONF    = "config.urls"
@@ -151,6 +152,7 @@ REST_FRAMEWORK = {
         "login":          "10/minute",  # login attempts per IP
         "password_reset": "5/minute",   # password-reset requests per IP
         "register":       "5/hour",     # workspace registrations per IP
+        "demo_lead":      "30/hour",    # demo-tour lead capture + tour-event pings per IP
     },
 }
 
@@ -181,6 +183,10 @@ RESEND_API_KEY = env("RESEND_API_KEY", default="")
 GOOGLE_CALENDAR_WEBHOOK_TOKEN = env("GOOGLE_CALENDAR_WEBHOOK_TOKEN", default="")
 GOOGLE_CLIENT_ID     = env("GOOGLE_CLIENT_ID",     default="")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET", default="")
+ANTHROPIC_API_KEY    = env("ANTHROPIC_API_KEY",    default="")
+# Dev-only: bypass the real Anthropic call and return canned suggestions, so the
+# accept/reject UI can be exercised without API credit. Never set true in production.
+AI_NOTES_MOCK        = env.bool("AI_NOTES_MOCK",   default=False)
 
 # ── CORS ──────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS  = env.list(

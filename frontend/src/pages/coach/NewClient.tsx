@@ -49,7 +49,7 @@ export default function NewClient() {
     company: '', job_title: '', lead_source: '', referral_name: '', birth_date: '',
     website: '', linkedin_url: '',
     notes: '', tags: [] as string[], communication_tags: [] as string[],
-    status: 'Lead', create_deal: true,
+    status: 'Lead', create_deal: false,
     lead_source_other: '',
     address: '', address2: '', city: '', state: '', zip: '',
     coach: '',

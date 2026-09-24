@@ -3,6 +3,19 @@ import Sidebar from './Sidebar'
 import TopNav from './TopNav'
 import FeedbackButton from '../FeedbackButton'
 import { useAuthStore } from '../../store/auth'
+import { DEMO_WORKSPACE_SLUG } from '../../constants/demo'
+
+function DemoBanner() {
+  return (
+    <div style={{
+      background: '#1a2f4e', color: '#f7f4ef', padding: '8px 20px',
+      fontSize: 12.5, textAlign: 'center' as const, flexShrink: 0,
+      borderBottom: '2px solid #d9b96a',
+    }}>
+      ▶ You're viewing a shared, read-only demo workspace — saving, deleting, and email/SMS notifications are disabled.
+    </div>
+  )
+}
 
 function CoachFooter() {
   const { user } = useAuthStore() as any
@@ -38,6 +51,9 @@ function CoachFooter() {
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
+  const { workspace } = useAuthStore() as any
+  const isDemo = workspace?.slug === DEMO_WORKSPACE_SLUG
+
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       <Sidebar />
@@ -47,6 +63,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         height: '100vh', overflow: 'hidden',
         background: '#f7f4ef',
       }}>
+        {isDemo && <DemoBanner />}
         <TopNav />
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', background: '#f7f4ef' }}>
           {children}

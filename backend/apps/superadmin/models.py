@@ -1,4 +1,26 @@
+import uuid
+
 from django.db import models
+
+
+class DemoLead(models.Model):
+    """Captured from the "Log In as Demo User" gate on the public Login page (see
+    frontend/src/components/DemoGateModal.tsx) — lets the team follow up with people
+    who tried the product demo. Not tied to any Workspace; the demo session itself
+    always runs against the one shared coachos-demo workspace regardless of who's
+    behind the wheel."""
+    id             = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    email          = models.EmailField(unique=True)
+    first_name     = models.CharField(max_length=100)
+    login_count    = models.PositiveIntegerField(default=0)
+    tour_started   = models.BooleanField(default=False)
+    tour_completed = models.BooleanField(default=False)
+    first_seen_at  = models.DateTimeField(auto_now_add=True)
+    last_seen_at   = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "superadmin_demolead"
+        ordering = ["-last_seen_at"]
 
 
 class PlatformInvoice(models.Model):

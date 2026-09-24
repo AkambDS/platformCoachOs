@@ -3,12 +3,14 @@ from rest_framework.decorators import api_view, permission_classes, throttle_cla
 from rest_framework.response import Response
 from rest_framework import status as http_status
 from rest_framework.permissions import AllowAny
+from rest_framework.throttling import AnonRateThrottle
 from apps.accounts.permissions import IsPlatformAdmin
+from django.core.validators import validate_email
 from django.utils import timezone
 from datetime import timedelta
 
 from apps.accounts.models import Workspace, User, WorkspaceInvitation, WorkspaceRegistrationToken, AuditLog, ErrorLog
-from .models import PlatformInvoice, PlatformPayment
+from .models import PlatformInvoice, PlatformPayment, DemoLead
 from apps.pipeline.models import PipelineStageConfig
 from apps.clients.models import Client, ClientStatusConfig, ClientTagConfig, EmailLog
 from apps.activities.models import Activity
@@ -1085,6 +1087,70 @@ def public_banner(request):
     if not banner:
         return Response({"is_active": False, "message": ""})
     return Response({"is_active": True, "message": banner.message})
+
+
+class DemoLeadRateThrottle(AnonRateThrottle):
+    """Max 30/hour per IP — the demo-lead gate and tour-event pings are public/unauthenticated."""
+    scope = "demo_lead"
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([DemoLeadRateThrottle])
+def capture_demo_lead(request):
+    """POST /api/demo/lead/ — public, no auth. Called from the "Log In as Demo User" gate
+    (DemoGateModal.tsx) before the actual demo login — records who's interested in the
+    product so the team can follow up. Re-entries by the same email just bump login_count
+    and refresh first_name/last_seen_at rather than creating duplicates."""
+    email = (request.data.get("email") or "").strip().lower()
+    first_name = (request.data.get("first_name") or "").strip()
+    if not email or not first_name:
+        return Response({"detail": "First name and email are required."}, status=400)
+    try:
+        validate_email(email)
+    except Exception:
+        return Response({"detail": "Enter a valid email address."}, status=400)
+
+    lead, created = DemoLead.objects.get_or_create(email=email, defaults={"first_name": first_name})
+    lead.first_name = first_name
+    lead.login_count += 1
+    lead.save(update_fields=["first_name", "login_count", "last_seen_at"])
+    return Response({"detail": "ok"}, status=201 if created else 200)
+
+
+@api_view(["POST"])
+@permission_classes([AllowAny])
+@throttle_classes([DemoLeadRateThrottle])
+def demo_lead_event(request):
+    """POST /api/demo/lead/event/ — public, no auth (called by useTour.ts while logged in
+    as the demo user — exempted from DemoWorkspaceReadOnlyMiddleware, see config/middleware.py).
+    Marks a tour milestone for a previously captured lead, keyed by email."""
+    email = (request.data.get("email") or "").strip().lower()
+    event = request.data.get("event")
+    if event not in ("tour_started", "tour_completed"):
+        return Response({"detail": "Invalid event."}, status=400)
+    updated = DemoLead.objects.filter(email=email).update(**{event: True, "last_seen_at": timezone.now()})
+    if not updated:
+        return Response({"detail": "Lead not found."}, status=404)
+    return Response({"detail": "ok"})
+
+
+@api_view(["GET"])
+@permission_classes([IsPlatformAdmin])
+def demo_leads_list(request):
+    """GET /api/superadmin/demo-leads/ — everyone who's entered the public demo gate,
+    newest activity first, so the team can see who to reach out to."""
+    leads = DemoLead.objects.all()
+    return Response([{
+        "id": str(l.id),
+        "email": l.email,
+        "first_name": l.first_name,
+        "login_count": l.login_count,
+        "tour_started": l.tour_started,
+        "tour_completed": l.tour_completed,
+        "first_seen_at": l.first_seen_at.isoformat(),
+        "last_seen_at": l.last_seen_at.isoformat(),
+    } for l in leads])
 
 
 @api_view(["GET", "POST"])

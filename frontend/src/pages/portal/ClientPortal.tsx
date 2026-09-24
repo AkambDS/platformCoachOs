@@ -4,6 +4,8 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
+import { useInactivityTimer } from '../../hooks/useInactivityTimer'
+import InactivityWarningModal from '../../components/InactivityWarningModal'
 
 const BASE = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -688,6 +690,7 @@ export default function ClientPortal() {
   const [materials, setMaterials]     = useState<Material[]>([])
   const [invoices, setInvoices]       = useState<Invoice[]>([])
   const [notes, setNotes]             = useState<Note[]>([])
+  const [showIdleWarning, setShowIdleWarning] = useState(false)
 
   useEffect(() => { axios.get(`${BASE}/api/settings/public-branding/`).then(r => setBranding(r.data)).catch(() => {}) }, [])
 
@@ -732,12 +735,28 @@ export default function ClientPortal() {
     setActivities([]); setMaterials([]); setInvoices([]); setNotes([]); setActiveTab('Overview')
   }
 
+  const handleIdleLogout = useCallback(() => { setShowIdleWarning(false); logout() }, []) // eslint-disable-line
+
+  // Same 15 min warn / 30 min logout as the coach app (useInactivityTimer defaults) —
+  // kept uniform across every role, including this separate portal_client auth scope.
+  const { stayActive } = useInactivityTimer({
+    enabled:  !!session,
+    onWarn:   () => setShowIdleWarning(true),
+    onLogout: handleIdleLogout,
+  })
+
   if (!session) return <LoginScreen branding={branding} onLogin={d => setSession(d)} />
 
   const wsName = session.workspace_name || branding?.name || 'CoachOS'
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--paper)', display: 'flex', flexDirection: 'column' }}>
+      {showIdleWarning && (
+        <InactivityWarningModal
+          onStay={() => { setShowIdleWarning(false); stayActive() }}
+          onLogout={handleIdleLogout}
+        />
+      )}
 
       {/* Header */}
       <header style={{ background: 'var(--ink)', padding: '0 32px', height: 60, display: 'flex', alignItems: 'center', justifyContent: 'space-between', position: 'sticky', top: 0, zIndex: 50, boxShadow: 'var(--shadow-md)' }}>

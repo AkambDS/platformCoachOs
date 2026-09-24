@@ -2504,7 +2504,7 @@ function IntegrationsTab() {
   return (
     <div style={{ maxWidth: 560 }}>
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
+        <h2 data-tour="settings-integrations" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
         <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow.</p>
       </div>
 

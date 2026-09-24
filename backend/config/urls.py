@@ -8,7 +8,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
 from django.conf import settings as django_settings
-from apps.superadmin.views import public_banner
+from apps.superadmin.views import public_banner, capture_demo_lead, demo_lead_event
 from apps.activities.public_views import (
     SessionConfirmView, SessionCancelView, SessionRescheduleView, GoogleCalendarWebhookView,
 )
@@ -152,6 +152,8 @@ urlpatterns = [
     path("api/audit/",       include("apps.audit.urls")),
     path("api/superadmin/",  include("apps.superadmin.urls")),
     path("api/system/banner/", public_banner),
+    path("api/demo/lead/",       capture_demo_lead),
+    path("api/demo/lead/event/", demo_lead_event),
     path("api/stripe/",      include("djstripe.urls", namespace="djstripe")),
     path("api/internal/reminders/",       run_reminders),
     path("api/internal/invites/",         run_pending_invites),

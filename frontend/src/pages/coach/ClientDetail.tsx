@@ -507,25 +507,103 @@ function parseStructured(text: string): { notes: string; reflection: string; com
   try { return JSON.parse(text.slice(STRUCTURED_PREFIX.length)) } catch { return null }
 }
 
-function StructuredForm({ value, onChange }: { value: { notes: string; reflection: string; commitment: string }; onChange: (v: any) => void }) {
+type StructValue = { notes: string; reflection: string; commitment: string }
+type AISuggestions = { notes: string; reflection: string; commitment: string } | null
+
+const AI_SECTION_LABELS: Record<string, string> = {
+  notes: 'Session Notes', reflection: 'Coach Reflection', commitment: 'Commitment',
+}
+
+function StructuredForm({ value, onChange, clientId }: {
+  value: StructValue; onChange: (v: any) => void
+  clientId?: string
+}) {
   const s = (k: string, v: string) => onChange({ ...value, [k]: v })
   const sections = [
     { key: 'notes',      label: 'Session Notes',     placeholder: 'What happened in this session…' },
     { key: 'reflection', label: 'Coach Reflection',  placeholder: 'Your observations and reflections…' },
     { key: 'commitment', label: 'Commitment',        placeholder: 'What did the client commit to…' },
   ]
+
+  const [aiLoading, setAiLoading]         = useState(false)
+  const [aiError, setAiError]             = useState<string | null>(null)
+  const [suggestions, setSuggestions]     = useState<AISuggestions>(null)
+
+  const requestSuggestions = async () => {
+    if (!clientId || !value.notes.trim() || aiLoading) return
+    setAiLoading(true); setAiError(null)
+    try {
+      const res = await clientsApi.suggestNote(clientId, value.notes)
+      setSuggestions(res.data)
+    } catch (err: any) {
+      setAiError(err?.response?.data?.detail || 'Could not get AI suggestions — please try again.')
+    } finally {
+      setAiLoading(false)
+    }
+  }
+
+  const acceptField = (key: string) => {
+    if (!suggestions) return
+    s(key, (suggestions as any)[key])
+    setSuggestions(prev => prev && { ...prev, [key]: '' })
+  }
+  const rejectField = (key: string) => {
+    setSuggestions(prev => prev && { ...prev, [key]: '' })
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
-      {sections.map(sec => (
-        <div key={sec.key}>
-          <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
-            {sec.label}
-          </label>
-          <textarea className="ftextarea" rows={3} style={{ fontSize: 13, lineHeight: 1.7 }}
-            value={(value as any)[sec.key]} placeholder={sec.placeholder}
-            onChange={e => s(sec.key, e.target.value)} />
-        </div>
-      ))}
+      {sections.map(sec => {
+        const suggestion = suggestions ? (suggestions as any)[sec.key] as string : ''
+        const showSuggestion = !!suggestion?.trim() && suggestion.trim() !== (value as any)[sec.key].trim()
+        return (
+          <div key={sec.key}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+                {sec.label}
+              </label>
+              {sec.key === 'notes' && clientId && (
+                <button type="button" onClick={requestSuggestions} disabled={!value.notes.trim() || aiLoading}
+                  title="Draft Coach Reflection and Commitment from these notes with AI"
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 500,
+                    background: 'none', border: 'none', padding: '2px 0',
+                    color: !value.notes.trim() ? 'var(--muted)' : 'var(--gold)',
+                    cursor: !value.notes.trim() || aiLoading ? 'default' : 'pointer',
+                    opacity: aiLoading ? 0.6 : 1,
+                  }}>
+                  ✨ {aiLoading ? 'Thinking…' : 'Suggest with AI'}
+                </button>
+              )}
+            </div>
+            <textarea className="ftextarea" rows={3} style={{ fontSize: 13, lineHeight: 1.7 }}
+              value={(value as any)[sec.key]} placeholder={sec.placeholder}
+              onChange={e => s(sec.key, e.target.value)} />
+            {showSuggestion && (
+              <div style={{
+                marginTop: 6, padding: '8px 10px', background: 'rgba(180, 140, 40, 0.07)',
+                border: '1px dashed var(--gold)', borderRadius: 4,
+              }}>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--gold)', marginBottom: 4 }}>
+                  ✨ AI suggests — {AI_SECTION_LABELS[sec.key]}
+                </div>
+                <p style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: '0 0 6px' }}>{suggestion}</p>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button type="button" onClick={() => acceptField(sec.key)}
+                    style={{ fontSize: 11, padding: '3px 10px', background: 'var(--ink)', color: 'var(--paper)', border: 'none', borderRadius: 3, cursor: 'pointer' }}>
+                    Accept
+                  </button>
+                  <button type="button" onClick={() => rejectField(sec.key)}
+                    style={{ fontSize: 11, padding: '3px 10px', background: 'none', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}>
+                    Reject
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )
+      })}
+      {aiError && <div style={{ fontSize: 12, color: 'var(--danger, #c0392b)' }}>{aiError}</div>}
     </div>
   )
 }
@@ -660,7 +738,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
           <div style={{ padding: '14px 18px' }}>
             <NoteTypeSelector value={noteType} onChange={setNoteType} />
             {noteType === 'session'
-              ? <StructuredForm value={struct} onChange={setStruct} />
+              ? <StructuredForm value={struct} onChange={setStruct} clientId={clientId} />
               : <textarea className="ftextarea" rows={6} style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
                   value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
             }
@@ -737,7 +815,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
                 <div style={{ padding: '14px 18px' }}>
                   <NoteTypeSelector value={editType} onChange={setEditType} />
                   {editType === 'session'
-                    ? <StructuredForm value={editStruct} onChange={setEditStruct} />
+                    ? <StructuredForm value={editStruct} onChange={setEditStruct} clientId={clientId} />
                     : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
                         value={editText} onChange={e => setEditText(e.target.value)} />
                   }

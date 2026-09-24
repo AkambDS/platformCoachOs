@@ -28,6 +28,12 @@ api.interceptors.response.use((res) => res, async (error) => {
   return Promise.reject(error)
 })
 
+export const demoApi = {
+  captureLead: (d: { email: string; first_name: string }) => api.post('/api/demo/lead/', d),
+  reportEvent: (email: string, event: 'tour_started' | 'tour_completed') =>
+    api.post('/api/demo/lead/event/', { email, event }),
+}
+
 export const authApi = {
   login:              (d: any) => api.post('/api/auth/login/', d),
   register:           (d: any) => api.post('/api/auth/register/', d),
@@ -119,6 +125,7 @@ export const clientsApi = {
   updateNote:   (id: string, nid: string, d: any) => api.patch(`/api/clients/${id}/notes/${nid}/`, d),
   deleteNote:   (id: string, nid: string)       => api.delete(`/api/clients/${id}/notes/${nid}/`),
   exportNotes:  (id: string)                    => api.get(`/api/clients/${id}/notes/export/`, { responseType: 'text' }),
+  suggestNote:  (id: string, notes: string)     => api.post(`/api/clients/${id}/notes/suggest/`, { notes }),
   listFiles:    (id: string)           => api.get(`/api/clients/${id}/assessments/`),
   deleteFile:   (id: string, fid: string) => api.delete(`/api/clients/${id}/assessments/${fid}/`),
   uploadFile:   (id: string, fd: FormData) =>
@@ -218,6 +225,7 @@ export const adminApi = {
   feedbackDetail:  (id: string)            => api.get(`/api/superadmin/feedback/${id}/`),
   feedbackPatch:   (id: string, d: any)    => api.patch(`/api/superadmin/feedback/${id}/`, d),
   feedbackComment:     (id: string, text: string) => api.post(`/api/superadmin/feedback/${id}/comment/`, { text }),
+  demoLeads:           ()                       => api.get('/api/superadmin/demo-leads/'),
   listBanners:         ()                       => api.get('/api/superadmin/banners/'),
   createBanner:        (d: any)                 => api.post('/api/superadmin/banners/', d),
   patchBanner:         (id: number, d: any)     => api.patch(`/api/superadmin/banners/${id}/`, d),

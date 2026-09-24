@@ -1,3 +1,4 @@
+import { useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { reportsApi, invoicesApi, clientsApi, activitiesApi, pipelineApi } from "../../api/client"
@@ -6,6 +7,7 @@ import AppShell from "../../components/layout/AppShell"
 import { PageHeader, StatusBadge } from "../../components/ui"
 import WelcomeModal from "../../components/WelcomeModal"
 import { useTour } from "../../hooks/useTour"
+import { DEMO_START_TOUR_KEY } from "../../constants/demo"
 
 function fmtDatetime(d: string) {
   if (!d) return "—"
@@ -374,6 +376,14 @@ export default function Dashboard() {
   const { startTour } = useTour()
   const hour = new Date().getHours()
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
+
+  useEffect(() => {
+    if (sessionStorage.getItem(DEMO_START_TOUR_KEY) === "1") {
+      sessionStorage.removeItem(DEMO_START_TOUR_KEY)
+      startTour()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <AppShell>

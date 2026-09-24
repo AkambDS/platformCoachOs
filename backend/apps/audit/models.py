@@ -8,6 +8,7 @@ class AccessLog(WorkspaceModel):
         CREATED_NOTE        = "created_note",         "Created Note"
         UPDATED_NOTE        = "updated_note",         "Updated Note"
         DELETED_NOTE        = "deleted_note",         "Deleted Note"
+        REQUESTED_AI_NOTE_SUGGESTION = "requested_ai_note_suggestion", "Requested AI Note Suggestion"
         VIEWED_ASSESSMENTS  = "viewed_assessments",   "Viewed Assessments"
         DOWNLOADED_FILE     = "downloaded_file",      "Downloaded File"
         UPLOADED_FILE       = "uploaded_file",        "Uploaded File"

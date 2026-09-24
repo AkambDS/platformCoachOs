@@ -29,11 +29,18 @@ export default function Home() {
         <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 22, color: '#f7f4ef', letterSpacing: '.04em' }}>
           Coach<span style={{ color: '#d9b96a' }}>OS</span>
         </span>
-        <Link to="/login" style={{
-          fontSize: 12, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
-          color: '#f7f4ef', textDecoration: 'none', border: '1px solid rgba(247,244,239,.4)',
-          borderRadius: 6, padding: '8px 16px',
-        }}>Sign In</Link>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Link to="/login" style={{
+            fontSize: 12, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
+            color: '#1a2f4e', textDecoration: 'none', background: '#d9b96a',
+            borderRadius: 6, padding: '8px 16px',
+          }}>Try the Live Demo</Link>
+          <Link to="/login" style={{
+            fontSize: 12, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
+            color: '#f7f4ef', textDecoration: 'none', border: '1px solid rgba(247,244,239,.4)',
+            borderRadius: 6, padding: '8px 16px',
+          }}>Sign In</Link>
+        </div>
       </header>
 
       <main style={{ maxWidth: 720, margin: '0 auto', padding: '64px 24px 88px' }}>

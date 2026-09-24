@@ -577,6 +577,25 @@ class ClientNoteViewSet(viewsets.ModelViewSet):
         _log(self.request, instance.client, "deleted_note")
         instance.delete()
 
+    @action(detail=False, methods=["post"], url_path="suggest")
+    def suggest(self, request, client_pk=None):
+        """POST /api/clients/{client_pk}/notes/suggest/ — AI drafts for a session note.
+
+        Body: {"notes": "<raw session notes>"}. Returns tightened notes, a coach
+        reflection, and a commitment draft. Nothing is persisted here — the coach
+        accepts/rejects each field client-side, then saves through the normal
+        create/update endpoints as usual.
+        """
+        from .ai_notes import generate_session_suggestions, AISuggestionError
+
+        client = self._get_client()
+        try:
+            suggestions = generate_session_suggestions(request.data.get("notes", ""))
+        except AISuggestionError as exc:
+            return Response({"detail": str(exc)}, status=400)
+        _log(request, client, "requested_ai_note_suggestion")
+        return Response(suggestions)
+
     @action(detail=False, methods=["get"], url_path="export")
     def export(self, request, client_pk=None):
         """GET /api/clients/{client_pk}/notes/export/ — download all notes as plain text."""
