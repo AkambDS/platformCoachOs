@@ -22,7 +22,11 @@ const USE_CASE_SAMPLE: Record<EmailUseCase, { subject: string; intro: string; cl
   invoice: {
     subject: 'Invoice from {workspace_name}',
     intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
-    closing: 'Questions about this invoice? Just reply to this email.',
+    // "Thanks! / {workspace_name}" used to be a separate hardcoded sign-off block
+    // (_invoice_signature_block, tasks/email.py) appended after whatever the coach
+    // wrote — now it's just the tail of this same editable text, like every other
+    // email type already works, so a coach can edit or remove it like anything else.
+    closing: "Questions about this invoice? Just reply to this email.\n\nThanks!\n{workspace_name}",
   },
 }
 
@@ -31,8 +35,8 @@ const HEADER_COLOR_PRESETS = [
 ]
 
 const PLACEHOLDER_HINTS: Record<EmailUseCase, string[]> = {
-  confirmation: ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
-  invoice:      ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+  confirmation: ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  invoice:      ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
 }
 
 function fmtSize(bytes: number) {
@@ -42,6 +46,18 @@ function fmtSize(bytes: number) {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
+// Invoice edits as a single free-form "Message" box (matching Client Communication >
+// New Message > Start Blank) instead of the Opening/Closing split confirmation still
+// uses — see mergeInvoiceMessage below. Unlike Start Blank, invoice keeps a Footer
+// section rather than a signature one (a signed invoice email doesn't make sense) —
+// white header + logo is just this use case's starting look, same as Start Blank's.
+const brToNewlines = (s: string) => (s || '').replace(/<br\s*\/?>/gi, '\n')
+const mergeInvoiceMessage = (t: any, useCase: EmailUseCase) => {
+  if (useCase !== 'invoice') return t
+  const merged = [brToNewlines(t.intro), brToNewlines(t.closing)].map((s: string) => s.trim()).filter(Boolean).join('\n\n')
+  return { ...t, intro: merged, closing: '' }
+}
+
 const blankTemplate = (useCase: EmailUseCase) => {
   const sample = USE_CASE_SAMPLE[useCase]
   return {
@@ -49,7 +65,11 @@ const blankTemplate = (useCase: EmailUseCase) => {
     name: USE_CASE_LABEL[useCase],
     subject: sample.subject, intro: sample.intro, closing: sample.closing,
     custom_html: '', disable_style: false, show_logo: true,
-    style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true } as Record<string, any>,
+    style: (useCase === 'invoice'
+      // Same starting look as Client Communication > Start Blank — plain white header
+      // (logo only, no color bar) and footer off until a coach opts in via "Customize".
+      ? { header_bg: '#ffffff', accent_color: '#ffffff', header_tagline: '', show_header: true, show_footer: false, footer_text: '', show_contact_line: true }
+      : { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true }) as Record<string, any>,
     use_cases: [useCase] as string[],
     include_client_signature_line: false,
   }
@@ -66,9 +86,12 @@ function getEffectiveTemplate(workspace: any, useCase: EmailUseCase) {
   const assignedId = useCaseMap[useCase]
   const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
   if (assigned) {
-    return { ...assigned, style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } }
+    return mergeInvoiceMessage(
+      { ...assigned, style: { header_bg: '', accent_color: '', header_tagline: '', show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } },
+      useCase,
+    )
   }
-  return blankTemplate(useCase)
+  return mergeInvoiceMessage(blankTemplate(useCase), useCase)
 }
 
 // Edits the workspace's default email template for a given use case. Reads from and
@@ -96,6 +119,16 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
   const [previewLoading, setPreviewLoading] = useState(false)
   const [saving,         setSaving]         = useState(false)
   const [uploadingFile,  setUploadingFile]  = useState(false)
+  // Collapsed behind a "+ Customize" link by default for invoice, matching Client
+  // Communication > Start Blank (plain white/logo header, no footer, nothing to
+  // configure up front) — but auto-expanded if the loaded template already has
+  // non-default header/footer settings, so an existing customization is never hidden.
+  const [showHeaderOptions, setShowHeaderOptions] = useState(() => {
+    if (useCase !== 'invoice') return true
+    const s = editing.style
+    return s.show_header === false || !!s.header_tagline || (!!s.header_bg && s.header_bg.toLowerCase() !== '#ffffff')
+  })
+  const [showFooterOptions, setShowFooterOptions] = useState(() => useCase !== 'invoice' || editing.style.show_footer !== false)
 
   const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
@@ -155,7 +188,7 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
   // early testing/typos can leave a real template looking like "Hi Xyz, Pls fin d..."
   // with no easy way back to something presentable short of retyping it from scratch.
   const handleResetToDefault = () => {
-    const blank = blankTemplate(useCase)
+    const blank = mergeInvoiceMessage(blankTemplate(useCase), useCase)
     setEditing((e: any) => ({ ...blank, id: e.id }))
   }
 
@@ -227,77 +260,145 @@ export function EmailTemplateEditor({ onClose, title, useCase = 'invoice' }: {
               value={editing.subject} onChange={e => setEditing((ed: any) => ({ ...ed, subject: e.target.value }))} />
           </div>
           <div className="fgroup">
-            <label className="flabel">Body — Opening</label>
-            <textarea className="finput" rows={5} style={{ resize: 'vertical' }}
+            <label className="flabel">{useCase === 'invoice' ? 'Message' : 'Body — Opening'}</label>
+            <textarea className="finput" rows={useCase === 'invoice' ? 16 : 5} style={{ resize: 'vertical' }}
               value={editing.intro} onChange={e => setEditing((ed: any) => ({ ...ed, intro: e.target.value }))} />
           </div>
-          <div className="fgroup">
-            <label className="flabel">Body — Closing</label>
-            <textarea className="finput" rows={3} style={{ resize: 'vertical' }}
-              value={editing.closing} onChange={e => setEditing((ed: any) => ({ ...ed, closing: e.target.value }))} />
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-              Variables: {PLACEHOLDER_HINTS[useCase].map(v => (
-                <code key={v} style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10, marginRight: 4 }}>{v}</code>
-              ))}
+          {useCase !== 'invoice' && (
+            <div className="fgroup">
+              <label className="flabel">Body — Closing</label>
+              <textarea className="finput" rows={3} style={{ resize: 'vertical' }}
+                value={editing.closing} onChange={e => setEditing((ed: any) => ({ ...ed, closing: e.target.value }))} />
             </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: -6, marginBottom: 14, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {useCase === 'invoice' ? (
+              <>
+                Insert:
+                {PLACEHOLDER_HINTS[useCase].map(v => (
+                  <button
+                    key={v}
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}
+                    onClick={() => setEditing((ed: any) => ({ ...ed, intro: `${ed.intro}${ed.intro && !ed.intro.endsWith(' ') ? ' ' : ''}${v}` }))}
+                  >
+                    {v}
+                  </button>
+                ))}
+              </>
+            ) : (
+              <>
+                Variables: {PLACEHOLDER_HINTS[useCase].map(v => (
+                  <code key={v} style={{ background: '#f0f4ff', padding: '1px 4px', borderRadius: 3, fontSize: 10, marginRight: 4 }}>{v}</code>
+                ))}
+              </>
+            )}
           </div>
 
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 4 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: useCase === 'invoice' && !showHeaderOptions ? 0 : 8 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Header</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={editing.style.show_header !== false} onChange={e => setStyle('show_header', e.target.checked)} />
-                Show header
-              </label>
+              {useCase === 'invoice' ? (
+                <button type="button" onClick={() => setShowHeaderOptions(s => !s)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+                  {showHeaderOptions ? 'Hide options' : '+ Customize header'}
+                </button>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={editing.style.show_header !== false} onChange={e => setStyle('show_header', e.target.checked)} />
+                  Show header
+                </label>
+              )}
             </div>
-            <fieldset disabled={editing.style.show_header === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_header === false ? 0.5 : 1 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
-                <input type="checkbox" checked={editing.show_logo} onChange={e => setEditing((ed: any) => ({ ...ed, show_logo: e.target.checked }))} />
-                Show workspace logo
-              </label>
-              <div className="fgroup" style={{ marginBottom: 0 }}>
-                <label className="flabel">Header Color</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
-                  {HEADER_COLOR_PRESETS.map(c => (
-                    <button
-                      key={c} type="button"
-                      onClick={() => setStyle('header_bg', c)}
-                      title={c === '#ffffff' ? 'White' : c}
-                      style={{
-                        width: 18, height: 18, borderRadius: '50%', background: c, cursor: 'pointer',
-                        border: (editing.style.header_bg || '#1a2f4e') === c ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.15)',
-                        boxShadow: (editing.style.header_bg || '#1a2f4e') === c ? `0 0 0 2px white, 0 0 0 3px ${c}` : 'none',
-                        padding: 0,
-                      }}
+            {useCase === 'invoice' && !showHeaderOptions && (
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>Plain white header with your logo.</div>
+            )}
+            {(useCase !== 'invoice' || showHeaderOptions) && (
+              <fieldset disabled={editing.style.show_header === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_header === false ? 0.5 : 1 }}>
+                {useCase === 'invoice' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
+                    <input type="checkbox" checked={editing.style.show_header !== false} onChange={e => setStyle('show_header', e.target.checked)} />
+                    Show header
+                  </label>
+                )}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
+                  <input type="checkbox" checked={editing.show_logo} onChange={e => setEditing((ed: any) => ({ ...ed, show_logo: e.target.checked }))} />
+                  Show workspace logo
+                </label>
+                <div className="fgroup" style={{ marginBottom: 0 }}>
+                  <label className="flabel">Header Color</label>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5, marginTop: 4 }}>
+                    {HEADER_COLOR_PRESETS.map(c => (
+                      <button
+                        key={c} type="button"
+                        onClick={() => setStyle('header_bg', c)}
+                        title={c === '#ffffff' ? 'White' : c}
+                        style={{
+                          width: 18, height: 18, borderRadius: '50%', background: c, cursor: 'pointer',
+                          border: (editing.style.header_bg || '#1a2f4e') === c ? '2px solid var(--ink)' : '1px solid rgba(0,0,0,.15)',
+                          boxShadow: (editing.style.header_bg || '#1a2f4e') === c ? `0 0 0 2px white, 0 0 0 3px ${c}` : 'none',
+                          padding: 0,
+                        }}
+                      />
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
+                    <input
+                      type="color" value={editing.style.header_bg || '#1a2f4e'}
+                      onChange={e => setStyle('header_bg', e.target.value)}
+                      style={{ width: 30, height: 22, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
                     />
-                  ))}
+                    <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{editing.style.header_bg || '#1a2f4e'}</span>
+                  </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8 }}>
-                  <input
-                    type="color" value={editing.style.header_bg || '#1a2f4e'}
-                    onChange={e => setStyle('header_bg', e.target.value)}
-                    style={{ width: 30, height: 22, cursor: 'pointer', border: '1px solid var(--border)', borderRadius: 4, padding: 2 }}
-                  />
-                  <span style={{ fontSize: 11, color: 'var(--muted)', fontFamily: 'monospace' }}>{editing.style.header_bg || '#1a2f4e'}</span>
-                </div>
-              </div>
-            </fieldset>
+              </fieldset>
+            )}
           </div>
 
           <div style={{ borderTop: '1px solid var(--border)', paddingTop: 14, marginTop: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: useCase === 'invoice' && !showFooterOptions ? 0 : 8 }}>
               <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>Footer</div>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
-                <input type="checkbox" checked={editing.style.show_footer !== false} onChange={e => setStyle('show_footer', e.target.checked)} />
-                Show footer
-              </label>
+              {useCase === 'invoice' ? (
+                <button type="button" onClick={() => setShowFooterOptions(s => !s)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+                  {showFooterOptions ? 'Hide options' : '+ Customize footer'}
+                </button>
+              ) : (
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={editing.style.show_footer !== false} onChange={e => setStyle('show_footer', e.target.checked)} />
+                  Show footer
+                </label>
+              )}
             </div>
-            <fieldset disabled={editing.style.show_footer === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_footer === false ? 0.5 : 1 }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
-                <input type="checkbox" checked={editing.style.show_contact_line !== false} onChange={e => setStyle('show_contact_line', e.target.checked)} />
-                Show "Questions? Contact us at…" line
-              </label>
-            </fieldset>
+            {useCase === 'invoice' && !showFooterOptions && (
+              <div style={{ fontSize: 11, color: 'var(--muted)' }}>Off by default — no footer sent.</div>
+            )}
+            {(useCase !== 'invoice' || showFooterOptions) && (
+              <>
+                {useCase === 'invoice' && (
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
+                    <input type="checkbox" checked={editing.style.show_footer !== false} onChange={e => setStyle('show_footer', e.target.checked)} />
+                    Show footer
+                  </label>
+                )}
+                <fieldset disabled={editing.style.show_footer === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_footer === false ? 0.5 : 1 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: 10 }}>
+                    <input type="checkbox" checked={editing.style.show_contact_line !== false} onChange={e => setStyle('show_contact_line', e.target.checked)} />
+                    Show "Questions? Contact us at…" line
+                  </label>
+                  <div className="fgroup" style={{ marginBottom: 0 }}>
+                    <label className="flabel">Footer Text</label>
+                    <textarea className="finput" rows={2} style={{ resize: 'vertical' }}
+                      value={editing.style.footer_text ?? ''} onChange={e => setStyle('footer_text', e.target.value)}
+                      placeholder="This is an automated notification — please do not reply directly to this email." />
+                    <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 3 }}>
+                      Leave blank to use the default disclaimer above.
+                    </div>
+                  </div>
+                </fieldset>
+              </>
+            )}
           </div>
 
           <div className="fgroup" style={{ flex: 1, marginTop: 14 }}>

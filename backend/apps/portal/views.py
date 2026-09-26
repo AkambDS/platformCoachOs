@@ -223,6 +223,20 @@ class PortalProgressView(APIView):
         return Response(GoalProgressSerializer(progress).data, status=201)
 
 
+def _portal_visible_materials(client_id, workspace_id):
+    """Same visibility rule used by both PortalMaterialsView and
+    PortalMaterialViewConfigView — kept in one place so a client can never open the
+    document viewer for an item the list endpoint wouldn't have shown them in the
+    first place."""
+    from django.db.models import Q
+    return KnowledgeItem.objects.filter(
+        workspace_id=workspace_id,
+    ).filter(
+        Q(visibility="client_visible") |
+        Q(visibility="specific", shared_client_ids__contains=[str(client_id)])
+    )
+
+
 class PortalMaterialsView(APIView):
     """GET /api/portal/materials/ — client sees workspace library items marked client_visible."""
     authentication_classes = [PortalJWTAuthentication]
@@ -230,14 +244,72 @@ class PortalMaterialsView(APIView):
 
     def get(self, request):
         client_id, workspace_id = _get_portal_claims(request)
-        from django.db.models import Q
-        items = KnowledgeItem.objects.filter(
-            workspace_id=workspace_id,
-        ).filter(
-            Q(visibility="client_visible") |
-            Q(visibility="specific", shared_client_ids__contains=[str(client_id)])
-        )
+        items = _portal_visible_materials(client_id, workspace_id)
         return Response(KnowledgeItemSerializer(items, many=True, context={"request": request}).data)
+
+
+class PortalMaterialViewConfigView(APIView):
+    """GET /api/portal/materials/{id}/view-config/ — OnlyOffice config for the client's
+    inline document preview. Deliberately VIEW-ONLY, always — unlike
+    apps.library.views.KnowledgeItemViewSet.edit_config (coach side), there is no
+    ?mode=edit here at all; a client should never be able to write back into a coach's
+    shared library item. Reuses that same view's ONLYOFFICE_DOC_TYPES/_doc_server_file_url
+    and the same onlyoffice-file/onlyoffice-callback endpoints — those don't check who
+    initiated the session (OnlyOffice's document server authenticates itself to them
+    with its own JWT), so pointing a portal-issued config at them is safe; the actual
+    access-control decision is made right here, before that config is ever issued."""
+    authentication_classes = [PortalJWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+
+    def get(self, request, material_id):
+        client_id, workspace_id = _get_portal_claims(request)
+        try:
+            item = _portal_visible_materials(client_id, workspace_id).get(pk=material_id)
+        except KnowledgeItem.DoesNotExist:
+            raise NotFound("File not found.")
+        if not item.s3_key:
+            return Response({"detail": "No file to preview."}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        from django.conf import settings as dj_settings
+        from apps.library.views import ONLYOFFICE_DOC_TYPES, _doc_server_file_url
+
+        ext = item.file_name.rsplit(".", 1)[-1].lower() if "." in item.file_name else ""
+        doc_type = ONLYOFFICE_DOC_TYPES.get(ext)
+        if not doc_type:
+            return Response({"detail": "This file type can't be previewed with the document editor."},
+                             status=http_status.HTTP_400_BAD_REQUEST)
+
+        file_url = _doc_server_file_url(item)
+        if not file_url:
+            return Response({"detail": "File is unavailable."}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        import hashlib
+        key = hashlib.md5(
+            f"{item.id}-{item.version}-{item.updated_at.timestamp()}".encode()
+        ).hexdigest()
+        callback_url = f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-callback/"
+
+        config = {
+            "document": {
+                "fileType": ext,
+                "key":      key,
+                "title":    item.file_name,
+                "url":      file_url,
+                "permissions": {"edit": False, "download": True, "print": True},
+            },
+            "documentType": doc_type,
+            "editorConfig": {
+                "callbackUrl": callback_url,
+                "user": {"id": f"portal-{client_id}", "name": "Client"},
+                "mode": "view",
+                "customization": {"forcesave": False},
+            },
+        }
+        if dj_settings.ONLYOFFICE_JWT_SECRET:
+            import jwt
+            config["token"] = jwt.encode(config, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+
+        return Response({"config": config, "server_url": dj_settings.ONLYOFFICE_SERVER_URL})
 
 
 class PortalInvoicesView(APIView):

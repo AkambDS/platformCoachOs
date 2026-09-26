@@ -7,6 +7,7 @@ urlpatterns = [
     path("goals/",                                   views.PortalGoalsView.as_view(),          name="portal-goals"),
     path("goals/<uuid:goal_id>/progress/",           views.PortalProgressView.as_view(),       name="portal-progress"),
     path("materials/",                               views.PortalMaterialsView.as_view(),      name="portal-materials"),
+    path("materials/<uuid:material_id>/view-config/", views.PortalMaterialViewConfigView.as_view(), name="portal-material-view-config"),
     path("invoices/",                                views.PortalInvoicesView.as_view(),       name="portal-invoices"),
     path("activities/",                              views.PortalActivitiesView.as_view(),     name="portal-activities"),
     path("activities/<uuid:activity_id>/respond/",   views.PortalActivityRespondView.as_view(),name="portal-activity-respond"),

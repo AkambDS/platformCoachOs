@@ -167,6 +167,8 @@ export default function Invoices() {
   const [search, setSearch] = useState('')
   const [reminding, setReminding] = useState<string | null>(null)
   const [showArchived, setShowArchived] = useState(false)
+  const [dateFrom, setDateFrom] = useState('')
+  const [dateTo, setDateTo] = useState('')
 
   const handleRemind = async (e: React.MouseEvent, invId: string) => {
     e.stopPropagation()
@@ -203,14 +205,24 @@ export default function Invoices() {
   const statsSource = selectedClientId ? clientInvoices : allInvoices
 
   const filtered = useMemo(() => {
-    if (!search.trim()) return allInvoices
-    const q = search.toLowerCase()
-    return allInvoices.filter(inv =>
-      inv.number?.toLowerCase().includes(q) ||
-      (inv.client_name || '').toLowerCase().includes(q) ||
-      String(inv.total).includes(q)
-    )
-  }, [allInvoices, search])
+    const q = search.trim().toLowerCase()
+    // Issue date (created_at) is what the date range filters on — same field the CSV
+    // export calls "Issue Date". from/to are plain YYYY-MM-DD, so the end is inclusive
+    // of the whole day by comparing against date-only slices rather than full timestamps.
+    const fromDate = dateFrom || null
+    const toDate = dateTo || null
+    return allInvoices.filter(inv => {
+      if (q && !(
+        inv.number?.toLowerCase().includes(q) ||
+        (inv.client_name || '').toLowerCase().includes(q) ||
+        String(inv.total).includes(q)
+      )) return false
+      const issueDate = inv.created_at?.slice(0, 10)
+      if (fromDate && (!issueDate || issueDate < fromDate)) return false
+      if (toDate && (!issueDate || issueDate > toDate)) return false
+      return true
+    })
+  }, [allInvoices, search, dateFrom, dateTo])
 
   // Stats — from client invoices when filtered, all invoices otherwise
   const totalInvoiced  = statsSource.reduce((s, i) => s + Number(i.total || 0), 0)
@@ -247,18 +259,20 @@ export default function Invoices() {
       </div>
 
       <div className="page-body">
-        {/* ── Stat cards ── */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, marginBottom: 28 }}>
+        {/* ── Stat cards — shared .stat-card/.stat-val/.stat-lbl classes (index.css),
+            same ones Dashboard and Reports use, so sizing stays consistent app-wide
+            instead of each page tuning its own numbers by hand. ── */}
+        <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
           {[
             { label: 'TOTAL INVOICED (YTD)', value: `$${fmt$(totalInvoiced)}`, sub: `Across ${statsSource.length} invoices${selectedClient ? ` · ${selectedClient.first_name} ${selectedClient.last_name}` : ''}`, color: 'var(--ink)' },
             { label: 'COLLECTED', value: `$${fmt$(totalCollected)}`, sub: `${collectionRate}% collection rate`, color: 'var(--success)' },
             { label: 'OUTSTANDING', value: `$${fmt$(outstanding)}`, sub: `${overdueCount > 0 ? overdueCount + ' invoices overdue' : 'All current'}`, color: 'var(--rust)' },
             { label: 'REFUNDED', value: `$${fmt$(totalRefunded)}`, sub: 'Excluded from revenue', color: '#c0392b' },
           ].map(card => (
-            <div key={card.label} style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '18px 20px' }}>
-              <div style={{ fontSize: 10, letterSpacing: '.12em', color: 'var(--muted)', fontWeight: 600, marginBottom: 10 }}>{card.label}</div>
-              <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 28, fontWeight: 400, color: card.color, marginBottom: 4 }}>{card.value}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>{card.sub}</div>
+            <div key={card.label} className="stat-card">
+              <div className="stat-val" style={{ color: card.color }}>{card.value}</div>
+              <div className="stat-lbl">{card.label}</div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>{card.sub}</div>
             </div>
           ))}
         </div>
@@ -329,6 +343,28 @@ export default function Invoices() {
           >
             🗄 {showArchived ? 'Archived' : 'Archive'}
           </button>
+
+          {/* Date range — filters by issue date (same field the CSV export calls "Issue Date") */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="date" className="finput" value={dateFrom} onChange={e => setDateFrom(e.target.value)}
+              title="From issue date" style={{ marginBottom: 0, width: 140 }}
+            />
+            <span style={{ color: 'var(--muted)', fontSize: 12 }}>–</span>
+            <input
+              type="date" className="finput" value={dateTo} onChange={e => setDateTo(e.target.value)}
+              title="To issue date" style={{ marginBottom: 0, width: 140 }}
+            />
+            {(dateFrom || dateTo) && (
+              <button
+                onClick={() => { setDateFrom(''); setDateTo('') }}
+                title="Clear date range"
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', fontSize: 16, padding: '0 2px', lineHeight: 1 }}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </div>
 
         {/* ── Client hub OR all-invoices table ── */}

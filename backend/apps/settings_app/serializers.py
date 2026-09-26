@@ -70,7 +70,8 @@ class PipelineStageConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model        = PipelineStageConfig
         fields       = ["id", "slug", "label", "color", "order", "follow_up_days",
-                        "alert_stop_after_days", "notify_owner", "notify_client", "is_builtin"]
+                        "alert_stop_after_days", "notify_owner", "notify_client",
+                        "client_alert_max_count", "is_builtin"]
         read_only_fields = ["id", "is_builtin"]
 
 

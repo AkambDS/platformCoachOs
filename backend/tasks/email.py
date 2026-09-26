@@ -181,18 +181,13 @@ def _owner_info(workspace) -> tuple:
     return "", ""
 
 
-def _coach_has_google_calendar(coach) -> bool:
-    """True if this coach has a connected Google account with a stored SocialToken.
-
-    When true, the client's real Google Calendar invite (native Accept/Decline/Maybe,
-    tracked back into CoachOS via the RSVP webhook) is the one actionable email — our own
-    branded email drops its Confirm/Reschedule/Cancel buttons to avoid sending the client
-    two emails with two different, conflicting response mechanisms for the same booking.
-    """
-    if not coach:
-        return False
-    from allauth.socialaccount.models import SocialToken
-    return SocialToken.objects.filter(account__user=coach, account__provider="google").exists()
+def _format_address(addr: dict) -> str:
+    """Render a Client.primary_address JSON blob as a single-line postal address."""
+    if not addr:
+        return ""
+    street = " ".join(p for p in (addr.get("street", ""), addr.get("street2", "")) if p)
+    city_state_zip = ", ".join(p for p in (addr.get("city", ""), " ".join(p for p in (addr.get("state", ""), addr.get("zip", "")) if p)) if p)
+    return ", ".join(p for p in (street, city_state_zip) if p)
 
 
 class _PartialFormatMap(dict):
@@ -329,15 +324,14 @@ _DEFAULT_INVOICE_BODY = (
 
 
 def _invoice_body_block(body: str) -> str:
-    """Wrap the plain-text (newline-separated) invoice email body in a single styled
-    <p> using white-space:pre-line — preserves the author's blank-line paragraph
-    breaks without needing to split the text into separate <p> tags."""
-    if not body.strip():
-        return ""
-    return (
-        '<p style="margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;'
-        f'white-space:pre-line;">{body}</p>'
-    )
+    """Render the invoice email body as real HTML paragraphs — same paragraph-splitting,
+    HTML-escaping, and safe <a href="http(s)://…"> link handling as a Client Communication
+    message (see _paragraphs_html in email_html.py). Previously interpolated the coach's
+    text straight into the HTML with zero escaping (relying on white-space:pre-line for
+    paragraph breaks instead), which meant any HTML a coach typed went out raw and
+    unsanitized in the actual sent email."""
+    from tasks.email_html import _paragraphs_html
+    return _paragraphs_html(body, "margin:0 0 28px;font-size:15px;color:#3a3530;line-height:1.7;")
 
 
 def _invoice_header_block(show_header: bool, *, header_bg: str, accent_color: str,
@@ -361,13 +355,15 @@ def _invoice_header_block(show_header: bool, *, header_bg: str, accent_color: st
     brand = logo_img or (
         f'<span style="font-family:Georgia,serif;font-size:22px;color:{text_color};">{workspace_name}</span>'
     )
+    # No accent-color line under the header — a coach asked for it removed; the header
+    # is just the background + logo/brand, nothing else. accent_color is still accepted
+    # (unused here now) since it's still used elsewhere, e.g. the footer's contact link.
     return (
         '<tr>\n'
         f'  <td style="background:{header_bg};padding:24px 40px;border-radius:8px 8px 0 0;">\n'
         f'    {brand}\n'
         '  </td>\n'
-        '</tr>\n'
-        f'<tr><td style="height:3px;background:{accent_color};"></td></tr>'
+        '</tr>'
     )
 
 
@@ -399,10 +395,10 @@ def _invoice_closing_block(closing: str) -> str:
     """Optional closing paragraph, shown above the "Thanks!" sign-off — every other
     email type (confirmation, reminder, payment receipt, ...) has this slot via
     custom_closing; the invoice template never did, so the "Body — Closing" field in
-    the editor silently did nothing. Matches the invoice template's own styling."""
-    if not closing.strip():
-        return ""
-    return f'<p style="margin:0 0 20px;font-size:13px;color:#9e9890;line-height:1.7;">{closing}</p>'
+    the editor silently did nothing. Matches the invoice template's own styling.
+    Escaped/paragraph-split via _paragraphs_html like _invoice_body_block — see there."""
+    from tasks.email_html import _paragraphs_html
+    return _paragraphs_html(closing, "margin:0 0 20px;font-size:13px;color:#9e9890;line-height:1.7;")
 
 
 def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email: str,
@@ -426,7 +422,7 @@ def _invoice_footer_block(show_footer: bool, *, body_font_css: str, owner_email:
         '<tr>\n'
         f'  <td style="padding:28px 20px 20px;text-align:center;">\n'
         f'{contact_line}'
-        f'    <p style="margin:0;font-size:11px;color:#b5afa6;font-family:{body_font_css};">\n'
+        f'    <p style="margin:0;font-size:11px;color:#1a1714;font-family:{body_font_css};">\n'
         f'      Sent by {workspace_name} &middot; Invoice #{invoice_number}\n'
         '    </p>\n'
         '  </td>\n'
@@ -642,7 +638,9 @@ def send_activity_confirmation_email(activity_id: str):
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
         tmpl_vars = dict(
-            client_name=client.full_name, coach_name=coach_name,
+            client_name=client.full_name, client_first_name=client.first_name,
+            client_email=client.email or "", client_address=_format_address(client.primary_address),
+            coach_name=coach_name,
             session_title=activity.title, session_time=dt,
             workspace_name=workspace.name,
         )
@@ -651,36 +649,29 @@ def send_activity_confirmation_email(activity_id: str):
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Confirmed: {activity.title} with {coach_name}"
 
-        google_connected = _coach_has_google_calendar(activity.coach)
-
+        # CoachOS's own branded email is always the one actionable email for the client —
+        # it carries both "add to calendar" (ics attachment + one-click Google/Apple/Outlook
+        # links, built below) and Confirm/Cancel/Reschedule, regardless of whether the coach
+        # also happens to have Google Calendar connected. We used to suppress these buttons
+        # whenever a Google token was on file, on the assumption Google's own native invite
+        # would carry Yes/No/Maybe instead — but that invite silently stops sending the
+        # moment the coach's Google connection lapses (see tasks/calendar.py's sendUpdates
+        # change), which left clients with no way to respond at all. One email, always
+        # actionable, is simpler and doesn't depend on a fragile third-party connection.
         from apps.activities.tokens import make_session_token
         backend_url = getattr(settings, "BACKEND_URL", "").rstrip("/")
-        if google_connected:
-            # Google's own calendar invite (separate email, native Accept/Decline/Maybe)
-            # is the one actionable email in this case — avoid a second, conflicting
-            # set of response links here.
-            confirm_url = cancel_url = reschedule_url = ""
-        else:
-            confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
-            cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
-            reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+        confirm_url     = f"{backend_url}/session/confirm/{make_session_token('confirm', str(activity.id))}/"
+        cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+        reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        if google_connected:
-            plain = (
-                f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
-                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-                f"You'll receive a separate Google Calendar invite — accept, decline, or propose a new "
-                f"time directly on that invite to let {coach_name} know.\n\n— {workspace.name}"
-            )
-        else:
-            plain = (
-                f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
-                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-                f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
-                f"Confirm attendance: {confirm_url}\n"
-                f"Request reschedule: {reschedule_url}\n"
-                f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
-            )
+        plain = (
+            f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
+            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
+            f"Confirm attendance: {confirm_url}\n"
+            f"Request reschedule: {reschedule_url}\n"
+            f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
+        )
         saved_style      = tmpl.get("style", {})
         from_email_addr  = _workspace_from_email(workspace)
 
@@ -801,7 +792,9 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
 
         tmpl_key  = "reminder_24h" if hours_before == 24 else "reminder_1h"
         tmpl_vars = dict(
-            client_name=client.full_name, coach_name=coach_name,
+            client_name=client.full_name, client_first_name=client.first_name,
+            client_email=client.email or "", client_address=_format_address(client.primary_address),
+            coach_name=coach_name,
             session_title=activity.title, session_time=dt,
             workspace_name=workspace.name, time_label=time_label,
         )
@@ -930,7 +923,9 @@ def send_activity_reschedule_email(activity_id: str):
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
         tmpl_vars = dict(
-            client_name=client.full_name, coach_name=coach_name,
+            client_name=client.full_name, client_first_name=client.first_name,
+            client_email=client.email or "", client_address=_format_address(client.primary_address),
+            coach_name=coach_name,
             session_title=activity.title, session_time=dt,
             workspace_name=workspace.name,
         )
@@ -939,31 +934,21 @@ def send_activity_reschedule_email(activity_id: str):
         custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Updated: {activity.title} with {coach_name}"
 
-        google_connected = _coach_has_google_calendar(activity.coach)
-
+        # Same reasoning as send_activity_confirmation_email above: always give the client
+        # working Cancel/Reschedule links in CoachOS's own email rather than assuming a
+        # (possibly-lapsed) Google Calendar connection will handle it.
         from apps.activities.tokens import make_session_token
         backend_url    = getattr(settings, "BACKEND_URL", "").rstrip("/")
-        if google_connected:
-            cancel_url = reschedule_url = ""
-        else:
-            cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
-            reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
+        cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
+        reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        if google_connected:
-            plain = (
-                f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
-                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-                f"You'll receive an updated Google Calendar invite — accept, decline, or propose a new "
-                f"time directly on that invite to let {coach_name} know.\n\n— {workspace.name}"
-            )
-        else:
-            plain = (
-                f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
-                f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-                f"A new calendar invite is attached. Open it to update your calendar.\n\n"
-                f"Request reschedule: {reschedule_url}\n"
-                f"Cancel session:     {cancel_url}\n\n"
-                f"— {workspace.name}"
+        plain = (
+            f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
+            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
+            f"A new calendar invite is attached. Open it to update your calendar.\n\n"
+            f"Request reschedule: {reschedule_url}\n"
+            f"Cancel session:     {cancel_url}\n\n"
+            f"— {workspace.name}"
             )
         saved_style     = tmpl.get("style", {})
         _show_logo      = tmpl.get("show_logo", True)
@@ -1193,9 +1178,11 @@ def send_invoice_email(invoice_id: str):
         _bf = tmpl_style.get("body_font", "")
         _hf = tmpl_style.get("heading_font", "")
         _body_font_css = "'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif")
-        _accent_color  = "#b8922e" if disable_style else tmpl_style.get("accent_color", "#b8922e")
+        _accent_color  = "#b8922e" if disable_style else (tmpl_style.get("accent_color") or "#b8922e")
         tmpl_vars = dict(
-            client_name=invoice.client.full_name, workspace_name=workspace.name,
+            client_name=invoice.client.full_name, client_first_name=invoice.client.first_name,
+            client_email=invoice.client.email or "", client_address=_format_address(invoice.client.primary_address),
+            workspace_name=workspace.name,
             invoice_number=invoice.number, amount=str(invoice.total), due_date=due_str,
             owner_email=owner_email, owner_name=owner_name or owner_email,
             payment_link=_pay_link, pay_button=_pay_button,
@@ -1206,7 +1193,9 @@ def send_invoice_email(invoice_id: str):
         subject = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars) or f"Invoice #{invoice.number} from {workspace.name}"
         tmpl_vars.update(dict(
             body_para=_invoice_body_block(body_text),
-            header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+            # header_bg: see apps/settings_app/views.py's identical fix for why this is
+            # ".get(key) or default" (empty-string safe) and defaults to white, not navy.
+            header_bg="#1a2f4e" if disable_style else (tmpl_style.get("header_bg") or "#ffffff"),
             accent_color=_accent_color,
             value_color="#1a1714" if disable_style else tmpl_style.get("value_color", "#1a1714"),
             body_font_css=_body_font_css,
@@ -1220,17 +1209,20 @@ def send_invoice_email(invoice_id: str):
             ),
             header_block=_invoice_header_block(
                 tmpl_style.get("show_header", True) and not disable_style,
-                header_bg="#1a2f4e" if disable_style else tmpl_style.get("header_bg", "#1a2f4e"),
+                header_bg="#1a2f4e" if disable_style else (tmpl_style.get("header_bg") or "#ffffff"),
                 accent_color=_accent_color, logo_img=_logo_img, workspace_name=workspace.name,
             ),
             body_radius="0 0 8px 8px" if (tmpl_style.get("show_header", True) and not disable_style) else "8px",
             heading_block=_invoice_heading_block(
-                tmpl_style.get("show_heading", True) and not disable_style,
+                tmpl_style.get("show_heading", False) and not disable_style,
                 heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
                 workspace_name=workspace.name,
             ),
+            # Defaults to False (was True) — see the matching preview-side comment in
+            # apps/settings_app/views.py. The sign-off is now just editable body text
+            # (USE_CASE_SAMPLE.invoice.closing), not a separate hardcoded block.
             signature_block=_invoice_signature_block(
-                tmpl_style.get("show_signature", True) and not disable_style,
+                tmpl_style.get("show_signature", False) and not disable_style,
                 workspace_name=workspace.name,
             ),
             closing_block=_invoice_closing_block(_apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)),
@@ -1318,7 +1310,9 @@ def send_payment_receipt_email(invoice_id: str):
 
         tmpl = _resolve_generic_template(workspace, "payment_receipt")
         tmpl_vars = dict(
-            client_name=invoice.client.full_name, workspace_name=workspace.name,
+            client_name=invoice.client.full_name, client_first_name=invoice.client.first_name,
+            client_email=invoice.client.email or "", client_address=_format_address(invoice.client.primary_address),
+            workspace_name=workspace.name,
             invoice_number=invoice.number, amount=amount_paid, payment_date=payment_date,
             owner_email=owner_email, owner_name=owner_name or owner_email,
         )
@@ -1522,8 +1516,12 @@ def send_feedback_status_email(ticket_id: str):
         logger.error(f"send_feedback_status_email failed: {e}")
 
 
-def send_pipeline_alert(deal_id: str):
-    """Send a styled HTML pipeline follow-up alert to the business owner (and optionally the client)."""
+def send_pipeline_alert(deal_id: str, notify_client: bool = False):
+    """Send a styled HTML pipeline follow-up alert to the business owner (and optionally
+    the client). notify_client is decided by the caller (tasks.pipeline.dispatch_pipeline_alerts),
+    not recomputed here — it already factors in PipelineStageConfig.notify_client AND the
+    independent client_alert_max_count cap, which this function has no way to check on
+    its own (that requires comparing against Deal.client_alert_count, tracked by the caller)."""
     from apps.pipeline.models import Deal, PipelineStageConfig
     from django.utils import timezone as dj_tz
     from django.core.mail import EmailMultiAlternatives
@@ -1551,7 +1549,9 @@ def send_pipeline_alert(deal_id: str):
         pipeline_url  = f"{getattr(settings, 'FRONTEND_URL', '').rstrip('/')}/pipeline"
 
         tmpl_vars = dict(
-            owner_name=owner_name, client_name=client_name, stage_label=stage_label,
+            owner_name=owner_name, client_name=client_name, client_first_name=client.first_name,
+            client_email=client.email or "", client_address=_format_address(client.primary_address),
+            stage_label=stage_label,
             days_in_stage=days_in_stage, follow_up_days=cfg.follow_up_days,
             deal_value=deal_value, stage_entered=stage_entered, workspace_name=workspace.name,
         )
@@ -1621,7 +1621,7 @@ def send_pipeline_alert(deal_id: str):
             )
 
         recipients = [owner_email]
-        if cfg.notify_client and client.email:
+        if notify_client and client.email:
             recipients.append(client.email)
 
         msg = EmailMultiAlternatives(
@@ -1831,7 +1831,8 @@ def send_portal_invite_email(client_id: str):
 
         tmpl      = _resolve_generic_template(workspace, "portal_invite")
         tmpl_vars = dict(
-            client_name=client.full_name,
+            client_name=client.full_name, client_first_name=client.first_name,
+            client_email=client.email or "", client_address=_format_address(client.primary_address),
             workspace_name=workspace.name,
             portal_url=portal_url,
             coach_name=coach_name,
@@ -1929,15 +1930,24 @@ def send_client_communication_email(draft_id: str):
     if not client.email:
         raise ValueError("This client has no email address on file.")
 
-    coach_name = draft.signature_name.strip() or (client.coach.full_name if client.coach else workspace.name)
     owner_email, owner_name = _owner_info(workspace)
+    # Falls back to the workspace owner, not the client's assigned coach — a Client
+    # Communication message reads as coming from the practice, and should default the
+    # same way regardless of which team member actually composed/sent it.
+    coach_name = draft.signature_name.strip() or owner_name or workspace.name
     logo_url = _logo_src(workspace) if draft.show_logo else ""
 
     # Generic-template samples (and any coach-written draft) may contain {client_name} /
-    # {coach_name} / {workspace_name} placeholders — substitute them here since this is
-    # the only place client_communication content actually gets sent (the Settings
-    # preview substitutes for display only and never persists back into the draft).
-    tmpl_vars = dict(client_name=client.full_name, coach_name=coach_name, workspace_name=workspace.name)
+    # {coach_name} / {workspace_name} / {workspace_owner} / {client_email} / {client_address}
+    # placeholders — substitute them here since this is the only place client_communication
+    # content actually gets sent (the Settings preview substitutes for display only and never
+    # persists back into the draft). {client_name} is first-name-only here (a greeting reads
+    # "Hi {client_name}," so the full legal name would be stilted) — distinct from the
+    # client_name=client.full_name passed to build_client_communication_email() below, which
+    # is unrelated template metadata, not this placeholder.
+    tmpl_vars = dict(client_name=client.first_name, coach_name=coach_name, workspace_name=workspace.name,
+                      workspace_owner=owner_name or workspace.name, client_email=client.email or "",
+                      client_address=_format_address(client.primary_address))
     subject        = _apply_tmpl(draft.subject.strip(), **tmpl_vars) or "A message from your coach"
     custom_intro   = _apply_tmpl(draft.intro,   **tmpl_vars)
     custom_closing = _apply_tmpl(draft.closing, **tmpl_vars)

@@ -57,8 +57,13 @@ export const authApi = {
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),
   updateWorkspace: (d: any)    => api.patch('/api/settings/workspace/', d),
+  // A drawn coach_signature is a data URL that can run tens of KB — too large for a GET
+  // query string (silently truncates/fails), so this switches to POST (same params, in
+  // the body) whenever one is present. Every other caller keeps using GET as before.
   emailPreview:    (type: string, extraParams?: Record<string, any>) =>
-    api.get('/api/settings/email-preview/', { params: { type, ...extraParams } }),
+    extraParams?.coach_signature
+      ? api.post('/api/settings/email-preview/', { type, ...extraParams })
+      : api.get('/api/settings/email-preview/', { params: { type, ...extraParams } }),
   uploadLogo:      (file: File) => {
     const fd = new FormData(); fd.append('logo', file)
     return api.post('/api/settings/logo/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
@@ -194,6 +199,7 @@ export const pipelineApi = {
   create:  (d: any)                => api.post('/api/pipeline/deals/', d),
   patch:   (id: string, d: any)    => api.patch(`/api/pipeline/deals/${id}/`, d),
   advance: (id: string, s: string) => api.post(`/api/pipeline/deals/${id}/advance/`, { stage: s }),
+  delete:  (id: string)             => api.delete(`/api/pipeline/deals/${id}/`),
 }
 export const reportsApi = {
   revenue:     (year: number) => api.get('/api/reports/revenue/', { params: { year } }),

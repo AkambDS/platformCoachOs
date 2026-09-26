@@ -674,6 +674,7 @@ function FilePreviewPanel({ item, currentUser, folders, onClose, onEdit, onDelet
         )}
         {hasFile && isOffice && (
           <InlineOfficeViewer
+            key={`${item.id}-${item.version}`}
             itemKey={`${item.id}-${item.version}`}
             getEditConfig={(mode) => libraryApi.editConfig(item.id, mode).then(r => r.data)}
           />
@@ -981,6 +982,15 @@ export default function Library() {
         <div style={{ flex: 1, minWidth: 0 }}>
           {previewItem ? (
             <FilePreviewPanel
+              // Force a full remount when switching files (not just a re-render) — the
+              // OnlyOffice viewer inside holds an imperative, stateful third-party editor
+              // instance tied to a specific DOM node/document session. Re-rendering it in
+              // place with new props (no key) reuses that same instance across different
+              // files, which OnlyOffice's SDK doesn't tear down/reinitialize cleanly —
+              // it was crashing the whole page white on the second file click. Keying by
+              // item id + version (same value InlineOfficeViewer already uses internally)
+              // guarantees a clean destroy-then-recreate on every file switch.
+              key={`${previewItem.id}-${previewItem.version}`}
               item={previewItem}
               currentUser={user}
               folders={folders}

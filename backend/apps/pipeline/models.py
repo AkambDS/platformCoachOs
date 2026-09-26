@@ -28,6 +28,13 @@ class Deal(WorkspaceModel):
     # set, follow-up alerts for THIS deal stop after this date regardless of the stage
     # default. Blank = use the stage's standard alert_stop_after_days rule.
     alert_stop_date        = models.DateField(null=True, blank=True)
+    # How many follow-up alerts have actually gone out to the CLIENT for this deal's
+    # current stage visit — separate from pipeline_alert_sent_at (which just tracks "was
+    # anything sent today", for the owner+client combined). Compared against the stage's
+    # client_alert_max_count so client reminders can stop earlier than the coach's own,
+    # even while the coach keeps getting alerted per the stage's day-based stop window.
+    # Reset alongside stage_changed_at/pipeline_alert_sent_at in advance_stage() below.
+    client_alert_count     = models.PositiveIntegerField(default=0)
     class DealType(models.TextChoices):
         COACHING_1_1    = "1_1_coaching",       "1:1 Coaching"
         GROUP_PROGRAM   = "group_program",       "Group Program"
@@ -58,6 +65,7 @@ class Deal(WorkspaceModel):
         self.stage                  = new_stage
         self.stage_changed_at       = timezone.now()
         self.pipeline_alert_sent_at = None
+        self.client_alert_count     = 0
         if new_stage == self.Stage.CLOSED_LOST:
             self.closed_at = timezone.now()
         self.save()
@@ -75,6 +83,11 @@ class PipelineStageConfig(WorkspaceModel):
     alert_stop_after_days = models.PositiveIntegerField(null=True, blank=True)
     notify_owner   = models.BooleanField(default=True)
     notify_client  = models.BooleanField(default=False)
+    # Independent cap on CLIENT reminders specifically — once a deal has received this
+    # many client-facing alerts, stop notifying the client, even though the coach (via
+    # notify_owner) keeps getting alerted per alert_stop_after_days as before. Blank =
+    # no separate cap; client alerts stop only when the coach's own alerts do.
+    client_alert_max_count = models.PositiveIntegerField(null=True, blank=True)
     is_builtin     = models.BooleanField(default=False)
 
     class Meta:

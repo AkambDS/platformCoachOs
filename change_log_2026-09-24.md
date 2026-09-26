@@ -102,3 +102,10 @@ bottom of file for the process note).
 Per team convention: a `change_log_<YYYY-MM-DD>.md` file like this one is
 added/updated before every commit, summarizing what that commit contains at
 a high level.
+
+# TODO
+dd this line (replacing the placeholder from .env.production.template):
+
+
+ANTHROPIC_API_KEY=sk-ant-api03-your-real-key-here
+Save and exit (Ctrl+O, Enter, Ctrl+X in nano). Leave AI_NOTES_MOCK unset — it defaults to False, which is what you want in prod.

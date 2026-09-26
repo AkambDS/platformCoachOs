@@ -88,8 +88,9 @@ function WorkspaceTab() {
   )
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      <div className="card">
+    <div style={{ maxWidth: 1040 }}>
+      <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+      <div className="card" style={{ flex: 1, minWidth: 0 }}>
         <div className="card-body" style={{ paddingTop: 8 }}>
 
           {/* ── Business Identity ── */}
@@ -157,7 +158,12 @@ function WorkspaceTab() {
             <input className="finput" value={form.zip_code} onChange={e => set('zip_code', e.target.value)} placeholder="10001" />
           </div>
 
-          {/* ── Scheduling Defaults ── */}
+        </div>
+      </div>
+
+      {/* ── Scheduling Defaults ── */}
+      <div className="card" style={{ flex: 1, minWidth: 0 }}>
+        <div className="card-body" style={{ paddingTop: 8 }}>
           {secHdr('Scheduling Defaults')}
           <div className="fgroup">
             <label className="flabel">Default Timezone</label>
@@ -187,13 +193,14 @@ function WorkspaceTab() {
             </div>
           </div>
 
-          <div style={{ borderTop: '1px solid var(--border)', marginTop: 24, paddingTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ marginTop: 24, display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-dark" onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save Changes'}
             </button>
           </div>
 
         </div>
+      </div>
       </div>
     </div>
   )
@@ -259,8 +266,8 @@ function ProfileTab() {
   )
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      <div className="card">
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', maxWidth: 1040 }}>
+      <div className="card" style={{ flex: 1, minWidth: 0 }}>
         <div className="card-body" style={{ paddingTop: 8 }}>
 
           {/* ── Personal Information ── */}
@@ -327,7 +334,12 @@ function ProfileTab() {
             </button>
           </div>
 
-          {/* ── Security ── */}
+        </div>
+      </div>
+
+      {/* ── Security ── */}
+      <div className="card" style={{ flex: 1, minWidth: 0 }}>
+        <div className="card-body" style={{ paddingTop: 8 }}>
           {secHdr(<Shield size={13} />, 'Security')}
 
           {pwError && (
@@ -355,7 +367,7 @@ function ProfileTab() {
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: -8, marginBottom: 16 }}>Minimum 8 characters.</div>
 
-          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, display: 'flex', justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <button className="btn btn-dark" onClick={handleChangePassword} disabled={savingPw}>
               {savingPw ? 'Updating…' : 'Change Password'}
             </button>
@@ -379,7 +391,7 @@ function PipelineTab() {
   })
   const [showAdd, setShowAdd] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
-  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, client_alert_max_count: '', insertAfterSlug: '__end__' })
   const [editForm, setEditForm] = useState<any>({})
   const [saving, setSaving] = useState(false)
 
@@ -401,12 +413,13 @@ function PipelineTab() {
       ...newForm, slug, order,
       follow_up_days: newForm.follow_up_days ? Number(newForm.follow_up_days) : null,
       alert_stop_after_days: newForm.alert_stop_after_days ? Number(newForm.alert_stop_after_days) : null,
+      client_alert_max_count: newForm.client_alert_max_count ? Number(newForm.client_alert_max_count) : null,
     }
     try {
       await settingsApi.createPipelineStage(payload)
       qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
       setShowAdd(false)
-      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, insertAfterSlug: '__end__' })
+      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, client_alert_max_count: '', insertAfterSlug: '__end__' })
       show('Stage added')
     } catch (e: any) {
       show(e?.response?.data?.label?.[0] || e?.response?.data?.slug?.[0] || 'Failed to add stage', 'error')
@@ -419,6 +432,7 @@ function PipelineTab() {
       ...editForm,
       follow_up_days: editForm.follow_up_days ? Number(editForm.follow_up_days) : null,
       alert_stop_after_days: editForm.alert_stop_after_days ? Number(editForm.alert_stop_after_days) : null,
+      client_alert_max_count: editForm.client_alert_max_count ? Number(editForm.client_alert_max_count) : null,
     }
     try {
       await settingsApi.updatePipelineStage(editTarget.id, payload)
@@ -459,7 +473,7 @@ function PipelineTab() {
             <div style={{ fontSize: 12, color: 'var(--muted)' }}>
               {s.follow_up_days ? `Alert after ${s.follow_up_days}d` : <span style={{ color: '#bbb' }}>No alert</span>}
             </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', alert_stop_after_days: s.alert_stop_after_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client }) }} style={{ padding: '2px 6px' }}>
+            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', alert_stop_after_days: s.alert_stop_after_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client, client_alert_max_count: s.client_alert_max_count ?? '' }) }} style={{ padding: '2px 6px' }}>
               <Pencil size={13} />
             </button>
             <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(s)} style={{ color: '#c0392b', padding: '2px 6px' }}>
@@ -500,7 +514,7 @@ function PipelineTab() {
             <input className="finput" type="number" min={1} max={365} value={newForm.alert_stop_after_days}
               onChange={e => setNewForm(f => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="e.g. 30" />
           </div>
-          <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 20, marginBottom: newForm.notify_client ? 10 : 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
               <input type="checkbox" checked={newForm.notify_owner} onChange={e => setNewForm(f => ({ ...f, notify_owner: e.target.checked }))}
                 style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
@@ -510,6 +524,17 @@ function PipelineTab() {
                 style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
             </label>
           </div>
+          {newForm.notify_client && (
+            <div className="fgroup">
+              <label className="flabel">Max reminders to client <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop on its own</span></label>
+              <input className="finput" type="number" min={1} max={365} value={newForm.client_alert_max_count}
+                onChange={e => setNewForm(f => ({ ...f, client_alert_max_count: e.target.value }))} placeholder="e.g. 3" />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                Stops emailing the client after this many reminders, even if the deal is still stuck in this
+                stage. Your own "Notify me" reminders keep going per the stop window above either way.
+              </div>
+            </div>
+          )}
           <div className="fgroup">
             <label className="flabel">Color</label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
@@ -545,7 +570,7 @@ function PipelineTab() {
             <input className="finput" type="number" min={1} max={365} value={editForm.alert_stop_after_days}
               onChange={e => setEditForm((f: any) => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="Never stop" />
           </div>
-          <div style={{ display: 'flex', gap: 20, marginBottom: 8 }}>
+          <div style={{ display: 'flex', gap: 20, marginBottom: editForm.notify_client ? 10 : 8 }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
               <input type="checkbox" checked={editForm.notify_owner} onChange={e => setEditForm((f: any) => ({ ...f, notify_owner: e.target.checked }))}
                 style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
@@ -555,6 +580,17 @@ function PipelineTab() {
                 style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
             </label>
           </div>
+          {editForm.notify_client && (
+            <div className="fgroup">
+              <label className="flabel">Max reminders to client <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop on its own</span></label>
+              <input className="finput" type="number" min={1} max={365} value={editForm.client_alert_max_count}
+                onChange={e => setEditForm((f: any) => ({ ...f, client_alert_max_count: e.target.value }))} placeholder="Never stop" />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                Stops emailing the client after this many reminders, even if the deal is still stuck in this
+                stage. Your own "Notify me" reminders keep going per the stop window above either way.
+              </div>
+            </div>
+          )}
           <div className="fgroup">
             <label className="flabel">Color</label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
@@ -1648,18 +1684,23 @@ const GENERIC_USE_CASES = [
 
 // Placeholders substituted at send time — differ per use case since each pulls from
 // a different backend context (a session, an invoice, a portal link, …).
+// {client_first_name}/{client_email}/{client_address} are now available on every use
+// case that has a client at all (see the matching tmpl_vars additions in
+// tasks/email.py and the DUMMY/preview_vars additions in settings_app/views.py) —
+// team_invite is the one exception, since that email goes to an invited coach, not
+// a client, so there's no client context to offer there.
 const PLACEHOLDER_HINTS: Record<string, string[]> = {
-  confirmation:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
-  reschedule:           ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
-  reminder_24h:         ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
-  reminder_1h:          ['{client_name}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
-  invoice:              ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
-  payment_receipt:      ['{client_name}', '{workspace_name}', '{invoice_number}', '{amount}', '{payment_date}', '{owner_name}', '{owner_email}'],
-  client_communication: ['{client_name}', '{coach_name}', '{workspace_name}'],
+  confirmation:         ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  reschedule:           ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}'],
+  reminder_24h:         ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
+  reminder_1h:          ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
+  invoice:              ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
+  payment_receipt:      ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{payment_date}', '{owner_name}', '{owner_email}'],
+  client_communication: ['{client_name}', '{client_first_name}', '{coach_name}', '{workspace_name}', '{workspace_owner}', '{client_email}', '{client_address}'],
   team_invite:          ['{invited_by_name}', '{workspace_name}', '{role}', '{accept_url}', '{owner_name}', '{owner_email}'],
-  pipeline:             ['{owner_name}', '{client_name}', '{workspace_name}', '{stage_label}', '{days_in_stage}', '{follow_up_days}', '{deal_value}', '{stage_entered}'],
+  pipeline:             ['{owner_name}', '{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{stage_label}', '{days_in_stage}', '{follow_up_days}', '{deal_value}', '{stage_entered}'],
 }
-const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{workspace_name}', '{coach_name}']
+const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{coach_name}']
 
 // Ready-to-edit starting copy for each use case — lets a coach get a working, on-brand
 // template in one click instead of starting from a blank editor.
@@ -1687,7 +1728,10 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
   invoice: {
     subject: 'Invoice from {workspace_name}',
     intro:   "You've received a new invoice from {workspace_name}. Please see the attached details.",
-    closing: 'Questions about this invoice? Just reply to this email.',
+    // "Thanks! / {workspace_name}" — see the matching comment in EmailEditModal.tsx's
+    // own USE_CASE_SAMPLE.invoice for why this is now part of the editable text instead
+    // of a separate hardcoded sign-off block.
+    closing: "Questions about this invoice? Just reply to this email.\n\nThanks!\n{workspace_name}",
   },
   payment_receipt: {
     subject: 'Receipt: Invoice {invoice_number} — Payment Received',
@@ -1732,6 +1776,38 @@ const CONTRACT_SAMPLE = {
   ].join('\n'),
   closing: 'By signing below, both parties agree to the terms of this Agreement.',
 }
+
+// Client Communication and Invoice templates both edit as a single free-form "Message"
+// box (matching the compose experience at Client Communication > New Message > Start
+// Blank), not the separate Opening/Closing split every other use case still uses. This
+// merges a legacy intro+closing pair into one block the same way ClientDetail.tsx's
+// startFromTemplate() does, plus converts stray literal "<br>" tags (pre-dating the
+// paragraph-splitting renderer) into real blank lines so old content regains proper
+// paragraph spacing instead of showing raw tags. Safe to reapply on every open — a no-op
+// once closing is already ''. (Invoice's "Body — Closing" already had no effect on the
+// real send before this — see _invoice_closing_block in tasks/email.py — so merging it
+// into the message here isn't losing anything that used to work.)
+const SIMPLE_MESSAGE_USE_CASES = new Set(['client_communication', 'invoice'])
+const brToNewlines = (s: string) => (s || '').replace(/<br\s*\/?>/gi, '\n')
+const mergeSimpleMessageContent = (t: any) => {
+  const effectiveUseCase = (t.use_cases && t.use_cases.length > 0) ? t.use_cases[0] : 'client_communication'
+  if (!SIMPLE_MESSAGE_USE_CASES.has(effectiveUseCase)) return t
+  const merged = [brToNewlines(t.intro), brToNewlines(t.closing)].map((s: string) => s.trim()).filter(Boolean).join('\n\n')
+  return { ...t, intro: merged, closing: '' }
+}
+// Same starting look as Start Blank — plain white header (logo only), footer off. Only
+// for genuinely new/never-configured content (openNew, a use case's built-in sample) —
+// NOT applied when reopening an already-saved template, which would silently overwrite
+// a coach's own header/footer customization every time they reopen the editor.
+//
+// Invoice specifically starts with "Show header" AND "Show footer" both unchecked
+// (header_bg/accent_color stay white as the fallback look if a coach later re-enables
+// the header) — a plain invoice email, no logo/banner/footer, unless a coach opts back
+// in. Client Communication keeps the header on (just styled white/logo-only), matching
+// its own dedicated composer's default in ClientDetail.tsx's startBlank().
+const simpleMessageStartStyle = (ucKey: string) => ({
+  show_header: ucKey !== 'invoice', header_bg: '#ffffff', accent_color: '#ffffff', show_footer: false,
+})
 
 const blankGenericTemplate = () => ({
   id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -1778,11 +1854,16 @@ function GenericTemplatesTab() {
   const handleAddContractSample = async () => {
     setAddingSample('contract')
     try {
+      const blank = blankGenericTemplate()
       const newTmpl = {
-        ...blankGenericTemplate(),
+        ...blank,
         name: CONTRACT_SAMPLE.name,
         subject: CONTRACT_SAMPLE.subject, intro: CONTRACT_SAMPLE.intro, closing: CONTRACT_SAMPLE.closing,
         include_client_signature_line: true,
+        // Footer off by default for this one — a contract reads cleaner without the
+        // "automated notification" disclaimer under the signature line. Still a normal
+        // checkbox in the editor below, so a coach can turn it back on per-template.
+        style: { ...blank.style, show_footer: false },
         // Not auto-assigned to the Client Communication slot — it's an alternate
         // starting point a coach picks explicitly, not the default for that use case.
       }
@@ -1832,8 +1913,15 @@ function GenericTemplatesTab() {
       editing?.style?.show_footer, editing?.style?.footer_text, editing?.style?.show_contact_line,
       editing?.show_logo, editing?.include_client_signature_line])
 
-  const openNew  = () => { setDirectAssignUseCase(null); setEditing(blankGenericTemplate()) }
-  const openEdit = (t: any) => { setDirectAssignUseCase(null); setEditing({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } }) }
+  const openNew  = () => {
+    setDirectAssignUseCase(null)
+    const blank = blankGenericTemplate()
+    // No use case chosen yet here (that happens at save/assign time) — 'client_communication'
+    // just picks the non-invoice ("header on, styled white/logo-only") starting look as the
+    // generic default, same as before this became use-case-aware.
+    setEditing(mergeSimpleMessageContent({ ...blank, style: { ...blank.style, ...simpleMessageStartStyle('client_communication') } }))
+  }
+  const openEdit = (t: any) => { setDirectAssignUseCase(null); setEditing(mergeSimpleMessageContent({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } })) }
   const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
   const handleDelete = async (id: string) => {
@@ -1887,17 +1975,23 @@ function GenericTemplatesTab() {
     const assignedId = useCaseMap[ucKey]
     const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
     if (assigned) {
-      setEditing({ ...assigned, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } })
+      setEditing(mergeSimpleMessageContent({ ...assigned, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } }))
       return
     }
     const sample = USE_CASE_SAMPLES[ucKey]
     const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
-    setEditing({
-      ...blankGenericTemplate(),
+    const blank = blankGenericTemplate()
+    setEditing(mergeSimpleMessageContent({
+      ...blank,
       name: uc?.label || ucKey,
       subject: sample?.subject || '', intro: sample?.intro || '', closing: sample?.closing || '',
       use_cases: [ucKey],
-    })
+      // White/logo-only header (or, for invoice, no header at all — see
+      // simpleMessageStartStyle) and footer off, for every use case's fresh default now,
+      // not just Client Communication/Invoice — a coach opts back into the full branded
+      // banner look via the Header/Footer checkboxes below if they want it.
+      style: { ...blank.style, ...simpleMessageStartStyle(ucKey) },
+    }))
   }
 
   const handleDuplicateDefault = async (ucKey: string) => {
@@ -2021,12 +2115,19 @@ function GenericTemplatesTab() {
     // to; falls back to the common baseline for a brand-new, not-yet-assigned template.
     const assignedHints = (editing.use_cases || []).flatMap((uc: string) => PLACEHOLDER_HINTS[uc] || [])
     const activePlaceholders = Array.from(new Set(assignedHints.length ? assignedHints : DEFAULT_PLACEHOLDER_HINT))
+    // Client Communication and Invoice templates get the same single-"Message"-box editing
+    // experience as Client Communication > New Message > Start Blank, instead of the
+    // Opening/Closing split every other use case still uses — see mergeSimpleMessageContent
+    // above.
+    const effectiveUseCase = (editing.use_cases && editing.use_cases.length > 0) ? editing.use_cases[0] : 'client_communication'
+    const isSimpleMessage = SIMPLE_MESSAGE_USE_CASES.has(effectiveUseCase)
+    const simpleMessagePlaceholders = PLACEHOLDER_HINTS[effectiveUseCase] || DEFAULT_PLACEHOLDER_HINT
 
     return (
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
         <div className="card" style={{ flex: 1, minWidth: 0, maxWidth: 480 }}>
           <div className="card-body">
-            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(null)} style={{ marginBottom: 12 }}>← Back</button>
+            <button className="btn btn-outline btn-sm" onClick={() => setEditing(null)} style={{ marginBottom: 12 }}>← Back</button>
             <div className="fgroup">
               <label className="flabel">Template Name</label>
               <input className="finput" value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })} placeholder="e.g. Warm Welcome" />
@@ -2036,19 +2137,38 @@ function GenericTemplatesTab() {
               <input className="finput" value={editing.subject} onChange={e => setEditing({ ...editing, subject: e.target.value })} placeholder="e.g. A quick note from {workspace_name}" />
             </div>
             <div className="fgroup">
-              <label className="flabel">Body — Opening</label>
-              <textarea className="ftextarea" rows={3} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />
+              <label className="flabel">{isSimpleMessage ? 'Message' : 'Body — Opening'}</label>
+              <textarea className="ftextarea" rows={isSimpleMessage ? 12 : 3} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />
             </div>
-            <div className="fgroup">
-              <label className="flabel">Body — Closing</label>
-              <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon, ..." />
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 16 }}>
-              Available: {activePlaceholders.join(' ')}
-              {!(editing.use_cases || []).length && (
-                <span> — more become available once you save and assign this to a specific email type.</span>
-              )}
-            </div>
+            {!isSimpleMessage && (
+              <div className="fgroup">
+                <label className="flabel">Body — Closing</label>
+                <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon, ..." />
+              </div>
+            )}
+            {isSimpleMessage ? (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 16, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                Insert:
+                {simpleMessagePlaceholders.map(token => (
+                  <button
+                    key={token}
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}
+                    onClick={() => setEditing({ ...editing, intro: `${editing.intro}${editing.intro && !editing.intro.endsWith(' ') ? ' ' : ''}${token}` })}
+                  >
+                    {token}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 16 }}>
+                Available: {activePlaceholders.join(' ')}
+                {!(editing.use_cases || []).length && (
+                  <span> — more become available once you save and assign this to a specific email type.</span>
+                )}
+              </div>
+            )}
 
             <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>

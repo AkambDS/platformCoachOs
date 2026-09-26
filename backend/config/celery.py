@@ -12,4 +12,5 @@ app.conf.include = [
     'tasks.sms',
     'tasks.invoicing',
     'tasks.pipeline',
+    'tasks.health',
 ]

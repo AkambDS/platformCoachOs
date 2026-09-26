@@ -195,6 +195,16 @@ class ClientViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Your account is not linked to a workspace."}, status=400)
 
         from apps.pipeline.models import Deal
+        from apps.accounts.models import User
+
+        # Mirrors csv_import's default: a client with no coach assigned exports with the
+        # workspace owner's email rather than a blank column, since that's the effective
+        # coach for an unassigned client (the owner can see/manage all of them regardless).
+        # Keeps a round-trip (export → re-import) stable instead of blank → re-defaulted.
+        workspace_owner = User.objects.filter(
+            workspace=request.user.workspace, role="business_owner"
+        ).first()
+        owner_email = workspace_owner.email if workspace_owner else ""
 
         # Column order matches a common external CRM export layout (name/birthday/
         # company, then phone 1/2 groups, then email, then address) so a coach who's
@@ -240,7 +250,7 @@ class ClientViewSet(viewsets.ModelViewSet):
                     addr.get("street", ""), addr.get("street2", ""), addr.get("city", ""),
                     addr.get("state", ""), addr.get("zip", ""),
                     c.job_title or "", c.status or "Lead", c.lead_source or "",
-                    c.coach.email if c.coach else "",
+                    c.coach.email if c.coach else owner_email,
                     "|".join(c.tags or []),
                     (c.notes or "").replace("\r\n", " ").replace("\n", " "),
                     "|".join(c.communication_tags or []),
@@ -291,11 +301,15 @@ class ClientViewSet(viewsets.ModelViewSet):
         )
         # coach_email resolves against workspace coaches only — same pool the New
         # Client form's "Assign Coach" dropdown offers — cached once, not per row.
+        # workspace_owner is the fallback for rows with no matching coach_email (see below).
         from apps.accounts.models import User
         coaches_by_email = {
             u.email.lower(): u
             for u in User.objects.filter(workspace=request.user.workspace, role="coach")
         }
+        workspace_owner = User.objects.filter(
+            workspace=request.user.workspace, role="business_owner"
+        ).first()
 
         # "pipeline" is optional and, unlike every other column, doesn't map onto a
         # Client field at all — a non-blank value creates a Deal for the row's new
@@ -460,15 +474,13 @@ class ClientViewSet(viewsets.ModelViewSet):
                 if (street or street2 or city or state or zip_) else {}
             )
 
-            # Unlike the New Client form (which defaults "Assign Coach" to the person
-            # creating it), a bulk import leaves coach unset when coach_email is blank
-            # or doesn't match a real coach in this workspace — defaulting dozens of
-            # rows to whoever happens to run the import would misattribute ownership
-            # for clients that were never actually that person's. The business owner
-            # can still see and assign these (unassigned clients are only invisible to
-            # non-owner roles, per _client_qs), so nothing is lost, just left open.
+            # When coach_email is blank or doesn't match a real coach in this workspace,
+            # default to the workspace owner rather than leaving coach unset — the owner
+            # can see/manage every client regardless, so this is a safe, stable default
+            # (unlike defaulting to whoever happens to run the import, which would
+            # misattribute ownership for clients that were never actually that person's).
             coach_email = row.get("coach_email", "").strip().lower()
-            coach = coaches_by_email.get(coach_email)
+            coach = coaches_by_email.get(coach_email) or workspace_owner
 
             try:
                 client_obj = Client.objects.create(

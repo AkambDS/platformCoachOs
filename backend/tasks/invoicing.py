@@ -6,6 +6,27 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+@shared_task(name="tasks.invoicing.mark_overdue_invoices")
+def mark_overdue_invoices():
+    """Daily: flip any Sent invoice whose due date has passed — and that has had no
+    payment recorded against it at all — to Overdue. Partially-paid invoices are left
+    alone (they keep their own Partial status regardless of due date); once an Overdue
+    invoice is fully or partially paid, record_payment already moves it to Paid or
+    Partially Paid, so this never needs to move an invoice backward."""
+    from apps.invoicing.models import Invoice
+
+    today = timezone.now().date()
+    updated = Invoice.objects.filter(
+        status=Invoice.Status.SENT,
+        due_date__isnull=False,
+        due_date__lt=today,
+    ).update(status=Invoice.Status.OVERDUE)
+
+    if updated:
+        logger.info(f"mark_overdue_invoices: flagged {updated} invoice(s) overdue")
+    return updated
+
+
 @shared_task(name="tasks.invoicing.dispatch_subscription_invoices")
 def dispatch_subscription_invoices():
     """Daily: for every subscription invoice whose next_invoice_date has arrived, clone

@@ -272,6 +272,13 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.calendar.renew_expiring_watch_channels",
         "schedule": crontab(hour=3, minute=0),
     },
+    # Flip Sent invoices with no payment at all past their due date to Overdue —
+    # runs before dispatch-subscription-invoices so a freshly-cloned period invoice
+    # never gets swept up by the same run.
+    "mark-overdue-invoices": {
+        "task": "tasks.invoicing.mark_overdue_invoices",
+        "schedule": crontab(hour=6, minute=0),
+    },
     # Recurring/subscription invoices — generate + send the next period's invoice once
     # its due date arrives
     "dispatch-subscription-invoices": {

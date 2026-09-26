@@ -33,7 +33,7 @@ function OwnerDashboard() {
   const thisMonth = new Date().getMonth()
 
   const { data: outstanding }  = useQuery({ queryKey: ["outstanding"],         queryFn: () => reportsApi.outstanding().then(r => r.data) })
-  const { data: clients }      = useQuery({ queryKey: ["clients-summary"],      queryFn: () => clientsApi.list({ page_size: 1, active_flag: true }).then(r => r.data) })
+  const { data: clients }      = useQuery({ queryKey: ["clients-summary"],      queryFn: () => clientsApi.list({ page_size: 1, status: "Active" }).then(r => r.data) })
   const { data: upcoming }     = useQuery({ queryKey: ["activities-upcoming"],  queryFn: () => activitiesApi.list({ start: today, status: "scheduled", page_size: 5 }).then(r => r.data) })
   const { data: dealsData }    = useQuery({ queryKey: ["pipeline-summary"],     queryFn: () => pipelineApi.deals({ page_size: 100 }).then(r => r.data) })
   const { data: invoiceData }  = useQuery({ queryKey: ["invoices-summary"],     queryFn: () => invoicesApi.list({ page_size: 200 }).then(r => r.data) })

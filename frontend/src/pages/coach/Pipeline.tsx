@@ -169,7 +169,7 @@ function DealCard({ deal, stageColor, followUpDays, isActive, onClick }: {
 }
 
 // ── Deal Detail Modal ─────────────────────────────────────────────────────────
-function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any) {
+function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced, onRemoved }: any) {
   const qc = useQueryClient()
 
   const { data: freshData } = useQuery({
@@ -185,6 +185,8 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
   const [editing, setEditing]         = useState(false)
   const [targetStage, setTargetStage] = useState(deal.stage)
   const [saving, setSaving]           = useState(false)
+  const [showRemoveConfirm, setShowRemoveConfirm] = useState(false)
+  const [removing, setRemoving]       = useState(false)
   const [draft, setDraft]             = useState({
     deal_value: deal.deal_value ? String(deal.deal_value) : '',
     source:     deal.source || '',
@@ -226,6 +228,15 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
     } catch { } finally { setSaving(false) }
   }
 
+  const handleRemove = async () => {
+    setRemoving(true)
+    try {
+      await pipelineApi.delete(deal.id)
+      qc.invalidateQueries({ queryKey: ['pipeline'] })
+      onRemoved()
+    } catch { } finally { setRemoving(false) }
+  }
+
   const progressLog: any[]  = deal.progress_log || []
   const stageHistory: any[] = deal.stage_history || []
   const timeline = [
@@ -234,6 +245,7 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
   ].sort((a, b) => new Date(b.changed_at).getTime() - new Date(a.changed_at).getTime())
 
   return (
+    <>
     <Modal
       title=""
       size="lg"
@@ -249,6 +261,11 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
         ) : (
           <>
             <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
+            <button
+              className="btn btn-sm"
+              onClick={() => setShowRemoveConfirm(true)}
+              style={{ border: '1px solid #e5b4b4', color: '#c0392b', background: '#fdf4f4' }}
+            >Remove from Pipeline</button>
             <button className="btn btn-ghost btn-sm" onClick={() => setEditing(true)}>Edit</button>
             <button
               className="btn btn-sm"
@@ -503,6 +520,25 @@ function DealDetailModal({ deal: initialDeal, stages, onClose, onAdvanced }: any
         </div>
       )}
     </Modal>
+    {showRemoveConfirm && (
+      <Modal title="Remove from Pipeline" onClose={() => !removing && setShowRemoveConfirm(false)}>
+        <div style={{ padding: '4px 0 20px', fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
+          Remove <strong>{deal.client_name}</strong> from the pipeline board? This deletes this deal's stage
+          history and won't be recoverable. The client record itself, along with their status, sessions,
+          notes, and invoices, is not affected.
+        </div>
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <button className="btn btn-outline btn-sm" onClick={() => setShowRemoveConfirm(false)} disabled={removing}>Cancel</button>
+          <button
+            className="btn btn-sm"
+            onClick={handleRemove}
+            disabled={removing}
+            style={{ background: '#c0392b', color: '#fff', border: 'none' }}
+          >{removing ? 'Removing…' : 'Remove from Pipeline'}</button>
+        </div>
+      </Modal>
+    )}
+    </>
   )
 }
 
@@ -747,7 +783,8 @@ export default function Pipeline() {
       {selectedDeal && (
         <DealDetailModal deal={selectedDeal} stages={stages}
           onClose={() => setSelectedDeal(null)}
-          onAdvanced={() => { setSelectedDeal(null); showToast('Stage updated') }} />
+          onAdvanced={() => { setSelectedDeal(null); showToast('Stage updated') }}
+          onRemoved={() => { setSelectedDeal(null); showToast('Removed from pipeline') }} />
       )}
       {toastEl}
     </AppShell>

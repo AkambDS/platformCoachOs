@@ -140,6 +140,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         # Voiding a subscription invoice stops the series — otherwise the next period
         # would still auto-generate and email off a voided invoice.
         invoice.next_invoice_date = None
+        # A voided invoice is dead — auto-archive it straight away so it drops out of
+        # the default "All" list instead of lingering there with no dedicated filter
+        # until someone remembers to archive it by hand.
+        invoice.archived = True
+        invoice.archived_at = timezone.now()
         invoice.save()
         return Response(InvoiceDetailSerializer(invoice).data)
 

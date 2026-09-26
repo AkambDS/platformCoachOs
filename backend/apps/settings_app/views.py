@@ -328,7 +328,7 @@ def activity_type_config_detail(request, pk):
     return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
-@api_view(["GET"])
+@api_view(["GET", "POST"])
 @permission_classes([IsWorkspaceMember])
 def email_preview(request):
     """
@@ -337,16 +337,24 @@ def email_preview(request):
     Falls back to saved DB template when params are omitted.
     This makes the preview independent of save — it always reflects what
     the user has typed in the editor, not what's committed to the DB.
+
+    POST (same params, in the body instead of the query string) exists purely so a
+    coach_signature data URL can be previewed at all — a drawn signature can be tens of
+    KB, which blows past URL length limits as a GET query string. Every other caller
+    (invoices, activities, invites, …) keeps using GET; this is additive, not a
+    replacement, so `request.query_params.get(...)` below is aliased to `params.get(...)`
+    to read from whichever the request actually used.
     """
+    params = request.data if request.method == "POST" else request.query_params
     from types import SimpleNamespace
     from tasks.email_html import (build_confirmation_email, build_reschedule_email, build_reminder_email,
                                    build_invoice_email, build_payment_receipt_email, build_portal_invite_email,
                                    build_client_communication_email, build_invite_email, build_pipeline_alert_email)
     from tasks.email import _logo_src, _owner_info, _resolve_generic_template
 
-    email_type = request.query_params.get("type", "confirmation")
+    email_type = params.get("type", "confirmation")
     workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
-    hide_logo  = request.query_params.get("hide_logo") == "1"
+    hide_logo  = params.get("hide_logo") == "1"
     # Embed logo as data URI in preview — avoids BACKEND_URL requirement and browser caching
     if not hide_logo and workspace.logo_data and workspace.logo_data.startswith("data:"):
         logo_url = workspace.logo_data
@@ -371,15 +379,27 @@ def email_preview(request):
         # is missing from this dict — so every use case's placeholders must live here.
         invited_by_name="Coach Mike", role="Coach", accept_url="#",
         owner_name="Coach Mike", owner_email="owner@example.com",
+        workspace_owner=owner_name or workspace.name,
+        client_first_name="Jane",
+        client_email="jane@example.com", client_address="123 Main St, Springfield, IL 62704",
         # Pipeline alert placeholders
         stage_label="Proposal Sent", days_in_stage="9", follow_up_days="5",
         deal_value="$2,400", stage_entered="June 12, 2026",
     )
     if email_type == "client_communication":
-        # Real client name (not the generic Jane Smith placeholder) — lets a coach
-        # reference {client_name} in a draft's intro/closing and see it substituted
-        # for the actual client they're messaging.
-        DUMMY["client_name"] = request.query_params.get("client_name", DUMMY["client_name"])
+        # Real client/coach name (not the generic Jane Smith / Coach Mike placeholders) —
+        # lets a coach see {client_name}/{coach_name} resolve the same way a real send
+        # would. {client_name} is first-name-only, matching send_client_communication_email's
+        # tmpl_vars (a greeting reads "Hi Jane," not "Hi Jane Smith,").
+        real_client_name = params.get("client_name", DUMMY["client_name"])
+        DUMMY["client_name"] = real_client_name.split()[0] if real_client_name else real_client_name
+        DUMMY["coach_name"] = params.get("coach_name", DUMMY["coach_name"])
+        # {client_email}/{client_address} reflect the actual client being messaged, same as
+        # client_name above — and fall back to blank (not the sample "jane@example.com" /
+        # "123 Main St…") when the caller passes an empty string, i.e. the client genuinely
+        # has no address on file, matching send_client_communication_email's behavior.
+        DUMMY["client_email"] = params.get("client_email", "")
+        DUMMY["client_address"] = params.get("client_address", "")
 
     def apply(text):
         try:
@@ -394,8 +414,8 @@ def email_preview(request):
     # actually about to go out, not whatever happens to sit in the older, no-longer-written
     # legacy bucket.
     tmpl = _resolve_generic_template(workspace, email_type)
-    raw_intro   = request.query_params.get("intro",   tmpl.get("intro",   ""))
-    raw_closing = request.query_params.get("closing", tmpl.get("closing", ""))
+    raw_intro   = params.get("intro",   tmpl.get("intro",   ""))
+    raw_closing = params.get("closing", tmpl.get("closing", ""))
     custom_intro   = apply(raw_intro)
     custom_closing = apply(raw_closing)
 
@@ -411,32 +431,32 @@ def email_preview(request):
         ("heading_font",   ""),
         ("value_color",    ""),
     ):
-        v = request.query_params.get(key, saved_style.get(key, default))
+        v = params.get(key, saved_style.get(key, default))
         if v:  # omit empty strings — builders supply defaults
             style[key] = v
     # header_tagline is special: '' means "logo only / no tagline", not "use default"
-    style["header_tagline"] = request.query_params.get(
+    style["header_tagline"] = params.get(
         "header_tagline", saved_style.get("header_tagline", "Coaching Platform")
     )
     # show_header/show_footer are bools, not color strings — '0'/'false' turns them off
-    raw_show_header = request.query_params.get("show_header")
+    raw_show_header = params.get("show_header")
     if raw_show_header is not None:
         style["show_header"] = raw_show_header not in ("0", "false", "False")
     else:
         style["show_header"] = saved_style.get("show_header", True)
 
-    raw_show_footer = request.query_params.get("show_footer")
+    raw_show_footer = params.get("show_footer")
     if raw_show_footer is not None:
         style["show_footer"] = raw_show_footer not in ("0", "false", "False")
     else:
         style["show_footer"] = saved_style.get("show_footer", True)
 
     # footer_text: '' means "use default disclaimer", same None-sentinel convention as header_tagline
-    style["footer_text"] = request.query_params.get(
+    style["footer_text"] = params.get(
         "footer_text", saved_style.get("footer_text", "")
     )
 
-    raw_show_contact = request.query_params.get("show_contact_line")
+    raw_show_contact = params.get("show_contact_line")
     if raw_show_contact is not None:
         style["show_contact_line"] = raw_show_contact not in ("0", "false", "False")
     else:
@@ -445,26 +465,32 @@ def email_preview(request):
     # show_heading/show_signature: hide the auto heading (e.g. "{name} sent you an
     # invoice." / "Your session is confirmed") and/or "Thanks! / {name}" sign-off when
     # a coach's custom body already covers that (avoids redundant boilerplate on top).
-    raw_show_heading = request.query_params.get("show_heading")
+    # Both default False, matching the real send path (tasks/email.py) exactly — this
+    # preview claims "this is what will actually send", and previously wasn't for any
+    # invoice template that never explicitly set these: this block resolves them
+    # unconditionally before the invoice branch below ever runs, so a default set only
+    # there (which used to be True here vs. False in the real send) was silently
+    # overridden and never actually took effect.
+    raw_show_heading = params.get("show_heading")
     if raw_show_heading is not None:
         style["show_heading"] = raw_show_heading not in ("0", "false", "False")
     else:
-        style["show_heading"] = saved_style.get("show_heading", True)
+        style["show_heading"] = saved_style.get("show_heading", False)
 
-    raw_show_signature = request.query_params.get("show_signature")
+    raw_show_signature = params.get("show_signature")
     if raw_show_signature is not None:
         style["show_signature"] = raw_show_signature not in ("0", "false", "False")
     else:
-        style["show_signature"] = saved_style.get("show_signature", True)
+        style["show_signature"] = saved_style.get("show_signature", False)
 
     if email_type == "confirmation":
         # Allow callers (e.g. the Schedule Activity preview) to pass the real client/
         # session details instead of dummy placeholders.
-        _preview_client_name   = request.query_params.get("client_name",   "Jane Smith")
-        _preview_coach_name    = request.query_params.get("coach_name",    "Coach Mike")
-        _preview_session_title = request.query_params.get("session_title", "Discovery Session")
-        _preview_session_time  = request.query_params.get("session_time",  "Wednesday, June 5 at 10:00 AM")
-        _preview_location      = request.query_params.get("location",      "123 Main St")
+        _preview_client_name   = params.get("client_name",   "Jane Smith")
+        _preview_coach_name    = params.get("coach_name",    "Coach Mike")
+        _preview_session_title = params.get("session_title", "Discovery Session")
+        _preview_session_time  = params.get("session_time",  "Wednesday, June 5 at 10:00 AM")
+        _preview_location      = params.get("location",      "123 Main St")
         client   = SimpleNamespace(first_name=_preview_client_name.split()[0], full_name=_preview_client_name, email="jane@example.com")
         activity = SimpleNamespace(
             title=_preview_session_title, activity_type="session",
@@ -518,7 +544,7 @@ def email_preview(request):
             stripe_payment_link="", client=client,
         )
         custom_html_tmpl = tmpl.get("custom_html", "").strip()
-        skip_custom = request.query_params.get("skip_custom_html") == "1"
+        skip_custom = params.get("skip_custom_html") == "1"
         # disable_style only applies when custom HTML is actually being used
         using_custom = custom_html_tmpl and not skip_custom
         disable_style = using_custom and tmpl.get("disable_style", False)
@@ -527,7 +553,14 @@ def email_preview(request):
             _invoice_footer_block, _invoice_header_block,
             _invoice_heading_block, _invoice_signature_block, _invoice_closing_block,
         )
-        _show_logo = tmpl.get("show_logo", True) and not disable_style
+        # hide_logo (computed at the top of this view from the real workspace.logo_data
+        # and whatever the current editing session's "Show logo" checkbox actually says)
+        # — not tmpl.get("show_logo"), which reads whatever happens to be saved on the
+        # (possibly legacy/unassigned) resolved template and ignores the live session
+        # entirely. That mismatch was why unchecking/checking "Show logo" here had no
+        # effect, and why a real logo could be uploaded yet the preview still fell back
+        # to the plain text workspace-name header regardless.
+        _show_logo = not hide_logo and not disable_style
         logo_img_tag = (
             f'<table role="presentation" cellpadding="0" cellspacing="0"><tr>'
             f'<td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
@@ -541,17 +574,26 @@ def email_preview(request):
         _body_font_css = "'Helvetica Neue',Helvetica,Arial,sans-serif" if disable_style else (_bf or "'Helvetica Neue',Helvetica,Arial,sans-serif")
         _accent_color  = "#b8922e" if disable_style else style.get("accent_color", "#b8922e")
         # Allow callers (e.g. new-invoice preview) to pass real values instead of dummy ones
-        _preview_amount      = request.query_params.get("amount",      "150.00")
-        _preview_due_date    = request.query_params.get("due_date",    "June 30, 2026")
-        _preview_client_name = request.query_params.get("client_name", "Jane Smith")
+        _preview_amount      = params.get("amount",      "150.00")
+        _preview_due_date    = params.get("due_date",    "June 30, 2026")
+        _preview_client_name = params.get("client_name", "Jane Smith")
         preview_vars = dict(
-            client_name=_preview_client_name, workspace_name=workspace.name,
+            client_name=_preview_client_name,
+            client_first_name=params.get("client_first_name", _preview_client_name.split()[0]),
+            client_email=params.get("client_email", "jane@example.com"),
+            client_address=params.get("client_address", "123 Main St, Springfield, IL 62704"),
+            workspace_name=workspace.name,
             invoice_number="INV-0042", amount=_preview_amount, due_date=_preview_due_date,
             owner_email=owner_email, owner_name=owner_name or owner_email,
             payment_link="", pay_button="", logo_img=logo_img_tag,
             view_instructions="You can view the invoice by clicking on the attached file.",
-            header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
-            accent_color="#b8922e" if disable_style else style.get("accent_color", "#b8922e"),
+            # header_bg defaults to white (logo-only header, no color band) rather than
+            # navy — same "start plain" default as Client Communication/Contract Agreement.
+            # ".get(key) or default", not ".get(key, default)", because an explicitly saved
+            # empty string ("" — e.g. an older template saved before this default existed)
+            # must still fall back to the default instead of producing invalid empty CSS.
+            header_bg="#1a2f4e" if disable_style else (style.get("header_bg") or "#ffffff"),
+            accent_color="#b8922e" if disable_style else (style.get("accent_color") or "#b8922e"),
             value_color="#1a1714" if disable_style else style.get("value_color", "#1a1714"),
             body_font_css=_body_font_css,
             heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
@@ -564,17 +606,27 @@ def email_preview(request):
             ),
             header_block=_invoice_header_block(
                 style.get("show_header", True) and not disable_style,
-                header_bg="#1a2f4e" if disable_style else style.get("header_bg", "#1a2f4e"),
+                header_bg="#1a2f4e" if disable_style else (style.get("header_bg") or "#ffffff"),
                 accent_color=_accent_color, logo_img=logo_img_tag, workspace_name=workspace.name,
             ),
             body_radius="0 0 8px 8px" if (style.get("show_header", True) and not disable_style) else "8px",
+            # Defaults to False (was True) — matches the real send path (tasks/email.py)
+            # exactly. This preview claims "this is what will actually send"; it wasn't,
+            # for any template that never explicitly set show_heading — this heading
+            # showed here even though a real send would never have included it.
             heading_block=_invoice_heading_block(
-                style.get("show_heading", True) and not disable_style,
+                style.get("show_heading", False) and not disable_style,
                 heading_font_css="Georgia,'Times New Roman',serif" if disable_style else (_hf or "Georgia,'Times New Roman',serif"),
                 workspace_name=workspace.name,
             ),
+            # Defaults to False (was True) — the "Thanks! / {workspace_name}" sign-off is
+            # no longer a separate hardcoded block; a coach who wants one now just types
+            # it as the tail of their own editable Message/closing text (see
+            # USE_CASE_SAMPLE.invoice in EmailEditModal.tsx), same as every other email
+            # type already works. Existing saved templates that never set this explicitly
+            # stop getting an extra unwanted sign-off appended on top of their own text.
             signature_block=_invoice_signature_block(
-                style.get("show_signature", True) and not disable_style,
+                style.get("show_signature", False) and not disable_style,
                 workspace_name=workspace.name,
             ),
             closing_block=_invoice_closing_block(custom_closing),
@@ -611,26 +663,26 @@ def email_preview(request):
         )
 
     elif email_type == "client_communication":
-        preview_client_name = request.query_params.get("client_name", "Jane Smith")
-        preview_subject     = request.query_params.get("subject", tmpl.get("subject", ""))
+        preview_client_name = params.get("client_name", "Jane Smith")
+        preview_subject     = params.get("subject", tmpl.get("subject", ""))
         html = build_client_communication_email(
             client_name=preview_client_name,
             subject=preview_subject,
             workspace_name=workspace.name,
-            coach_name=request.query_params.get("coach_name") or "Coach Mike",
+            coach_name=params.get("coach_name") or "Coach Mike",
             logo_url=logo_url,
             owner_email=owner_email, owner_name=owner_name,
             custom_intro=custom_intro, custom_closing=custom_closing,
             style=style,
-            coach_signature=request.query_params.get("coach_signature", ""),
-            include_client_signature_line=request.query_params.get("include_client_signature_line") == "1",
+            coach_signature=params.get("coach_signature", ""),
+            include_client_signature_line=params.get("include_client_signature_line") == "1",
         )
 
     elif email_type == "team_invite":
         html = build_invite_email(
-            invited_by_name=request.query_params.get("invited_by_name") or owner_name or "Coach Mike",
+            invited_by_name=params.get("invited_by_name") or owner_name or "Coach Mike",
             workspace_name=workspace.name,
-            role_display=request.query_params.get("role") or "Coach",
+            role_display=params.get("role") or "Coach",
             accept_url="#",
             logo_url=logo_url,
             invited_email="colleague@example.com",

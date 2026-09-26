@@ -62,7 +62,16 @@ def _shell(workspace_name: str, body: str, extra_head: str = "") -> str:
     input[type=text]{{width:100%;border:1px solid {_BORDER};border-radius:6px;
               padding:10px 12px;font-size:14px;font-family:inherit;background:#fff}}
     input[type=text]:focus{{outline:none;border-color:{_GOLD}}}
-    .sig-pad-wrap{{border:1px solid {_BORDER};border-radius:6px;background:#fff;position:relative}}
+    .sig-mode-toggle{{display:flex;gap:8px}}
+    .sig-mode-btn{{flex:0 0 auto;padding:9px 18px;border-radius:6px;border:1px solid {_BORDER};
+                   background:#fff;color:{_MUTED};font-size:12px;font-weight:700;cursor:pointer}}
+    .sig-mode-btn.active{{background:{_NAVY};color:#fff;border-color:{_NAVY}}}
+    .typed-sig-preview{{border:1px solid {_BORDER};border-radius:6px;background:#fff;min-height:74px;
+                        display:flex;align-items:center;justify-content:center;padding:10px;
+                        margin-top:10px;font-family:'Segoe Script','Bradley Hand','Brush Script MT',cursive;
+                        font-size:30px;color:#1a1714;text-align:center;word-break:break-word}}
+    .typed-sig-preview.empty{{color:#c8c2ba;font-family:inherit;font-size:13px}}
+    .sig-pad-wrap{{border:1px solid {_BORDER};border-radius:6px;background:#fff;position:relative;margin-top:10px}}
     canvas{{display:block;width:100%;height:140px;cursor:crosshair;touch-action:none}}
     .sig-hint{{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
               color:#c8c2ba;font-size:12px;pointer-events:none}}
@@ -127,8 +136,9 @@ class ContractSignView(View):
               </div>"""
             return HttpResponse(_shell(ws.name, body))
 
-        from tasks.email import _apply_tmpl
-        coach_name = draft.signature_name.strip() or (draft.client.coach.full_name if draft.client.coach else ws.name)
+        from tasks.email import _apply_tmpl, _owner_info
+        _, owner_name = _owner_info(ws)
+        coach_name = draft.signature_name.strip() or owner_name or ws.name
         tmpl_vars = dict(client_name=draft.client.full_name, coach_name=coach_name, workspace_name=ws.name)
         subject = escape(_apply_tmpl(draft.subject.strip(), **tmpl_vars) or "Agreement")
         intro   = escape(_apply_tmpl(draft.intro, **tmpl_vars))
@@ -147,19 +157,30 @@ class ContractSignView(View):
 
             <form method="POST" action="" id="signForm">
               <label class="field">Your full legal name</label>
-              <input type="text" name="full_name" required placeholder="Jane Smith" />
+              <input type="text" name="full_name" id="fullName" required placeholder="Jane Smith" />
 
-              <label class="field">Draw your signature</label>
-              <div class="sig-pad-wrap">
+              <label class="field">Your signature</label>
+              <div class="sig-mode-toggle">
+                <button type="button" id="modeType" class="sig-mode-btn active">Type my name</button>
+                <button type="button" id="modeDraw" class="sig-mode-btn">Draw my signature</button>
+              </div>
+
+              <div id="typedSigPreview" class="typed-sig-preview empty">Your typed name will appear here</div>
+
+              <div id="drawSigWrap" class="sig-pad-wrap" style="display:none;">
                 <canvas id="sigCanvas" width="480" height="140"></canvas>
                 <div class="sig-hint" id="sigHint">Sign here</div>
               </div>
-              <div class="sig-actions"><button type="button" id="clearSig">Clear</button></div>
+              <div class="sig-actions" id="clearWrap" style="display:none;">
+                <button type="button" id="clearSig">Clear</button>
+              </div>
+
+              <input type="hidden" name="signature_mode" id="signatureMode" value="type" />
               <input type="hidden" name="signature_data" id="signatureData" />
 
               <label class="consent">
                 <input type="checkbox" name="consent" required />
-                <span>I have read and agree to the terms above, and I intend this drawn signature
+                <span>I have read and agree to the terms above, and I intend this name/signature
                   to be my electronic signature on this document.</span>
               </label>
 
@@ -170,6 +191,38 @@ class ContractSignView(View):
 
           <script>
             (function() {{
+              // ── Mode toggle: typing a name is the default (works without a mouse/
+              // trackpad drawing well, and even without JS at all — see the server-side
+              // fallback in the POST handler); drawing is the alternate, opt-in option.
+              var mode = 'type';
+              var modeTypeBtn = document.getElementById('modeType');
+              var modeDrawBtn = document.getElementById('modeDraw');
+              var typedPreview = document.getElementById('typedSigPreview');
+              var drawWrap = document.getElementById('drawSigWrap');
+              var clearWrap = document.getElementById('clearWrap');
+              var fullNameInput = document.getElementById('fullName');
+              var signatureMode = document.getElementById('signatureMode');
+
+              function renderTypedPreview() {{
+                var v = (fullNameInput.value || '').trim();
+                typedPreview.textContent = v || 'Your typed name will appear here';
+                typedPreview.classList.toggle('empty', !v);
+              }}
+              fullNameInput.addEventListener('input', renderTypedPreview);
+
+              function setMode(next) {{
+                mode = next;
+                signatureMode.value = next;
+                modeTypeBtn.classList.toggle('active', next === 'type');
+                modeDrawBtn.classList.toggle('active', next === 'draw');
+                typedPreview.style.display = next === 'type' ? 'flex' : 'none';
+                drawWrap.style.display = next === 'draw' ? 'block' : 'none';
+                clearWrap.style.display = next === 'draw' ? 'flex' : 'none';
+              }}
+              modeTypeBtn.addEventListener('click', function() {{ setMode('type'); }});
+              modeDrawBtn.addEventListener('click', function() {{ setMode('draw'); }});
+
+              // ── Drawn-signature canvas (only used when mode === 'draw') ──
               var canvas = document.getElementById('sigCanvas');
               var ctx = canvas.getContext('2d');
               var hint = document.getElementById('sigHint');
@@ -235,13 +288,20 @@ class ContractSignView(View):
 
               document.getElementById('signForm').addEventListener('submit', function(e) {{
                 var err = document.getElementById('formError');
-                if (!hasStroke) {{
+                if (mode === 'draw') {{
+                  if (!hasStroke) {{
+                    e.preventDefault();
+                    err.textContent = 'Please draw your signature before submitting.';
+                    err.style.display = 'block';
+                    return;
+                  }}
+                  document.getElementById('signatureData').value = canvas.toDataURL('image/png');
+                }} else if (!fullNameInput.value.trim()) {{
                   e.preventDefault();
-                  err.textContent = 'Please draw your signature before submitting.';
+                  err.textContent = 'Please type your name before submitting.';
                   err.style.display = 'block';
                   return;
                 }}
-                document.getElementById('signatureData').value = canvas.toDataURL('image/png');
                 document.getElementById('submitBtn').disabled = true;
                 document.getElementById('submitBtn').textContent = 'Submitting…';
               }});
@@ -259,18 +319,32 @@ class ContractSignView(View):
         if draft.client_signed_at:
             return self.get(request, token)
 
-        signature_data = (request.POST.get("signature_data") or "").strip()
+        # "type" (default — also the natural fallback if JS never ran, since typing a
+        # name needs no canvas at all) stores a "TEXT:<name>" sentinel, same convention
+        # as the coach's own typed signature (see tasks/email_html.py); "draw" keeps the
+        # existing real "data:image/..." canvas capture. Either way full_name + consent
+        # are required — the typed-name mode just doesn't also require a drawn image.
+        mode = (request.POST.get("signature_mode") or "type").strip()
         full_name = (request.POST.get("full_name") or "").strip()[:200]
         consent = request.POST.get("consent") == "on"
 
-        if not signature_data.startswith("data:image/") or not full_name or not consent:
+        if mode == "draw":
+            signature_data = (request.POST.get("signature_data") or "").strip()
+            valid = signature_data.startswith("data:image/") and full_name and consent
+            error_msg = ("Please go back, draw your signature, enter your name, "
+                         "and check the consent box before submitting.")
+        else:
+            signature_data = f"TEXT:{full_name}" if full_name else ""
+            valid = bool(full_name) and consent
+            error_msg = "Please go back, type your name, and check the consent box before submitting."
+
+        if not valid:
             ws = draft.workspace
-            body = """
+            body = f"""
               <div class="card center">
                 <div class="icon">⚠️</div>
                 <h1>Missing information</h1>
-                <p class="sub">Please go back, draw your signature, enter your name,
-                  and check the consent box before submitting.</p>
+                <p class="sub">{error_msg}</p>
               </div>"""
             return HttpResponse(_shell(ws.name, body), status=400)
 
@@ -318,8 +392,8 @@ class ContractSignView(View):
 
         client = draft.client
         workspace = draft.workspace
-        coach_name = draft.signature_name.strip() or (client.coach.full_name if client.coach else workspace.name)
         owner_email, owner_name = _owner_info(workspace)
+        coach_name = draft.signature_name.strip() or owner_name or workspace.name
         tmpl_vars = dict(client_name=client.full_name, coach_name=coach_name, workspace_name=workspace.name)
         subject = _apply_tmpl(draft.subject.strip(), **tmpl_vars) or "Agreement"
 

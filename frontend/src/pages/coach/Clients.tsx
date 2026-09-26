@@ -366,7 +366,7 @@ export default function Clients() {
                     <div><strong>client_tag / communication_tag:</strong> separate multiple with | or , ("tags" still works as an alias for client_tag)</div>
                     <div><strong>client_status:</strong> a label from Settings → Client Statuses ("status" still works as an alias)</div>
                     <div><strong>pipeline:</strong> a stage label from Settings → Pipeline — creates a deal at that stage; leave blank for no deal</div>
-                    <div><strong>coach_email:</strong> must match a coach in this workspace, else left unassigned</div>
+                    <div><strong>coach_email:</strong> must match a coach in this workspace, else defaults to the workspace owner</div>
                   </div>
                 )}
               </div>

@@ -25,41 +25,18 @@ class AssessmentSerializer(serializers.ModelSerializer):
         read_only_fields = ["id", "created_at", "uploaded_by", "uploaded_by_name", "version"]
 
     def _presigned(self, obj, disposition_type):
-        try:
-            from django.core.files.storage import default_storage
-            from django.conf import settings
-            from urllib.parse import quote
+        from urllib.parse import quote
+        from apps.accounts.storage_utils import generate_presigned_url
 
-            filename = obj.file_name or obj.file_s3_key.split("/")[-1]
-            # The Content-Disposition header value must be ISO-8859-1-encodable — S3
-            # rejects the whole presigned request otherwise (e.g. em dashes, accented
-            # letters, emoji in a filename). Give an ASCII-only fallback in `filename=`
-            # plus the real Unicode name (percent-encoded, always ASCII-safe itself) in
-            # `filename*=` per RFC 5987 — modern clients use the latter, older ones the former.
-            ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
-            disposition = f"{disposition_type}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
-            if hasattr(default_storage, "bucket"):
-                try:
-                    url = default_storage.bucket.meta.client.generate_presigned_url(
-                        "get_object",
-                        Params={
-                            "Bucket": default_storage.bucket_name,
-                            "Key":    obj.file_s3_key,
-                            "ResponseContentDisposition": disposition,
-                        },
-                        ExpiresIn=3600,
-                    )
-                except Exception:
-                    url = default_storage.url(obj.file_s3_key)
-            else:
-                url = default_storage.url(obj.file_s3_key)
-            public_url = getattr(settings, 'MINIO_PUBLIC_URL', '')
-            endpoint    = getattr(settings, 'AWS_S3_ENDPOINT_URL', '') or ''
-            if public_url and endpoint and endpoint in url:
-                url = url.replace(endpoint, public_url)
-            return url
-        except Exception:
-            return None
+        filename = obj.file_name or obj.file_s3_key.split("/")[-1]
+        # The Content-Disposition header value must be ISO-8859-1-encodable — S3
+        # rejects the whole presigned request otherwise (e.g. em dashes, accented
+        # letters, emoji in a filename). Give an ASCII-only fallback in `filename=`
+        # plus the real Unicode name (percent-encoded, always ASCII-safe itself) in
+        # `filename*=` per RFC 5987 — modern clients use the latter, older ones the former.
+        ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
+        disposition = f"{disposition_type}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+        return generate_presigned_url(obj.file_s3_key, disposition=disposition)
 
     def get_presigned_url(self, obj):
         return self._presigned(obj, "attachment")
@@ -173,17 +150,8 @@ class ClientDetailSerializer(serializers.ModelSerializer):
 
 
 def _presigned_url(s3_key):
-    try:
-        from django.core.files.storage import default_storage
-        from django.conf import settings
-        url = default_storage.url(s3_key)
-        public_url = getattr(settings, 'MINIO_PUBLIC_URL', '')
-        endpoint    = getattr(settings, 'AWS_S3_ENDPOINT_URL', '') or ''
-        if public_url and endpoint and endpoint in url:
-            url = url.replace(endpoint, public_url)
-        return url
-    except Exception:
-        return None
+    from apps.accounts.storage_utils import generate_presigned_url
+    return generate_presigned_url(s3_key)
 
 
 class ClientMessageDraftSerializer(serializers.ModelSerializer):

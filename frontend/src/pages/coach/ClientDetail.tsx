@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
@@ -12,6 +12,20 @@ import { useAuthStore } from '../../store/auth'
 
 const GOAL_STATUSES  = ['active','completed','paused']
 const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
+// Kept in sync with PLACEHOLDER_HINTS.client_communication in Settings.tsx and the
+// tmpl_vars dict in backend/tasks/email.py's send_client_communication_email.
+// {client_name} substitutes to first name only; {client_email}/{client_address} use the
+// client's primary email/address on file.
+const CLIENT_COMMUNICATION_PLACEHOLDERS = ['{client_name}', '{coach_name}', '{workspace_name}', '{workspace_owner}', '{client_email}', '{client_address}']
+
+// Mirrors backend/tasks/email.py's _format_address() — renders Client.primary_address as
+// a single-line postal address, or '' when the client has none on file.
+function formatClientAddress(addr: any): string {
+  if (!addr) return ''
+  const street = [addr.street, addr.street2].filter(Boolean).join(' ')
+  const cityStateZip = [addr.city, [addr.state, addr.zip].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+  return [street, cityStateZip].filter(Boolean).join(', ')
+}
 
 type Client = {
   id?: string
@@ -474,29 +488,42 @@ function NoteTypeSelector({ value, onChange }: { value: string; onChange: (v: st
 }
 
 // ── NoteLog ───────────────────────────────────────────────────────────────────
-const COLLAPSE_CHARS = 220
-
-function fmtNoteDate(iso: string, tz?: string): string {
-  if (!iso) return '—'
-  const opts: Intl.DateTimeFormatOptions = {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-    hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
-    ...(tz ? { timeZone: tz } : {}),
-  }
-  const d = new Date(iso)
-  const now = new Date()
-  const diffMs = now.getTime() - d.getTime()
-  const diffH  = diffMs / 3_600_000
-  const diffD  = diffMs / 86_400_000
-
-  if (diffH < 1)  return 'Just now'
-  if (diffH < 24) return `Today at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short', ...(tz ? { timeZone: tz } : {}) })}`
-  if (diffD < 2)  return `Yesterday at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZoneName: 'short', ...(tz ? { timeZone: tz } : {}) })}`
-  return d.toLocaleString('en-US', opts)
-}
 
 function wasEdited(created: string, updated: string): boolean {
   return Math.abs(new Date(updated).getTime() - new Date(created).getTime()) > 60_000
+}
+
+function fmtNoteDateShort(iso: string, tz?: string): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', ...(tz ? { timeZone: tz } : {}) })
+}
+
+function fmtTimeOnly(iso: string, tz?: string): string {
+  if (!iso) return '—'
+  return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) })
+}
+
+// "Today" / "Yesterday" / the short date — used as the explorer's date-group headers.
+function dateGroupLabel(iso: string, tz?: string): string {
+  const d = new Date(iso)
+  const now = new Date()
+  const startOfDay = (x: Date) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y }
+  const diffDays = Math.round((startOfDay(now).getTime() - startOfDay(d).getTime()) / 86_400_000)
+  if (diffDays === 0) return 'Today'
+  if (diffDays === 1) return 'Yesterday'
+  return fmtNoteDateShort(iso, tz)
+}
+
+// Groups an already newest-first note list into { label, notes }[] — insertion order
+// on a Map matches the list's order, so no re-sorting is needed.
+function groupNotesByDate(notes: any[], tz?: string): { label: string; notes: any[] }[] {
+  const map = new Map<string, any[]>()
+  for (const n of notes) {
+    const label = dateGroupLabel(n.created_at, tz)
+    if (!map.has(label)) map.set(label, [])
+    map.get(label)!.push(n)
+  }
+  return Array.from(map, ([label, notes]) => ({ label, notes }))
 }
 
 const STRUCTURED_PREFIX = '##STRUCTURED##'
@@ -514,13 +541,28 @@ const AI_SECTION_LABELS: Record<string, string> = {
   notes: 'Session Notes', reflection: 'Coach Reflection', commitment: 'Commitment',
 }
 
+// Grows with content instead of scrolling internally — the point is a notepad that
+// keeps expanding as a coach types live during a session, not a cramped fixed box.
+function AutoGrowTextarea({ value, minHeight, style, ...rest }: React.TextareaHTMLAttributes<HTMLTextAreaElement> & { minHeight: number }) {
+  const ref = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.max(el.scrollHeight, minHeight) + 'px'
+  }, [value, minHeight])
+  return (
+    <textarea ref={ref} className="ftextarea" value={value}
+      style={{ minHeight, resize: 'vertical', overflow: 'hidden', ...style }} {...rest} />
+  )
+}
+
 function StructuredForm({ value, onChange, clientId }: {
   value: StructValue; onChange: (v: any) => void
   clientId?: string
 }) {
   const s = (k: string, v: string) => onChange({ ...value, [k]: v })
-  const sections = [
-    { key: 'notes',      label: 'Session Notes',     placeholder: 'What happened in this session…' },
+  const extraSections = [
     { key: 'reflection', label: 'Coach Reflection',  placeholder: 'Your observations and reflections…' },
     { key: 'commitment', label: 'Commitment',        placeholder: 'What did the client commit to…' },
   ]
@@ -528,6 +570,7 @@ function StructuredForm({ value, onChange, clientId }: {
   const [aiLoading, setAiLoading]         = useState(false)
   const [aiError, setAiError]             = useState<string | null>(null)
   const [suggestions, setSuggestions]     = useState<AISuggestions>(null)
+  const [showExtra, setShowExtra]         = useState(!!(value.reflection?.trim() || value.commitment?.trim()))
 
   const requestSuggestions = async () => {
     if (!clientId || !value.notes.trim() || aiLoading) return
@@ -535,6 +578,7 @@ function StructuredForm({ value, onChange, clientId }: {
     try {
       const res = await clientsApi.suggestNote(clientId, value.notes)
       setSuggestions(res.data)
+      setShowExtra(true)
     } catch (err: any) {
       setAiError(err?.response?.data?.detail || 'Could not get AI suggestions — please try again.')
     } finally {
@@ -551,31 +595,76 @@ function StructuredForm({ value, onChange, clientId }: {
     setSuggestions(prev => prev && { ...prev, [key]: '' })
   }
 
+  const notesSuggestion     = suggestions?.notes || ''
+  const showNotesSuggestion = !!notesSuggestion.trim() && notesSuggestion.trim() !== value.notes.trim()
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginTop: 14 }}>
-      {sections.map(sec => {
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginTop: 14 }}>
+      {/* ── Primary notepad — this is what a coach writes in live during a session ── */}
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>
+            Session Notes
+          </label>
+          {clientId && (
+            <button type="button" onClick={requestSuggestions} disabled={!value.notes.trim() || aiLoading}
+              title="Tighten these notes, and draft Coach Reflection and Commitment, with AI"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 500,
+                background: 'none', border: 'none', padding: '2px 0',
+                color: !value.notes.trim() ? 'var(--muted)' : 'var(--gold)',
+                cursor: !value.notes.trim() || aiLoading ? 'default' : 'pointer',
+                opacity: aiLoading ? 0.6 : 1,
+              }}>
+              ✨ {aiLoading ? 'Thinking…' : 'Suggest with AI'}
+            </button>
+          )}
+        </div>
+        <AutoGrowTextarea minHeight={260} style={{ fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
+          value={value.notes} placeholder="What happened in this session…"
+          onChange={e => s('notes', e.target.value)} />
+        {showNotesSuggestion && (
+          <div style={{
+            marginTop: 6, padding: '8px 10px', background: 'rgba(180, 140, 40, 0.07)',
+            border: '1px dashed var(--gold)', borderRadius: 4,
+          }}>
+            <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--gold)', marginBottom: 4 }}>
+              ✨ AI suggests — Session Notes, tightened for clarity
+            </div>
+            <p style={{ fontSize: 12.5, lineHeight: 1.6, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: '0 0 6px' }}>{notesSuggestion}</p>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button type="button" onClick={() => acceptField('notes')}
+                style={{ fontSize: 11, padding: '3px 10px', background: 'var(--ink)', color: 'var(--paper)', border: 'none', borderRadius: 3, cursor: 'pointer' }}>
+                Accept
+              </button>
+              <button type="button" onClick={() => rejectField('notes')}
+                style={{ fontSize: 11, padding: '3px 10px', background: 'none', color: 'var(--muted)', border: '1px solid var(--border)', borderRadius: 3, cursor: 'pointer' }}>
+                Reject
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {!showExtra && (
+        <button type="button" onClick={() => setShowExtra(true)}
+          style={{
+            alignSelf: 'flex-start', background: 'none', border: 'none', padding: 0,
+            fontSize: 12.5, fontWeight: 500, color: 'var(--muted)', cursor: 'pointer',
+            textDecoration: 'underline', textUnderlineOffset: 3,
+          }}>
+          + Add coach reflection & commitment
+        </button>
+      )}
+
+      {showExtra && extraSections.map(sec => {
         const suggestion = suggestions ? (suggestions as any)[sec.key] as string : ''
         const showSuggestion = !!suggestion?.trim() && suggestion.trim() !== (value as any)[sec.key].trim()
         return (
           <div key={sec.key}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>
-                {sec.label}
-              </label>
-              {sec.key === 'notes' && clientId && (
-                <button type="button" onClick={requestSuggestions} disabled={!value.notes.trim() || aiLoading}
-                  title="Draft Coach Reflection and Commitment from these notes with AI"
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 500,
-                    background: 'none', border: 'none', padding: '2px 0',
-                    color: !value.notes.trim() ? 'var(--muted)' : 'var(--gold)',
-                    cursor: !value.notes.trim() || aiLoading ? 'default' : 'pointer',
-                    opacity: aiLoading ? 0.6 : 1,
-                  }}>
-                  ✨ {aiLoading ? 'Thinking…' : 'Suggest with AI'}
-                </button>
-              )}
-            </div>
+            <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
+              {sec.label}
+            </label>
             <textarea className="ftextarea" rows={3} style={{ fontSize: 13, lineHeight: 1.7 }}
               value={(value as any)[sec.key]} placeholder={sec.placeholder}
               onChange={e => s(sec.key, e.target.value)} />
@@ -608,6 +697,11 @@ function StructuredForm({ value, onChange, clientId }: {
   )
 }
 
+// Collapses 3+ consecutive newlines down to one blank line for display only — stops a
+// note with a run of accidental blank lines from stretching the preview absurdly tall.
+// Editing still shows the untouched original text, so nothing typed is ever lost.
+const condenseBlankLines = (s: string) => s.replace(/\n{3,}/g, '\n\n')
+
 function StructuredDisplay({ data }: { data: { notes: string; reflection: string; commitment: string } }) {
   const sections = [
     { key: 'notes',      label: 'Session Notes' },
@@ -624,7 +718,7 @@ function StructuredDisplay({ data }: { data: { notes: string; reflection: string
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
               {sec.label}
             </div>
-            <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{text}</p>
+            <p style={{ fontSize: 14, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{condenseBlankLines(text)}</p>
           </div>
         )
       })}
@@ -639,7 +733,8 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
   const [struct, setStruct]         = useState(emptyStruct())
   const [noteVisible, setNoteVisible] = useState(false)
 
-  const [expanded, setExpanded]           = useState<Set<string>>(new Set())
+  const [formKey, setFormKey]             = useState(0)
+  const [expandedId, setExpandedId]       = useState<string | null>(null)
   const [editingId, setEditingId]         = useState<string | null>(null)
   const [editType, setEditType]           = useState('session')
   const [editText, setEditText]           = useState('')
@@ -650,8 +745,13 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; preview: string } | null>(null)
   const [deleting, setDeleting]         = useState(false)
 
-  const toggle = (id: string) =>
-    setExpanded(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s })
+  // Keep a note expanded in the explorer — falls back to the newest note whenever the
+  // current selection disappears (deleted) or nothing is expanded yet (first load, or
+  // right after adding a note, which explicitly clears expandedId to jump to it).
+  useEffect(() => {
+    if (noteList.length === 0) { setExpandedId(null); return }
+    if (!expandedId || !noteList.some(n => n.id === expandedId)) setExpandedId(noteList[0].id)
+  }, [noteList, expandedId])
 
   const startEdit = (n: any) => {
     setEditingId(n.id); setEditType(n.note_type); setEditVisible(!!n.visible_to_client)
@@ -673,6 +773,8 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
       await clientsApi.createNote(clientId, { text, note_type: noteType, visible_to_client: noteVisible })
       await refetch()
       setNoteText(''); setStruct(emptyStruct()); setNoteType('session'); setNoteVisible(false)
+      setFormKey(k => k + 1)
+      setExpandedId(null) // jump the explorer to the newly created note (newest-first list)
       showToast('Note added')
     } catch { showToast('Failed to save note', 'error') }
     finally { setSaving(false) }
@@ -722,27 +824,21 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
   }
 
   return (
-    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', maxWidth: 1100 }}>
+    <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', maxWidth: 1400, margin: '0 auto' }}>
 
-      {/* ── LEFT: New Note Form ── */}
-      <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 20 }}>
+      {/* ── LEFT: Notepad — the primary compose area, sized for live use during a session ── */}
+      <div style={{ flex: '1 1 auto', minWidth: 0 }}>
         <div className="card" style={{ border: '1.5px solid var(--gold)' }}>
-          <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.12em', textTransform: 'uppercase', color: 'var(--muted)' }}>New Note</span>
-            {noteList.length > 0 && (
-              <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting} style={{ fontSize: 10 }}>
-                {exporting ? 'Exporting…' : '↓ Export'}
-              </button>
-            )}
-          </div>
-          <div style={{ padding: '14px 18px' }}>
+          <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)' }}>
             <NoteTypeSelector value={noteType} onChange={setNoteType} />
+          </div>
+          <div style={{ padding: '20px 22px' }}>
             {noteType === 'session'
-              ? <StructuredForm value={struct} onChange={setStruct} clientId={clientId} />
-              : <textarea className="ftextarea" rows={6} style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
+              ? <StructuredForm key={formKey} value={struct} onChange={setStruct} clientId={clientId} />
+              : <AutoGrowTextarea minHeight={260} style={{ marginTop: 4, fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
                   value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
             }
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10, marginBottom: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 4 }}>
               <input type="checkbox" id="note-visible" checked={noteVisible}
                 onChange={e => setNoteVisible(e.target.checked)}
                 style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }} />
@@ -751,106 +847,135 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
               </label>
             </div>
             <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}
-              style={{ width: '100%', marginTop: 6, justifyContent: 'center' }}>
+              style={{ marginTop: 6 }}>
               {saving ? 'Saving…' : 'Save Note'}
             </button>
           </div>
         </div>
       </div>
 
-      {/* ── RIGHT: Note List ── */}
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-          <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 400 }}>
-            Session Notes{noteList.length > 0 && <span style={{ fontSize: 13, fontFamily: 'sans-serif', fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>{noteList.length}</span>}
+      {/* ── RIGHT: Explorer — grouped by date; click a note to preview it in place ── */}
+      <div style={{ width: 420, flexShrink: 0 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, fontWeight: 400 }}>
+            Past Notes{noteList.length > 0 && <span style={{ fontSize: 12, fontFamily: 'sans-serif', fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>{noteList.length}</span>}
           </span>
+          {noteList.length > 0 && (
+            <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting} style={{ fontSize: 11 }}>
+              {exporting ? 'Exporting…' : '↓ Export'}
+            </button>
+          )}
         </div>
 
         {noteList.length === 0 ? (
-          <EmptyState icon="✎" title="No notes yet" message="Use the form on the left to add your first note." />
-        ) : noteList.map((n: any) => {
-          const isExpanded    = expanded.has(n.id)
-          const isEditing     = editingId === n.id
-          const structured    = parseStructured(n.text)
-          const needsCollapse = !structured && n.text.length > COLLAPSE_CHARS
-          const displayText   = needsCollapse && !isExpanded ? n.text.slice(0, COLLAPSE_CHARS).trimEnd() + '…' : n.text
+          <EmptyState icon="✎" title="No notes yet" message="Use the notepad to add your first note." />
+        ) : (
+          <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 760, overflowY: 'auto', background: 'var(--white)' }}>
+            {groupNotesByDate(noteList, tz).map(group => (
+              <div key={group.label}>
+                <div style={{
+                  position: 'sticky', top: 0, zIndex: 1, padding: '6px 14px',
+                  fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
+                  color: 'var(--muted)', background: 'var(--paper)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+                }}>
+                  {group.label}
+                </div>
+                {group.notes.map((n: any) => {
+                  const isExpanded  = expandedId === n.id
+                  const isEditing   = editingId === n.id
+                  const structured  = parseStructured(n.text)
 
-          return (
-            <div key={n.id} className="card" style={{ marginBottom: 12 }}>
-              {/* Card header */}
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '11px 18px', borderBottom: '1px solid var(--border)', background: 'var(--paper)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 10 }}>
-                    {typeLabel(n.note_type)}
-                  </span>
-                  {n.visible_to_client && (
-                    <span className="pill pill-green" style={{ fontSize: 10 }}>Shared with client</span>
-                  )}
-                  <span style={{ fontSize: 11, color: 'var(--muted)' }}>{fmtNoteDate(n.created_at, tz)}</span>
-                  {n.created_by_name && <span style={{ fontSize: 11, color: 'var(--muted)' }}>by {n.created_by_name}</span>}
-                  {wasEdited(n.created_at, n.updated_at) && (
-                    <span style={{ fontSize: 10, color: 'var(--muted)', fontStyle: 'italic', background: 'var(--paper)', padding: '1px 6px', borderRadius: 10, border: '1px solid var(--border)' }}>
-                      edited {fmtNoteDate(n.updated_at, tz)}
-                    </span>
-                  )}
-                </div>
-                <div style={{ display: 'flex', gap: 2, alignItems: 'center' }}>
-                  {!isEditing && (
-                    <button onClick={() => startEdit(n)}
-                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 8px', fontSize: 11 }}
-                      title="Edit note">Edit</button>
-                  )}
-                  <button
-                    onClick={() => setDeleteTarget({ id: n.id, preview: notePreview(n) })}
-                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', color: 'var(--muted)', fontSize: 17, lineHeight: 1 }}
-                    title="Delete note">×</button>
-                </div>
+                  return (
+                    <div key={n.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                      {/* Row header — click to expand/collapse this note's preview */}
+                      <div onClick={() => setExpandedId(isExpanded ? null : n.id)}
+                        style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', gap: 8, background: isExpanded ? 'var(--paper)' : 'transparent' }}>
+                        <span style={{
+                          fontSize: 9, color: 'var(--muted)', marginTop: 3, flexShrink: 0,
+                          display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+                        }}>▸</span>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                            <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 9 }}>
+                              {typeLabel(n.note_type)}
+                            </span>
+                            <span style={{ fontSize: 10.5, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtTimeOnly(n.created_at, tz)}</span>
+                          </div>
+                          {!isExpanded && (
+                            <div style={{
+                              fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.4, marginTop: 4,
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {notePreview(n)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Expanded preview / edit ── clearly separated from the row above */}
+                      {isExpanded && (
+                        <div style={{ padding: '0 14px 14px 31px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                              {n.visible_to_client && <span className="pill pill-green" style={{ fontSize: 9 }}>Shared with client</span>}
+                              {n.created_by_name && <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>by {n.created_by_name}</span>}
+                              {wasEdited(n.created_at, n.updated_at) && (
+                                <span style={{ fontSize: 9.5, color: 'var(--muted)', fontStyle: 'italic' }}>edited {fmtTimeOnly(n.updated_at, tz)}</span>
+                              )}
+                            </div>
+                            {!isEditing && (
+                              <div style={{ display: 'flex', gap: 2, alignItems: 'center', flexShrink: 0 }}>
+                                <button onClick={() => startEdit(n)}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 8px', fontSize: 11 }}
+                                  title="Edit note">Edit</button>
+                                <button
+                                  onClick={() => setDeleteTarget({ id: n.id, preview: notePreview(n) })}
+                                  style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', color: 'var(--muted)', fontSize: 17, lineHeight: 1 }}
+                                  title="Delete note">×</button>
+                              </div>
+                            )}
+                          </div>
+
+                          {isEditing ? (
+                            <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px' }}>
+                              <NoteTypeSelector value={editType} onChange={setEditType} />
+                              {editType === 'session'
+                                ? <StructuredForm value={editStruct} onChange={setEditStruct} clientId={clientId} />
+                                : <AutoGrowTextarea minHeight={120} autoFocus style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
+                                    value={editText} onChange={e => setEditText(e.target.value)} />
+                              }
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
+                                <input type="checkbox" id={`edit-visible-${n.id}`} checked={editVisible}
+                                  onChange={e => setEditVisible(e.target.checked)}
+                                  style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }} />
+                                <label htmlFor={`edit-visible-${n.id}`} style={{ fontSize: 12, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none', flex: 1 }}>
+                                  Share with client
+                                </label>
+                                <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                                <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
+                                  {editSaving ? 'Saving…' : 'Save Changes'}
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            // Capped so one unusually long note can't push the rest of the
+                            // date-grouped list far out of reach — scrolls internally instead.
+                            <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', maxHeight: 320, overflowY: 'auto' }}>
+                              {structured
+                                ? <StructuredDisplay data={structured} />
+                                : <p style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{condenseBlankLines(n.text)}</p>
+                              }
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-
-              {/* Card body */}
-              {isEditing ? (
-                <div style={{ padding: '14px 18px' }}>
-                  <NoteTypeSelector value={editType} onChange={setEditType} />
-                  {editType === 'session'
-                    ? <StructuredForm value={editStruct} onChange={setEditStruct} clientId={clientId} />
-                    : <textarea className="ftextarea" rows={5} autoFocus style={{ marginTop: 12, fontSize: 13, lineHeight: 1.7 }}
-                        value={editText} onChange={e => setEditText(e.target.value)} />
-                  }
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 10 }}>
-                    <input type="checkbox" id={`edit-visible-${n.id}`} checked={editVisible}
-                      onChange={e => setEditVisible(e.target.checked)}
-                      style={{ width: 14, height: 14, accentColor: 'var(--gold)', cursor: 'pointer' }} />
-                    <label htmlFor={`edit-visible-${n.id}`} style={{ fontSize: 12, color: 'var(--muted)', cursor: 'pointer', userSelect: 'none', flex: 1 }}>
-                      Share with client
-                    </label>
-                    <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
-                    <button className="btn btn-dark btn-sm" onClick={() => handleSaveEdit(n.id)} disabled={editSaving}>
-                      {editSaving ? 'Saving…' : 'Save Changes'}
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ padding: '14px 18px' }}>
-                  {structured
-                    ? <StructuredDisplay data={structured} />
-                    : <>
-                        <p style={{ fontSize: 13, lineHeight: 1.8, color: 'var(--ink)', whiteSpace: 'pre-wrap', margin: 0 }}>{displayText}</p>
-                        {needsCollapse && (
-                          <button onClick={() => toggle(n.id)}
-                            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0 0', fontSize: 12, color: 'var(--gold)' }}>
-                            {isExpanded ? '↑ Collapse' : '↓ Read more'}
-                          </button>
-                        )}
-                      </>
-                  }
-                </div>
-              )}
-            </div>
-          )
-        })}
+            ))}
+          </div>
+        )}
       </div>
 
       {/* ── Delete confirmation modal ── */}
@@ -1045,6 +1170,7 @@ function FileVaultPreviewPanel({ selected, clientId, currentUser, canDelete, onC
         )}
         {downloadUrl && isOfficeEditable && !isPdf && (
           <InlineOfficeViewer
+            key={`${isClient ? 'client' : 'shared'}-${data.id}-${data.version}`}
             itemKey={`${isClient ? 'client' : 'shared'}-${data.id}-${data.version}`}
             getEditConfig={(mode) => (isClient
               ? clientsApi.fileEditConfig(clientId, data.id, mode).then(r => r.data)
@@ -1435,10 +1561,17 @@ const FILE_TYPES = [
 // ── Client Communication ─────────────────────────────────────────────────────
 // Draft/preview only — no send pipeline yet. Compose using a generic template
 // tagged for 'client_communication' (Settings → Generic Templates), or start blank.
-function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientId: string; clientName: string; coachName: string }) {
+function ClientCommunicationPanel({ clientId, clientName, coachName, clientEmail, clientAddress }: { clientId: string; clientName: string; coachName: string; clientEmail: string; clientAddress: string }) {
   const qc = useQueryClient()
   const { show } = useToast()
   const { workspace } = useAuthStore()
+  // Same ['team'] query already used elsewhere on this page — React Query dedupes it,
+  // so this doesn't add an extra request. Used to default the printed/signature name to
+  // the workspace owner rather than whichever coach happens to be assigned to this
+  // client, since Client Communication messages read as coming from the practice.
+  const { data: teamData } = useQuery({ queryKey: ['team'], queryFn: () => authApi.team().then(r => r.data) })
+  const teamMembers: any[] = teamData?.results || teamData || []
+  const ownerName = teamMembers.find((m: any) => m.role === 'business_owner')?.full_name || ''
   const [editing, setEditing]   = useState<any>(null)
   const [showPicker, setShowPicker] = useState(false)
   const [previewHtml, setPreviewHtml] = useState('')
@@ -1448,7 +1581,14 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
   const [showFilePicker, setShowFilePicker] = useState(false)
   const [sending, setSending] = useState(false)
   const [showSendConfirm, setShowSendConfirm] = useState(false)
-  const [showSigPad, setShowSigPad] = useState(false)
+  // '' = no signature, 'type' = typed name rendered signature-style (default — drawing
+  // with a mouse/trackpad makes a poor signature), 'draw' = the drawn-image pad.
+  const [sigMode, setSigMode] = useState<'' | 'type' | 'draw'>('')
+  // Drawn signature + client signing line are advanced, contract-only options — collapsed
+  // by default so a plain message only shows the simple "Sign as" name field. Auto-expanded
+  // in openEdit() below when a draft already has one of them set, so nothing configured
+  // gets silently hidden.
+  const [showAdvancedSig, setShowAdvancedSig] = useState(false)
   const [viewingSignedPdf, setViewingSignedPdf] = useState<{ url: string; name: string } | null>(null)
 
   const { data: draftsData, isLoading } = useQuery({
@@ -1482,17 +1622,20 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
     setPreviewLoading(true)
     try {
       const { data } = await settingsApi.emailPreview('client_communication', {
-        client_name: clientName, subject: d.subject, intro: d.intro, closing: d.closing,
+        client_name: clientName, client_email: clientEmail, client_address: clientAddress,
+        subject: d.subject, intro: d.intro, closing: d.closing,
         header_bg: d.style?.header_bg, accent_color: d.style?.accent_color,
         header_tagline: d.style?.header_tagline, hide_logo: d.show_logo ? undefined : '1',
         show_header: d.style?.show_header === false ? '0' : '1',
         show_footer: d.style?.show_footer === false ? '0' : '1',
         footer_text: d.style?.footer_text,
-        // coach_signature is a data URL (can be tens of KB) — too large for a GET query
-        // string, so the live preview doesn't render it; the compose form shows the
-        // drawn signature directly instead, and the real send always includes it.
+        // Sent via POST (see settingsApi.emailPreview) whenever present, since a drawn
+        // signature is a data URL that can run tens of KB — too large for a GET query
+        // string. Falls back to the workspace owner's name (not the client's assigned
+        // coach) since a Client Communication message reads as coming from the practice.
+        coach_signature: d.coach_signature || undefined,
         include_client_signature_line: d.include_client_signature_line ? '1' : '0',
-        coach_name: (d.signature_name || '').trim() || coachName || undefined,
+        coach_name: (d.signature_name || '').trim() || ownerName || coachName || undefined,
         _t: Date.now(),
       })
       setPreviewHtml(data.html)
@@ -1508,33 +1651,54 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
   }, [editing?.subject, editing?.intro, editing?.closing, editing?.style?.header_bg, editing?.style?.accent_color,
       editing?.style?.header_tagline, editing?.style?.show_header,
       editing?.style?.show_footer, editing?.style?.footer_text, editing?.show_logo,
-      editing?.include_client_signature_line, editing?.signature_name])
+      editing?.include_client_signature_line, editing?.signature_name, editing?.coach_signature])
+
+  // coach_signature doubles as the storage slot for both signature modes — a real
+  // "data:image/..." URL for a drawn signature, or a "TEXT:<name>" sentinel for a typed
+  // one (see build_client_communication_email on the backend). Keeps this to one field
+  // instead of needing a migration for a separate mode column.
+  const sigModeFromSignature = (v?: string): '' | 'type' | 'draw' =>
+    v?.startsWith('TEXT:') ? 'type' : v?.startsWith('data:') ? 'draw' : ''
 
   const startBlank = () => {
     setEditing({
+      // One plain message box — nothing pre-filled to combine here for a blank start.
       subject: '', intro: '', closing: '', custom_html: '', disable_style: false, show_logo: true,
-      style: {}, source_template_id: '', source_template_name: '', attachments: [],
+      // No colored banner or footer disclaimer — just the logo (if any) on a plain white
+      // header, so a from-scratch message reads like a simple note rather than a branded
+      // notification. Coaches who want the full branded look can start from a template
+      // instead, which keeps its own saved style untouched.
+      style: { show_header: true, header_bg: '#ffffff', accent_color: '#ffffff', show_footer: false },
+      source_template_id: '', source_template_name: '', attachments: [],
       coach_signature: '', include_client_signature_line: false, signature_name: '',
     })
-    setShowSigPad(false)
+    setSigMode('')
+    setShowAdvancedSig(false)
     setShowPicker(false)
   }
 
   const startFromTemplate = (t: any) => {
     setEditing({
-      subject: t.subject || '', intro: t.intro || '', closing: t.closing || '',
+      subject: t.subject || '',
+      // Merge the template's old separate "closing" into the one message box — the
+      // composer no longer has a standalone Closing field, so nothing from the template
+      // is lost, it's just presented as one thing to edit going forward.
+      intro: [t.intro, t.closing].filter(Boolean).join('\n\n'),
+      closing: '',
       custom_html: t.custom_html || '', disable_style: t.disable_style || false, show_logo: t.show_logo ?? true,
       style: { ...(t.style || {}) }, source_template_id: t.id, source_template_name: t.name, attachments: [],
       coach_signature: '', include_client_signature_line: t.include_client_signature_line || false, signature_name: '',
     })
-    setShowSigPad(false)
+    setSigMode('')
+    setShowAdvancedSig(!!t.include_client_signature_line)
     setShowPicker(false)
   }
 
   const openNew  = () => { if (commTemplates.length > 0) setShowPicker(true); else startBlank() }
   const openEdit = (d: any) => {
     setEditing({ ...d, style: { ...(d.style || {}) } })
-    setShowSigPad(!!d.coach_signature)
+    setSigMode(sigModeFromSignature(d.coach_signature))
+    setShowAdvancedSig(!!d.coach_signature || !!d.include_client_signature_line)
   }
 
   const saveDraft = async () => {
@@ -1661,7 +1825,7 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
         </div>
 
         <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-          <div className="card" style={{ flex: 1, minWidth: 0, maxWidth: 480 }}>
+          <div className="card" style={{ flex: 1, minWidth: 0, maxWidth: 640 }}>
             <div className="card-body">
               <div className="fgroup">
                 <label className="flabel">Subject</label>
@@ -1669,11 +1833,21 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
               </div>
               <div className="fgroup">
                 <label className="flabel">Message</label>
-                <textarea className="ftextarea" rows={6} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder={`Hi ${clientName.split(' ')[0] || ''}, ...`} />
+                <textarea className="ftextarea" rows={20} style={{ minHeight: 360 }} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder={`Hi ${clientName.split(' ')[0] || ''}, ...`} />
               </div>
-              <div className="fgroup">
-                <label className="flabel">Closing <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
-                <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon," />
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 16, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                Insert:
+                {CLIENT_COMMUNICATION_PLACEHOLDERS.map(token => (
+                  <button
+                    key={token}
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    style={{ padding: '2px 8px', fontSize: 11, fontFamily: 'monospace' }}
+                    onClick={() => setEditing({ ...editing, intro: `${editing.intro}${editing.intro && !editing.intro.endsWith(' ') ? ' ' : ''}${token}` })}
+                  >
+                    {token}
+                  </button>
+                ))}
               </div>
 
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
@@ -1706,43 +1880,77 @@ function ClientCommunicationPanel({ clientId, clientName, coachName }: { clientI
               </div>
 
               <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 10 }}>
-                  Signature
-                </div>
-                <div className="fgroup">
-                  <label className="flabel">Sign as <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
-                  <input className="finput" value={editing.signature_name || ''}
-                    onChange={e => setEditing({ ...editing, signature_name: e.target.value })}
-                    placeholder={coachName || 'Coach name'} />
-                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
-                    Appears as "— {editing.signature_name || coachName || 'name'}" at the close of the email. Leave blank to use your account name.
-                  </div>
-                </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginBottom: showSigPad ? 10 : 0 }}>
-                  <input type="checkbox" checked={showSigPad}
-                    onChange={e => {
-                      setShowSigPad(e.target.checked)
-                      if (!e.target.checked) setEditing({ ...editing, coach_signature: '' })
-                    }} />
-                  Include your signature
-                </label>
-                {showSigPad && (
-                  <div className="fgroup">
-                    <label className="flabel">Draw your signature</label>
-                    <SignaturePad value={editing.coach_signature || ''} onChange={v => setEditing({ ...editing, coach_signature: v })} />
-                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                      Drawn here, not a legally binding e-signature — just an image included in the email.
+                {!showAdvancedSig ? (
+                  <button type="button" onClick={() => setShowAdvancedSig(true)}
+                    style={{ background: 'none', border: 'none', padding: 0, fontSize: 12, color: 'var(--muted)', textDecoration: 'underline', cursor: 'pointer' }}>
+                    + Add a signature or a client signing line (for contracts)
+                  </button>
+                ) : (
+                  <div style={{ marginTop: 6, paddingTop: 12, borderTop: '1px dashed var(--border)' }}>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
+                      These are only needed for contracts or documents that require a signature —
+                      most messages don't need either of these.
+                    </div>
+
+                    <label className="flabel">Your signature</label>
+                    <div style={{ display: 'flex', gap: 8, marginBottom: sigMode ? 10 : 0 }}>
+                      {(['type', 'draw'] as const).map(mode => (
+                        <button key={mode} type="button"
+                          onClick={() => {
+                            const next = sigMode === mode ? '' : mode
+                            setSigMode(next)
+                            setEditing({ ...editing, coach_signature: '', signature_name: '' })
+                          }}
+                          className={sigMode === mode ? 'btn btn-dark btn-sm' : 'btn btn-outline btn-sm'}>
+                          {mode === 'type' ? 'Type my name' : 'Draw my signature'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {sigMode === 'type' && (
+                      <div className="fgroup">
+                        <label className="flabel">Your name</label>
+                        <input className="finput"
+                          value={(editing.coach_signature || '').startsWith('TEXT:') ? editing.coach_signature.slice(5) : ''}
+                          onChange={e => {
+                            const v = e.target.value
+                            setEditing({ ...editing, coach_signature: v ? `TEXT:${v}` : '', signature_name: v })
+                          }}
+                          placeholder={ownerName || coachName || 'Coach name'} />
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                          Rendered signature-style at the end of the email — not a drawn image,
+                          just your name styled to read as a signature. Leave blank to default to {ownerName || 'the workspace owner'}.
+                        </div>
+                      </div>
+                    )}
+
+                    {sigMode === 'draw' && (
+                      <div className="fgroup">
+                        <label className="flabel">Draw your signature</label>
+                        <SignaturePad value={editing.coach_signature || ''} onChange={v => setEditing({ ...editing, coach_signature: v })} />
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
+                          Drawn here, not a legally binding e-signature — just an image included in the email.
+                          Hard to draw cleanly with a mouse/trackpad? "Type my name" above reads more cleanly for most people.
+                        </div>
+                        <label className="flabel" style={{ marginTop: 12 }}>Printed name <span style={{ fontWeight: 400, color: 'var(--muted)' }}>(optional)</span></label>
+                        <input className="finput" value={editing.signature_name || ''}
+                          onChange={e => setEditing({ ...editing, signature_name: e.target.value })}
+                          placeholder={ownerName || coachName || 'Coach name'} />
+                        <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
+                          Printed under the signature image, e.g. "{editing.signature_name || ownerName || coachName || 'name'}". Leave blank to default to {ownerName || 'the workspace owner'}.
+                        </div>
+                      </div>
+                    )}
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginTop: 10 }}>
+                      <input type="checkbox" checked={!!editing.include_client_signature_line}
+                        onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
+                      Add a blank signing line for {clientName.split(' ')[0] || 'the client'}
+                    </label>
+                    <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, marginLeft: 22 }}>
+                      Prints a blank "Client Signature: ____  Date: ____" line — useful for contracts sent to print and sign.
                     </div>
                   </div>
                 )}
-                <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer', marginTop: 10 }}>
-                  <input type="checkbox" checked={!!editing.include_client_signature_line}
-                    onChange={e => setEditing({ ...editing, include_client_signature_line: e.target.checked })} />
-                  Include a signature line for {clientName.split(' ')[0] || 'the client'}
-                </label>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 2, marginLeft: 22 }}>
-                  Prints a blank "Client Signature: ____  Date: ____" line — useful for contracts sent to print and sign.
-                </div>
               </div>
 
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
@@ -2881,7 +3089,13 @@ export default function ClientDetail() {
         )}
 
         {tab === 'Client Communication' && canViewClientComm && (
-          <ClientCommunicationPanel clientId={id!} clientName={`${client.first_name} ${client.last_name}`} coachName={(client as any).coach_name || ''} />
+          <ClientCommunicationPanel
+            clientId={id!}
+            clientName={`${client.first_name} ${client.last_name}`}
+            coachName={(client as any).coach_name || ''}
+            clientEmail={client.email || ''}
+            clientAddress={formatClientAddress((client as any).primary_address)}
+          />
         )}
       </div>
 

@@ -46,9 +46,20 @@ def dispatch_pipeline_alerts():
         elif cfg.alert_stop_after_days is not None and days_in_stage > cfg.alert_stop_after_days:
             continue
 
+        # Independent, tighter cap on CLIENT reminders specifically — the coach (via
+        # notify_owner) keeps getting alerted up to the day-based stop window above
+        # regardless; the client can stop earlier once they've received this many.
+        notify_client = bool(
+            cfg.notify_client and deal.client.email
+            and (cfg.client_alert_max_count is None or deal.client_alert_count < cfg.client_alert_max_count)
+        )
+
         try:
-            send_pipeline_alert(str(deal.id))
-            Deal.objects.filter(pk=deal.pk).update(pipeline_alert_sent_at=now)
+            send_pipeline_alert(str(deal.id), notify_client=notify_client)
+            update_fields = {"pipeline_alert_sent_at": now}
+            if notify_client:
+                update_fields["client_alert_count"] = deal.client_alert_count + 1
+            Deal.objects.filter(pk=deal.pk).update(**update_fields)
             sent += 1
         except Exception as e:
             logger.error(f"Pipeline alert failed for deal {deal.id}: {e}")

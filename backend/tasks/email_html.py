@@ -2,6 +2,51 @@
 CoachOS — HTML email builder.
 Professional transactional email templates.
 """
+import html as _html
+import re
+
+# Matches a coach-authored <a href="http(s)://...">text</a> link so _paragraphs_html can
+# preserve it as a real hyperlink instead of escaping it into visible tag text. Deliberately
+# narrow: only http(s) hrefs (blocks javascript:/data: URIs), and any other attributes
+# (inline style, onclick, …) on the tag are discarded rather than carried through.
+_LINK_RE = re.compile(r'<a\s[^>]*?href=[\'"](https?://[^\'"]+)[\'"][^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
+
+
+def _linkify_paragraph(p: str) -> str:
+    """Escape a paragraph's text while preserving any well-formed <a href="http(s)://…">
+    link inside it as a real, safely-rebuilt anchor tag (own href, escaped inner text, fixed
+    style) — everything else, including any other tags, is escaped like normal text."""
+    out, pos = [], 0
+    for m in _LINK_RE.finditer(p):
+        out.append(_html.escape(p[pos:m.start()]))
+        href = _html.escape(m.group(1), quote=True)
+        inner = _html.escape(re.sub(r'<[^>]+>', '', m.group(2)))
+        out.append(
+            f'<a href="{href}" target="_blank" rel="noopener noreferrer" '
+            f'style="color:#b8922e;text-decoration:underline;font-weight:600;">{inner}</a>'
+        )
+        pos = m.end()
+    out.append(_html.escape(p[pos:]))
+    return ''.join(out)
+
+
+def _paragraphs_html(text: str, p_style: str) -> str:
+    """Render free-form coach-written text (e.g. a Client Communication message) as real
+    HTML paragraphs instead of dumping it into one <p> tag, where a browser/email client
+    collapses every blank line the coach typed and the whole thing reads as one run-on
+    block. Splits on blank lines into separate <p> tags (real paragraph spacing) and turns
+    a single line break within a paragraph into <br> (soft line break, e.g. a list written
+    one item per line). Escapes the text first since it's free-form user input being
+    inserted into HTML — except a plain <a href="http(s)://…">…</a> link, which is
+    preserved as a real hyperlink (see _linkify_paragraph) rather than shown as raw tags."""
+    text = (text or "").strip()
+    if not text:
+        return ""
+    paragraphs = [p for p in text.replace("\r\n", "\n").split("\n\n") if p.strip()]
+    return "\n".join(
+        f'<p style="{p_style}">{_linkify_paragraph(p.strip()).replace(chr(10), "<br>")}</p>'
+        for p in paragraphs
+    )
 
 
 def is_light_color(hex_color: str) -> bool:
@@ -54,11 +99,20 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         )
 
     if owner_email:
+        # Shows the workspace's own name here, not the business owner's personal name —
+        # this is a brand-facing "who to reply to" line, not a personal greeting, and the
+        # client should see "Contact us at {workspace}", not the owner's first/last name.
+        # The actual reply-to address (owner_email) is unchanged.
+        # The footer always sits on a fixed light background — unlike the header, where
+        # accent_color may deliberately be light/white against a dark header — so a light/
+        # white accent_color (now the default alongside a white header) would otherwise
+        # render this name invisibly here. Fall back to a readable dark tone instead.
+        contact_name_color = accent_color if not is_light_color(accent_color) else "#4a4038"
         contact_line = (
             f'Questions? Contact us at '
             f'<a href="mailto:{owner_email}" '
-            f'style="color:{accent_color};text-decoration:none;font-weight:600;">'
-            f'{owner_name or owner_email}</a>'
+            f'style="color:{contact_name_color};text-decoration:none;font-weight:600;">'
+            f'{workspace_name or owner_email}</a>'
             f' &mdash; <a href="mailto:{owner_email}" '
             f'style="color:#b5afa6;text-decoration:none;font-size:11px;">'
             f'{owner_email}</a>'
@@ -745,10 +799,16 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
         due_row = _divider() + _detail_row("Due Date", f'<strong style="color:{value_color};">{due_str}</strong>')
 
     _default_intro   = f"Hi {invoice.client.first_name}, please find your invoice from {workspace_name} below."
-    _default_closing = (f"Have questions about this invoice? Contact us at {owner_name or owner_email}."
+    _default_closing = (f"Have questions about this invoice? Contact us at {workspace_name or owner_email}."
                         if owner_email else "")
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
+    # Routed through _paragraphs_html (same as Client Communication) rather than dropped in
+    # raw — matches send_invoice_email's actual rendering (_invoice_body_block/
+    # _invoice_closing_block in tasks/email.py), so this preview reflects what really gets
+    # sent, and a coach's typed HTML can't leak through unescaped.
+    _intro_style   = f"margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;font-family:{body_font};"
+    _closing_style = f"margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:{body_font};"
+    intro_html   = _paragraphs_html(custom_intro, _intro_style) if custom_intro else f'<p style="{_intro_style}">{_default_intro}</p>'
+    closing_html = _paragraphs_html(custom_closing, _closing_style) if custom_closing else (f'<p style="{_closing_style}">{_default_closing}</p>' if _default_closing else '')
 
     body = f"""
     <p style="margin:0 0 4px;font-family:{body_font};
@@ -760,10 +820,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
                font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
       Invoice #{invoice.number}
     </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:{body_font};">
-      {intro_html}
-    </p>
+    {intro_html}
 
     <!-- Invoice details -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
@@ -776,7 +833,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     {pay_button}
 
-    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:{body_font};">{closing_html}</p>' if closing_html else ''}
+    {closing_html}
 
     <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:{heading_font};
               font-size:15px;color:#9e9890;">
@@ -812,7 +869,7 @@ def build_payment_receipt_email(invoice, workspace_name: str, logo_url: str,
     show_contact_line = s.get("show_contact_line", True)
 
     _default_intro   = f"Hi {invoice.client.first_name}, thank you — we've received your payment for invoice #{invoice.number}."
-    _default_closing = (f"Questions about this payment? Contact us at {owner_name or owner_email}."
+    _default_closing = (f"Questions about this payment? Contact us at {workspace_name or owner_email}."
                         if owner_email else "")
     intro_html   = custom_intro   or _default_intro
     closing_html = custom_closing or _default_closing
@@ -1164,26 +1221,42 @@ def build_client_communication_email(
     s = style or {}
     first_name = client_name.split()[0] if client_name else client_name
 
-    intro_html = f"""
-    <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {custom_intro}
-    </p>""" if custom_intro else f"""
-    <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+    _intro_p_style = ("margin:0 0 16px;font-size:15px;color:#3a3530;line-height:1.7;"
+                       "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;")
+    intro_html = _paragraphs_html(custom_intro, _intro_p_style) if custom_intro else f"""
+    <p style="{_intro_p_style}">
       Hi {first_name},
     </p>"""
 
-    closing_html = f"""
-    <p style="margin:20px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {custom_closing}
-    </p>""" if custom_closing else ""
+    closing_html = _paragraphs_html(
+        custom_closing, "margin:20px 0 0;font-size:14px;color:#6e6560;line-height:1.7;"
+                        "font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;"
+    )
 
-    if coach_signature:
+    # coach_signature holds either a real "data:image/..." URL (drawn signature) or a
+    # "TEXT:<name>" sentinel (typed signature — a coach couldn't draw cleanly with a
+    # mouse/trackpad, so this renders their name in a script-style font instead of an
+    # actual image). Same one field either way, no separate mode column to migrate for.
+    if coach_signature.startswith("TEXT:"):
+        typed_name = coach_signature[len("TEXT:"):].strip()
+        signature_html = (
+            f'<p style="margin:14px 0 2px;font-family:\'Segoe Script\',\'Bradley Hand\','
+            f'\'Brush Script MT\',cursive;font-size:30px;font-weight:400;color:#1a1714;">'
+            f'{_html.escape(typed_name)}</p>'
+        ) if typed_name else ""
+    elif coach_signature:
+        # Printed name goes with the drawn signature, not as a standalone auto sign-off —
+        # falls back to the coach's account name (coach_name) if left blank, same as
+        # before, but now only ever rendered together with the image it labels.
+        printed_name = (coach_name or "").strip()
+        name_html = (
+            f'<p style="margin:2px 0 0;font-family:Georgia,\'Times New Roman\',serif;'
+            f'font-size:14px;color:#9e9890;">{_html.escape(printed_name)}</p>'
+        ) if printed_name else ""
         signature_html = (
             f'<img src="{coach_signature}" alt="Signature" '
             f'style="display:block;max-height:60px;max-width:220px;margin:14px 0 2px;" />'
+            f'{name_html}'
         )
     elif include_client_signature_line:
         # No signature drawn yet, but this looks like a contract (client signature
@@ -1200,6 +1273,19 @@ def build_client_communication_email(
 
     if client_signature:
         # Already signed — show the captured signature instead of a blank line/link.
+        # Same "TEXT:<name>" sentinel convention as coach_signature above, for a client
+        # who typed their name instead of drawing (see apps.clients.public_views).
+        if client_signature.startswith("TEXT:"):
+            client_sig_html = (
+                f'<p style="margin:0;font-family:\'Segoe Script\',\'Bradley Hand\','
+                f'\'Brush Script MT\',cursive;font-size:30px;font-weight:400;color:#1a1714;">'
+                f'{_html.escape(client_signature[len("TEXT:"):].strip())}</p>'
+            )
+        else:
+            client_sig_html = (
+                f'<img src="{client_signature}" alt="Client signature" '
+                f'style="display:block;max-height:60px;max-width:220px;" />'
+            )
         signature_line_html = f"""
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
            style="margin-top:36px;border-top:1px solid #ede9e1;padding-top:20px;">
@@ -1208,7 +1294,7 @@ def build_client_communication_email(
           <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#4a7c59;font-weight:600;margin-bottom:6px;">
             &#10003; Signed by Client{f' on {client_signed_at_human}' if client_signed_at_human else ''}
           </div>
-          <img src="{client_signature}" alt="Client signature" style="display:block;max-height:60px;max-width:220px;" />
+          {client_sig_html}
         </td>
       </tr>
     </table>"""
@@ -1240,20 +1326,22 @@ def build_client_communication_email(
     else:
         signature_line_html = ""
 
-    body = f"""
+    heading_html = f"""
     <h1 style="margin:0 0 20px;font-family:Georgia,'Times New Roman',serif;
                font-size:26px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      {subject or "A message from your coach"}
-    </h1>
+      {_html.escape(subject)}
+    </h1>""" if subject.strip() else ""
 
+    # No auto "— coach name" sign-off line — the coach's own message text is the whole
+    # email; if they want a name at the end they write it themselves. signature_html /
+    # signature_line_html (drawn image, blank client-signing line) are unaffected — those
+    # are the explicit, opt-in contract-signing options, not this old default text line.
+    body = f"""
+    {heading_html}
     {intro_html}
     {closing_html}
 
     {signature_html}
-    <p style="margin:{'2px' if signature_html else '24px'} 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {coach_name or workspace_name}
-    </p>
     {signature_line_html}"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,

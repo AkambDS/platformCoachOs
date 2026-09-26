@@ -55,8 +55,16 @@ def sync_to_google_calendar(activity_id: str, action: str):
                 "end":         {"dateTime": activity.end_at.isoformat()},
                 "attendees":   attendees,
             }
+            # sendUpdates="none": this event still lists the client as an attendee (so it
+            # shows up correctly on the coach's own Google Calendar), but Google must NOT
+            # email the client its own native invite — CoachOS's own confirmation email
+            # (tasks/email.py, always sent, always carries Confirm/Cancel/Reschedule) is the
+            # one email the client gets. Two separate invites with two separate response
+            # mechanisms for the same booking is confusing, and the Google one silently stops
+            # arriving on its own whenever the coach's Google connection lapses (see
+            # CLAUDE.md §7) — so it can no longer be the one the client depends on.
             result = service.events().insert(
-                calendarId="primary", body=event, sendUpdates="all"
+                calendarId="primary", body=event, sendUpdates="none"
             ).execute()
             activity.google_cal_uid = result["id"]
             activity.save(update_fields=["google_cal_uid"])
@@ -71,12 +79,12 @@ def sync_to_google_calendar(activity_id: str, action: str):
             }
             service.events().update(
                 calendarId="primary", eventId=activity.google_cal_uid, body=event,
-                sendUpdates="all",
+                sendUpdates="none",
             ).execute()
 
         elif action == "delete" and activity.google_cal_uid:
             service.events().delete(
-                calendarId="primary", eventId=activity.google_cal_uid, sendUpdates="all",
+                calendarId="primary", eventId=activity.google_cal_uid, sendUpdates="none",
             ).execute()
 
         ensure_watch_channel.delay(str(coach.id))
