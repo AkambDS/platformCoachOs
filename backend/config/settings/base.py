@@ -153,6 +153,7 @@ REST_FRAMEWORK = {
         "password_reset": "5/minute",   # password-reset requests per IP
         "register":       "5/hour",     # workspace registrations per IP
         "demo_lead":      "30/hour",    # demo-tour lead capture + tour-event pings per IP
+        "portal_request_code": "5/minute",  # client-portal login-code requests per IP
     },
 }
 

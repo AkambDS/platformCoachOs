@@ -98,17 +98,37 @@ function SentDetailModal({ id, onClose, onViewClient }: {
   )
 }
 
+// A missed run (Celery beat outage, worker down, etc.) leaves next_invoice_date /
+// reminder_at sitting in the past with nothing else to say so — this is what
+// distinguishes that from a normal, comfortably-upcoming item.
+function StatusBadge({ status }: { status?: string }) {
+  const overdue = status === 'overdue'
+  return (
+    <span style={{
+      display: 'inline-block', padding: '2px 10px', borderRadius: 20,
+      background: overdue ? '#c0392b18' : 'var(--gold-faint)', color: overdue ? '#c0392b' : 'var(--gold)',
+      fontSize: 11, fontWeight: 700, letterSpacing: '.02em',
+    }}>
+      {overdue ? 'Overdue' : 'Scheduled'}
+    </span>
+  )
+}
+
 // ── Scheduled item detail — everything needed is already in the row (it's a computed
 // projection, not a stored record), so no fetch is needed.
 function ScheduledDetailModal({ item, onClose, onViewClient }: {
   item: any; onClose: () => void; onViewClient: (clientId: string) => void
 }) {
+  const overdue = item.status === 'overdue'
   return (
     <Modal title="Scheduled Email" onClose={onClose}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           <CategoryPill category={item.category} label={item.category_label} />
-          <span style={{ fontSize: 12, color: 'var(--gold)', fontWeight: 600 }}>Scheduled for {fmtDate(item.scheduled_for)}</span>
+          <StatusBadge status={item.status} />
+          <span style={{ fontSize: 12, color: overdue ? '#c0392b' : 'var(--gold)', fontWeight: 600 }}>
+            {overdue ? 'Was due' : 'Scheduled for'} {fmtDate(item.scheduled_for)}
+          </span>
         </div>
         <div style={{ padding: '10px 14px', background: '#f7f5f2', border: '1px solid var(--border)', borderRadius: 6, fontSize: 13 }}>
           <div><span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', color: 'var(--muted)', marginRight: 10 }}>TO</span>
@@ -119,7 +139,9 @@ function ScheduledDetailModal({ item, onClose, onViewClient }: {
           <div style={{ marginTop: 6 }}><span style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.12em', color: 'var(--muted)', marginRight: 10 }}>SUBJECT</span>{item.subject || '—'}</div>
         </div>
         <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6 }}>
-          {SCHEDULED_EXPLAINER[item.category] || 'This email has not been sent yet — nothing to preview.'}
+          {overdue
+            ? "This didn't go out on schedule — it should be picked up on the next automated run. If it stays Overdue, check that the scheduled task is running."
+            : (SCHEDULED_EXPLAINER[item.category] || 'This email has not been sent yet — nothing to preview.')}
         </div>
       </div>
     </Modal>
@@ -258,6 +280,7 @@ export default function EmailCommunication() {
                   <th>TYPE</th>
                   <th>SUBJECT</th>
                   <th>CLIENT</th>
+                  {view === 'scheduled' && <th>STATUS</th>}
                   <th>{view === 'sent' ? 'SENT' : 'SCHEDULED FOR'}</th>
                 </tr>
               </thead>
@@ -287,7 +310,8 @@ export default function EmailCommunication() {
                     <td>
                       <div style={{ fontWeight: 500, color: 'var(--ink)' }}>{e.client_name || '—'}</div>
                     </td>
-                    <td style={{ fontSize: 13, color: 'var(--gold)', fontWeight: 600 }}>{fmtDate(e.scheduled_for)}</td>
+                    <td><StatusBadge status={e.status} /></td>
+                    <td style={{ fontSize: 13, color: e.status === 'overdue' ? '#c0392b' : 'var(--gold)', fontWeight: 600 }}>{fmtDate(e.scheduled_for)}</td>
                   </tr>
                 ))}
               </tbody>

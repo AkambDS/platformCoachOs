@@ -1422,3 +1422,58 @@ def build_portal_invite_email(
                         show_header=s.get("show_header", True),
                         show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""),
                         show_contact_line=s.get("show_contact_line", True))
+
+
+def build_portal_login_code_email(
+    client_name: str,
+    workspace_name: str,
+    code: str,
+    minutes_valid: int,
+    logo_url: str = "",
+    owner_email: str = "",
+    owner_name: str = "",
+) -> str:
+    """Not routed through the Generic Templates system on purpose — this is a
+    security-critical transactional code, not a brand-voice message, so it always
+    renders the same simple layout regardless of a workspace's custom templates."""
+    first_name = client_name.split()[0] if client_name else client_name
+
+    body = f"""
+    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
+              color:#4a7c59;font-weight:600;">
+      Portal Sign-in
+    </p>
+    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
+               font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
+      Your login code
+    </h1>
+
+    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      Hi {first_name}, enter this code in the {workspace_name} portal to finish signing in.
+    </p>
+
+    <div style="margin:0 0 28px;text-align:center;">
+      <span style="display:inline-block;padding:16px 28px;background:#f5f2ec;
+                   border-radius:8px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
+                   font-size:32px;font-weight:700;letter-spacing:.28em;color:#16130f;">
+        {code}
+      </span>
+    </div>
+
+    <p style="margin:0;font-size:14px;color:#6e6560;line-height:1.7;
+              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
+      This code expires in {minutes_valid} minutes and can only be used once.
+      If you didn't request it, you can safely ignore this email — no one can
+      access your portal without it.
+    </p>
+
+    <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
+              font-size:15px;color:#9e9890;">
+      &mdash; {workspace_name}
+    </p>"""
+
+    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
+                        header_bg="#1a2f4e", accent_color="#b8922e",
+                        body_font="'Helvetica Neue',Helvetica,Arial,sans-serif")

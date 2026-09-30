@@ -1246,6 +1246,11 @@ def email_log_scheduled(request):
             "client_name": inv.client.full_name,
             "scheduled_for": inv.next_invoice_date.isoformat(),
             "related_id": str(inv.id),
+            # next_invoice_date has no lower bound in the filter above (it's <=
+            # horizon_date, not a range) — if a daily run gets missed, the date stays
+            # in the past until the job catches up, so surface that distinctly rather
+            # than implying it's still comfortably upcoming.
+            "status": "overdue" if inv.next_invoice_date < now.date() else "scheduled",
         })
 
     from apps.activities.models import Activity
@@ -1273,6 +1278,10 @@ def email_log_scheduled(request):
             "client_name": act.client.full_name,
             "scheduled_for": reminder_at.date().isoformat(),
             "related_id": str(act.id),
+            # dispatch_activity_reminders runs every 15 min — a reminder_at more than
+            # that in the past and still unsent means a run got missed, not that it's
+            # merely "coming up".
+            "status": "overdue" if reminder_at < now else "scheduled",
         })
 
     items.sort(key=lambda x: x["scheduled_for"])

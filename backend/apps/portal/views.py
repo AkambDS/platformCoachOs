@@ -15,6 +15,9 @@ from apps.clients.serializers import ClientGoalSerializer, CommitmentSerializer,
 from apps.invoicing.models import Invoice
 from apps.library.models import KnowledgeItem
 from apps.library.serializers import KnowledgeItemSerializer
+from .models import PortalLoginCode
+
+CODE_LIFETIME_MINUTES = 10
 
 
 # ── Portal JWT authentication ──────────────────────────────────────────────────
@@ -52,9 +55,17 @@ class PortalJWTAuthentication(JWTAuthentication):
         return (_PortalUser(validated), validated)
 
 
-# ── Custom throttle: strict limit on the public login endpoint ─────────────────
+# ── Custom throttle: strict limit on the public login endpoints ────────────────
 class PortalLoginThrottle(AnonRateThrottle):
     rate = "10/minute"
+
+
+class PortalRequestCodeThrottle(AnonRateThrottle):
+    """Separate, tighter bucket from PortalLoginThrottle — this is the one that
+    triggers an email send, so it also caps how fast a client's inbox (or a
+    harvested email address) can be flooded with codes. Rate lives in
+    DEFAULT_THROTTLE_RATES["portal_request_code"]."""
+    scope = "portal_request_code"
 
 
 # ── Auth helper ────────────────────────────────────────────────────────────────
@@ -80,15 +91,81 @@ def _get_portal_claims(request):
 
 
 # ── Login ──────────────────────────────────────────────────────────────────────
+#
+# Two-step, email-verified login:
+#   1. POST /api/portal/request-code/ {email}       → emails a 6-digit code
+#   2. POST /api/portal/login/        {email, code} → verifies it, issues the JWT
+#
+# Step 1 used to be the whole flow — knowing a client's email was enough to get a
+# token, no proof of inbox ownership at all (see PortalLoginCode's docstring). This
+# is the fix: the client must show they actually received the emailed code before a
+# token is issued.
+
+class PortalRequestCodeView(APIView):
+    """
+    POST /api/portal/request-code/ — step 1: email a 6-digit login code.
+    Body: { "email": "client@example.com" }
+
+    Always returns the same generic acknowledgement regardless of whether the email
+    matches a portal account, so this endpoint can't be used to enumerate which
+    addresses have portal access (same rationale as PortalLoginView's old constant
+    response/timing, applied here instead since this is now the step that actually
+    looks the email up).
+    """
+    permission_classes = [AllowAny]
+    throttle_classes   = [PortalRequestCodeThrottle]
+
+    def post(self, request):
+        email = (request.data.get("email") or "").strip().lower()
+        if not email:
+            raise ValidationError({"email": "Email is required."})
+
+        _ACK = Response({"detail": "If that email has portal access, a login code has been sent."})
+
+        try:
+            client = Client.objects.select_related("workspace").get(
+                email__iexact=email,
+                portal_access=True,
+            )
+        except Client.DoesNotExist:
+            return _ACK
+
+        if not client.workspace.is_active:
+            return _ACK
+
+        import hashlib
+        import secrets
+        from datetime import timedelta
+        from django.utils import timezone
+
+        # Only one outstanding code at a time — a fresh request retires any earlier
+        # unconsumed one rather than leaving multiple codes simultaneously valid.
+        PortalLoginCode.objects.filter(client=client, consumed_at__isnull=True).update(
+            consumed_at=timezone.now()
+        )
+
+        code = f"{secrets.randbelow(1_000_000):06d}"
+        PortalLoginCode.objects.create(
+            client=client,
+            code_hash=hashlib.sha256(code.encode()).hexdigest(),
+            expires_at=timezone.now() + timedelta(minutes=CODE_LIFETIME_MINUTES),
+        )
+
+        from tasks.email import send_portal_login_code_email
+        send_portal_login_code_email.delay(str(client.id), code, CODE_LIFETIME_MINUTES)
+
+        return _ACK
+
 
 class PortalLoginView(APIView):
     """
-    POST /api/portal/login/ — email-only portal login.
-    Body: { "email": "client@example.com" }
+    POST /api/portal/login/ — step 2: verify the emailed code and issue the token.
+    Body: { "email": "client@example.com", "code": "123456" }
     Returns: { "token": "...", "client_name": "...", "workspace_name": "...", "coach_name": "..." }
 
     Security notes:
-    - Rate-limited to 10 req/min per IP to prevent enumeration
+    - Rate-limited to 10 req/min per IP to slow brute-forcing the 6-digit space
+    - PortalLoginCode.is_valid() also caps a single code to 5 wrong attempts
     - Always returns the same error message and similar timing regardless of outcome
     - Token contains role='portal_client'; coach JWTs cannot satisfy this claim
     """
@@ -96,17 +173,26 @@ class PortalLoginView(APIView):
     throttle_classes   = [PortalLoginThrottle]
 
     def post(self, request):
+        import hashlib
+        import hmac
         import time
         _start = time.monotonic()
 
         email = (request.data.get("email") or "").strip().lower()
-        if not email:
-            raise ValidationError({"email": "Email is required."})
+        code  = (request.data.get("code") or "").strip()
+        if not email or not code:
+            raise ValidationError({"detail": "Email and code are required."})
 
         _DENY = Response(
-            {"detail": "No portal account found for this email address."},
-            status=http_status.HTTP_404_NOT_FOUND,
+            {"detail": "That code is invalid or has expired."},
+            status=http_status.HTTP_401_UNAUTHORIZED,
         )
+
+        def _pad_and_deny():
+            elapsed = time.monotonic() - _start
+            if elapsed < 0.05:
+                time.sleep(0.05 - elapsed)
+            return _DENY
 
         try:
             client = Client.objects.select_related("workspace", "coach").get(
@@ -114,14 +200,30 @@ class PortalLoginView(APIView):
                 portal_access=True,
             )
         except Client.DoesNotExist:
-            # Constant-time padding so timing doesn't reveal whether email exists
-            elapsed = time.monotonic() - _start
-            if elapsed < 0.05:
-                time.sleep(0.05 - elapsed)
-            return _DENY
+            return _pad_and_deny()
 
         if not client.workspace.is_active:
-            return _DENY
+            return _pad_and_deny()
+
+        login_code = (
+            PortalLoginCode.objects
+            .filter(client=client, consumed_at__isnull=True)
+            .order_by("-created_at")
+            .first()
+        )
+        if not login_code or not login_code.is_valid():
+            return _pad_and_deny()
+
+        submitted_hash = hashlib.sha256(code.encode()).hexdigest()
+        if not hmac.compare_digest(submitted_hash, login_code.code_hash):
+            from django.db.models import F
+            login_code.attempts = F("attempts") + 1
+            login_code.save(update_fields=["attempts"])
+            return _pad_and_deny()
+
+        from django.utils import timezone
+        login_code.consumed_at = timezone.now()
+        login_code.save(update_fields=["consumed_at"])
 
         from rest_framework_simplejwt.tokens import AccessToken
         from datetime import timedelta

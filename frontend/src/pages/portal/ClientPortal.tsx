@@ -64,22 +64,39 @@ function Pill({ status }: { status: string }) {
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
+// Two-step: request-code (email only, always a generic ack) then login (email +
+// the 6-digit code that was emailed) — a client can no longer get a session token
+// from an email address alone, only by also proving they received that email.
 function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin: (d: Session) => void }) {
+  const [step, setStep] = useState<'email' | 'code'>('email')
   const [email, setEmail] = useState('')
+  const [code, setCode] = useState('')
   const [error, setError] = useState('')
+  const [info, setInfo] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function submit(e: React.FormEvent) {
+  async function submitEmail(e: React.FormEvent) {
     e.preventDefault(); setError(''); setLoading(true)
     try {
-      const { data } = await axios.post(`${BASE}/api/portal/login/`, { email })
+      const { data } = await axios.post(`${BASE}/api/portal/request-code/`, { email })
+      setInfo(data?.detail || 'If that email has portal access, a login code has been sent.')
+      setStep('code')
+    } catch (err: any) {
+      setError(err?.response?.data?.detail || 'Something went wrong. Please try again.')
+    } finally { setLoading(false) }
+  }
+
+  async function submitCode(e: React.FormEvent) {
+    e.preventDefault(); setError(''); setLoading(true)
+    try {
+      const { data } = await axios.post(`${BASE}/api/portal/login/`, { email, code })
       sessionStorage.setItem('portal_token', data.token)
       sessionStorage.setItem('portal_client_name', data.client_name)
       sessionStorage.setItem('portal_workspace_name', data.workspace_name)
       sessionStorage.setItem('portal_coach_name', data.coach_name)
       onLogin(data)
     } catch (err: any) {
-      setError(err?.response?.data?.detail || 'No portal account found for this email.')
+      setError(err?.response?.data?.detail || 'That code is invalid or has expired.')
     } finally { setLoading(false) }
   }
 
@@ -103,20 +120,55 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
         <div className="auth-form-card">
           {branding?.logo_url && <img src={branding.logo_url} alt={wsName} style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', marginBottom: 24, display: 'block' }} />}
           <h2 className="auth-form-title">Client Portal</h2>
-          <p className="auth-form-sub">Enter your email address to access your portal</p>
-          <form onSubmit={submit}>
-            <div className="fgroup">
-              <label className="flabel">Email Address</label>
-              <input className="auth-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required autoFocus />
-            </div>
-            {error && <div className="auth-error">{error}</div>}
-            <button type="submit" className="auth-btn" disabled={loading} style={{ marginTop: 8 }}>
-              {loading ? 'Checking…' : 'Access My Portal'}
-            </button>
-          </form>
-          <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
-            You'll need an invitation from your coach to access this portal.
-          </p>
+
+          {step === 'email' ? (
+            <>
+              <p className="auth-form-sub">Enter your email address to access your portal</p>
+              <form onSubmit={submitEmail}>
+                <div className="fgroup">
+                  <label className="flabel">Email Address</label>
+                  <input className="auth-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required autoFocus />
+                </div>
+                {error && <div className="auth-error">{error}</div>}
+                <button type="submit" className="auth-btn" disabled={loading} style={{ marginTop: 8 }}>
+                  {loading ? 'Sending…' : 'Send Login Code'}
+                </button>
+              </form>
+              <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
+                You'll need an invitation from your coach to access this portal.
+              </p>
+            </>
+          ) : (
+            <>
+              <p className="auth-form-sub">{info || `Enter the 6-digit code we emailed to ${email}`}</p>
+              <form onSubmit={submitCode}>
+                <div className="fgroup">
+                  <label className="flabel">Login Code</label>
+                  <input
+                    className="auth-input" type="text" inputMode="numeric" pattern="[0-9]*"
+                    maxLength={6} value={code}
+                    onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="123456" required autoFocus
+                    style={{ letterSpacing: '0.3em', textAlign: 'center', fontSize: 20 }}
+                  />
+                </div>
+                {error && <div className="auth-error">{error}</div>}
+                <button type="submit" className="auth-btn" disabled={loading || code.length !== 6} style={{ marginTop: 8 }}>
+                  {loading ? 'Verifying…' : 'Access My Portal'}
+                </button>
+              </form>
+              <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
+                Didn't get it? Check spam, or{' '}
+                <button
+                  type="button"
+                  onClick={() => { setStep('email'); setCode(''); setError('') }}
+                  style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                >
+                  use a different email
+                </button>.
+              </p>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -774,6 +774,7 @@ def send_activity_confirmation_email(activity_id: str):
 
 @shared_task(name="tasks.email.send_activity_reminder_email")
 def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
+    from django.utils import timezone
     from apps.activities.models import Activity
     from tasks.email_html import build_reminder_email
     try:
@@ -787,7 +788,20 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         coach_name  = activity.coach.full_name if activity.coach else activity.workspace.name
         coach_email = activity.coach.email if activity.coach else ""
         owner_email, owner_name = _owner_info(workspace)
-        time_label  = "24 hours" if hours_before == 24 else f"{hours_before} hour{'s' if hours_before != 1 else ''}"
+        # hours_before picks which of the two coach-configured templates to use
+        # (reminder_24h vs reminder_1h below) — but the wording is computed from the
+        # actual time left, not from that fixed 24/1 label. This matters once a
+        # reminder can go out late (a missed tick caught up on the next run — see
+        # tasks/reminders.py): if a "24 hour" reminder actually fires only 3 hours
+        # out, the email must say "3 hours", not "24 hours".
+        remaining_minutes = max(0, int((activity.start_at - timezone.now()).total_seconds() // 60))
+        if remaining_minutes >= 90:
+            remaining_hours = round(remaining_minutes / 60)
+            time_label = f"{remaining_hours} hour{'s' if remaining_hours != 1 else ''}"
+        elif remaining_minutes >= 1:
+            time_label = f"{remaining_minutes} minute{'s' if remaining_minutes != 1 else ''}"
+        else:
+            time_label = "a few minutes"
         location_line = f"\nLocation: {activity.location}" if activity.location else ""
 
         tmpl_key  = "reminder_24h" if hours_before == 24 else "reminder_1h"
@@ -2189,3 +2203,47 @@ def send_error_alert_email(error_log_id):
         # Must never raise — this runs inline in capture_error, itself inline in the
         # request/exception-handling path of the very error being reported.
         logger.error(f"send_error_alert_email failed: {e}")
+
+
+@shared_task(name="tasks.email.send_portal_login_code_email")
+def send_portal_login_code_email(client_id: str, code: str, minutes_valid: int = 10):
+    """Send the 6-digit portal sign-in code. Deliberately not routed through
+    _resolve_generic_template/EmailLog like the other client-facing sends — this is a
+    security code, not a brand message, and logging the plaintext code into the
+    Email Communications log would hand any coach/team member on the workspace a live
+    credential for the client's account during its validity window."""
+    from apps.clients.models import Client
+    from tasks.email_html import build_portal_login_code_email
+    try:
+        client    = Client.objects.select_related("workspace").get(id=client_id)
+        workspace = client.workspace
+        if not client.email:
+            return
+
+        owner_email, owner_name = _owner_info(workspace)
+        html = build_portal_login_code_email(
+            client_name=client.full_name,
+            workspace_name=workspace.name,
+            code=code,
+            minutes_valid=minutes_valid,
+            logo_url=_logo_src(workspace),
+            owner_email=owner_email,
+            owner_name=owner_name,
+        )
+        plain = (
+            f"Your {workspace.name} portal login code is: {code}\n\n"
+            f"This code expires in {minutes_valid} minutes and can only be used once. "
+            f"If you didn't request it, you can ignore this email."
+        )
+        msg = EmailMultiAlternatives(
+            subject=f"Your portal login code: {code}",
+            body=plain,
+            from_email=_workspace_from_email(workspace),
+            to=[client.email],
+        )
+        msg.attach_alternative(html, "text/html")
+        msg.send()
+        logger.info(f"Portal login code sent to client {client_id}")
+    except Exception as e:
+        logger.error(f"send_portal_login_code_email failed: {e}")
+        _report_send_failure("send_portal_login_code_email", e, workspace=locals().get("workspace"))
