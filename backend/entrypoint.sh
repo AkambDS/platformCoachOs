@@ -8,6 +8,8 @@ if [[ "${1:-}" != celery* ]]; then
     python manage.py migrate --noinput
     echo "[entrypoint] Ensuring Google SocialApp config..."
     python manage.py ensure_google_socialapp
+    echo "[entrypoint] Ensuring Zoom SocialApp config..."
+    python manage.py ensure_zoom_socialapp
 fi
 
 # Collect static files only when starting the web server (gunicorn), not dev server or celery

@@ -304,3 +304,88 @@ Recommend scoping an initial AI milestone to **items 1 and 2 only**:
 Everything past that (items 3–8) should wait until Phase 1 validates real
 usage and cost, and until a decision is made on the platform-key-with-
 metering approach above.
+
+---
+
+## 9. Technology Stack
+
+Reviewed from `backend/requirements.txt`, `frontend/package.json`, and actual code
+usage (not just what's installed) on 2026-09-30. Appended rather than inserted
+earlier in the document so it doesn't shift the section numbers §2–§8 already
+cross-referenced from `CLAUDE.md`.
+
+### 9.1 Backend
+
+| Layer | Technology | Version pin | Role in this app |
+|---|---|---|---|
+| Language / framework | Python 3.12, Django | `Django>=5.0,<5.2` | Core web framework, ORM, admin |
+| API | Django REST Framework | `djangorestframework>=3.15,<3.16` | All `/api/...` endpoints |
+| API docs | drf-spectacular | `>=0.27,<1.0` | OpenAPI schema + Swagger UI at `/api/schema/swagger-ui/` |
+| Auth (coach/owner) | djangorestframework-simplejwt | `>=5.3,<6.0` | JWT issuance; custom `CookieJWTAuthentication` reads it from an httpOnly cookie, not a header |
+| Auth (portal client) | PyJWT (direct) | `>=2.8,<3.0` | Separate `PortalJWTAuthentication` scope — a coach's JWT can never be replayed against the portal API |
+| OAuth connect flows | django-allauth | `[socialaccount]>=0.61,<1.0` | Per-user "Connect Google Calendar" / "Connect Zoom" (see `integrations.md`) — issues/stores each user's own `SocialToken`, not used for primary login |
+| Database | PostgreSQL | — | Single DB, `workspace_id` filtering in every queryset (no schema/DB-per-tenant) |
+| DB driver | psycopg2-binary | `>=2.9,<3.0` | |
+| Query filtering | django-filter | `>=24.0,<25.0` | `DjangoFilterBackend` on list endpoints |
+| Cache + broker | Redis | — | Celery broker/result backend *and* Django's cache backend (falls back to in-memory locmem cache if `REDIS_URL` unset, e.g. bare local dev) |
+| Async tasks | Celery | `>=5.3,<6.0` | All email/SMS sends, calendar sync, invoice generation, reminders, pipeline alerts |
+| Scheduled jobs | django-celery-beat | `>=2.6,<3.0` | DB-backed cron schedule (`CELERY_BEAT_SCHEDULE`), editable/visible at `/django-admin/django_celery_beat/periodictask/` |
+| Task result storage | django-celery-results | `>=2.5,<3.0` | Every task run persisted to DB (`CELERY_RESULT_BACKEND="django-db"`), visible at `/django-admin/django_celery_results/taskresult/` |
+| Payments (platform billing) | dj-stripe + stripe-python | `dj-stripe>=2.9,<2.10`, `stripe>=8.0,<12.0` | dj-stripe is installed for CoachOS's *own* future platform billing (mostly unused/manual today, see `CLAUDE.md` §7) — the per-workspace client-invoicing Stripe integration calls the `stripe` SDK directly with each workspace's own BYOK secret, not through dj-stripe's models |
+| File storage | django-storages + boto3 | `django-storages>=1.14,<2.0`, `boto3>=1.34,<2.0` | S3 in prod; MinIO (S3-compatible) in local dev — see `backend/apps/accounts/storage_utils.py` for the public/internal endpoint split this requires locally |
+| PDF generation | WeasyPrint + pydyf | `weasyprint>=60.0,<63.0` | Renders invoice PDFs from HTML/CSS server-side |
+| Images | Pillow | `>=10.0,<11.0` | Logo upload processing |
+| Rate limiting | django-ratelimit + DRF throttle classes | `>=4.0,<5.0` | Per-view throttles (login, password reset, registration, portal login codes, etc. — see `DEFAULT_THROTTLE_RATES` in `config/settings/base.py`) |
+| AI | Anthropic Python SDK | `anthropic>=0.40,<1.0` | Powers "Suggest with AI" session-note drafting (`apps/clients/ai_notes.py`); mockable locally via `AI_NOTES_MOCK` |
+| Prod server | Gunicorn | `>=21.0,<22.0` | WSGI server behind nginx |
+| Testing | pytest, pytest-django, factory-boy | `pytest>=8.0`, `pytest-django>=4.8`, `factory-boy>=3.3` | |
+
+**Installed but not actively used today**: `django-anymail[brevo]` is in `requirements.txt`
+but commented out of `INSTALLED_APPS` — a leftover from an earlier Render-based
+deployment (see `CLAUDE.md`'s note on `DEMO_PPT.md`). Actual production email goes
+through Django's built-in SMTP backend (`EmailBackend`) pointed at Resend's SMTP
+relay via `EMAIL_HOST`/`EMAIL_HOST_USER`/`EMAIL_HOST_PASSWORD`; `RESEND_API_KEY` is
+defined in settings but not currently called anywhere (Resend's HTTP API isn't used,
+only its SMTP credentials).
+
+### 9.2 Frontend
+
+| Layer | Technology | Version pin | Role in this app |
+|---|---|---|---|
+| Language | TypeScript | `^5.4.5` | |
+| Framework | React | `^18.3.1` | |
+| Build tool | Vite | `^5.2.13` | Dev server + production bundling (`@vitejs/plugin-react`) |
+| Routing | react-router-dom | `^6.23.1` | |
+| Server state | @tanstack/react-query | `^5.40.0` | All API data fetching/caching — no Redux; see any `useQuery`/`useMutation` call across `pages/` |
+| Client state | zustand | `^4.5.2` | Auth store (`useAuthStore`) — current user/workspace/role, persisted across the app shell |
+| HTTP client | axios | `^1.7.2` | Wrapped in `src/api/client.ts`'s single `api` instance (cookie-based auth, interceptors) |
+| Forms | react-hook-form + zod + @hookform/resolvers | `^7.51.5`, `^3.23.8`, `^3.6.0` | Form state + schema validation |
+| Styling | Tailwind CSS + hand-written CSS | `^3.4.4` (+ `postcss`, `autoprefixer`) | Utility classes mixed with a bespoke design-system stylesheet (`index.css` — `.card`, `.pill`, `.btn-*`, CSS custom properties for the cream/navy/gold theme) |
+| Icons | lucide-react | `^0.395.0` | Used throughout — sidebar nav, tab icons, inline action icons |
+| Calendar UI | @fullcalendar/* (core, react, daygrid, timegrid, interaction) | `^6.1.14` | Powers the Schedule/Calendar page's month/week/day views and drag-to-reschedule |
+| Charts | recharts | `^2.12.7` | Dashboard KPIs, Reports revenue/outstanding charts |
+| Guided tour | driver.js | `^1.4.0` | Demo workspace walkthrough and the real "Take a Tour" feature (`useTour.ts`) |
+| Dates | date-fns | `^3.6.0` | |
+| Utilities | lodash, clsx | `^4.17.21`, `^2.1.1` | |
+
+### 9.3 Infrastructure (not a library, but part of the stack)
+
+| Component | Role |
+|---|---|
+| Docker Compose | `docker-compose.yml` (local dev) / `docker-compose.prod.yml` (single EC2 host) — orchestrates every service below |
+| nginx | TLS termination, path-based routing to Django/static SPA/OnlyOffice; serves collected static files from a volume shared with the backend container (`/static/` → Django admin's CSS/JS) |
+| OnlyOffice Document Server | Self-hosted (own container), JWT-signed requests between Django and the Document Server — in-browser live editing + view-only preview for Library files and client-portal shared files |
+| MinIO | S3-compatible object storage, **local dev only** — a public/internal endpoint split (`MINIO_ENDPOINT` vs `MINIO_PUBLIC_URL`) that doesn't exist in prod (`AWS_S3_ENDPOINT_URL=None` there) |
+| Let's Encrypt / certbot | TLS certs in prod, renewed via a webroot path nginx serves at `/.well-known/acme-challenge/` |
+
+### 9.4 Third-party APIs / external services
+
+| Service | Integration pattern | Used for |
+|---|---|---|
+| Stripe | Per-workspace BYOK — workspace pastes its own secret key, Fernet-encrypted at rest | Client invoice payments, Checkout, refunds — money moves directly between the workspace's own Stripe account and their client, never through a CoachOS-owned account |
+| Google Calendar | Per-user OAuth (django-allauth) | Two-way session sync + client RSVP tracking via push-notification watch channels. **Known limitation**: the OAuth app is still in Google's "Testing" publishing status, so a connected coach's token silently expires every 7 days until verification completes (`CLAUDE.md` §7) |
+| Zoom | Per-user OAuth (django-allauth) — reworked 2026-09-30, see `integrations.md` §2 | Auto-generates a meeting link under the *scheduling coach's own* Zoom account when a session's location is Zoom. Previously a single Server-to-Server app shared by the whole workspace; now each person connects their own account, Calendly-style |
+| Resend | SMTP relay (Django's built-in SMTP backend, not Resend's HTTP API) | All transactional email — confirmations, reminders, invoices, portal invites, etc. |
+| Twilio | Direct SDK call, optional (workspace can leave it unconfigured) | SMS session reminders |
+| Anthropic (Claude) | Direct API call via the official Python SDK | AI-drafted session-note suggestions (coach reviews/edits before saving — nothing auto-persists) |
+| AWS S3 | Via django-storages/boto3 | File storage in production (documents, logos, uploaded media) |

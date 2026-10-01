@@ -30,6 +30,11 @@ class SocialAccountAdapter(DefaultSocialAccountAdapter):
         allauth's default sends "connect" flows to its own built-in
         /accounts/3rdparty/ management page, not into our SPA — override so the
         browser lands back on Settings with the confirmation toast instead.
+
+        Provider-specific query param so each integration's own toast fires (not just
+        Google's) — originally hardcoded to google_calendar=connected only, which meant
+        finishing a Zoom connect would silently show "Google Calendar connected".
         """
         from django.conf import settings
-        return f"{settings.FRONTEND_URL}/settings?google_calendar=connected"
+        param = "zoom=connected" if socialaccount.provider == "zoom" else "google_calendar=connected"
+        return f"{settings.FRONTEND_URL}/settings?{param}"

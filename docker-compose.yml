@@ -130,6 +130,11 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: http://localhost:8000
+      # Vite's dev-server proxy (vite.config.ts) runs inside THIS container, where
+      # "localhost" means itself, not the api container — must use the compose service
+      # name to actually reach it. Separate from VITE_API_BASE_URL above, which the
+      # browser (on the host) uses directly and correctly stays "localhost:8000".
+      VITE_PROXY_TARGET: http://api:8000
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules

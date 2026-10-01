@@ -40,6 +40,7 @@ THIRD_PARTY_APPS = [
     "allauth.account",
     "allauth.socialaccount",
     "allauth.socialaccount.providers.google",
+    "allauth.socialaccount.providers.zoom",
     "drf_spectacular",
     "djstripe",
     "django_celery_beat",
@@ -184,6 +185,26 @@ RESEND_API_KEY = env("RESEND_API_KEY", default="")
 GOOGLE_CALENDAR_WEBHOOK_TOKEN = env("GOOGLE_CALENDAR_WEBHOOK_TOKEN", default="")
 GOOGLE_CLIENT_ID     = env("GOOGLE_CLIENT_ID",     default="")
 GOOGLE_CLIENT_SECRET = env("GOOGLE_CLIENT_SECRET", default="")
+# One OAuth app ("CoachOS"), registered once on Zoom's Marketplace as an OAuth
+# (user-managed) app — NOT the Server-to-Server app type. Every coach connects their
+# own Zoom account against this same client id/secret; see docs/integrations.md.
+ZOOM_CLIENT_ID       = env("ZOOM_CLIENT_ID",       default="")
+ZOOM_CLIENT_SECRET   = env("ZOOM_CLIENT_SECRET",   default="")
+# Interim rollout flag (2026-09-30) — the OAuth app above is still blocked on an
+# unresolved "Invalid redirect" error from Zoom's own console, so the old
+# Server-to-Server flow (apps.settings_app.views._get_zoom_token) stays live and
+# reachable while that gets sorted out, instead of leaving Zoom scheduling broken.
+# False = one platform-wide Server-to-Server app, credentials below, shared by every
+# workspace (no per-workspace setup — see the block comment in settings_app/views.py
+# for why that's a deliberate, temporary tradeoff). True = new per-coach "Connect
+# Zoom" OAuth flow, matching Google Calendar, using ZOOM_CLIENT_ID/SECRET above
+# instead. Flip once Zoom OAuth is confirmed working in prod, then this flag, the
+# two env vars below, and the Server-to-Server code path they feed can all be
+# deleted — see docs/integrations.md.
+ZOOM_OAUTH_ENABLED   = env.bool("ZOOM_OAUTH_ENABLED", default=False)
+ZOOM_S2S_ACCOUNT_ID    = env("ZOOM_S2S_ACCOUNT_ID",    default="")
+ZOOM_S2S_CLIENT_ID     = env("ZOOM_S2S_CLIENT_ID",     default="")
+ZOOM_S2S_CLIENT_SECRET = env("ZOOM_S2S_CLIENT_SECRET", default="")
 ANTHROPIC_API_KEY    = env("ANTHROPIC_API_KEY",    default="")
 # Dev-only: bypass the real Anthropic call and return canned suggestions, so the
 # accept/reject UI can be exercised without API credit. Never set true in production.
@@ -222,7 +243,23 @@ SOCIALACCOUNT_PROVIDERS = {
         # relying on this, they're periodically revised).
         "SCOPE": ["profile", "email", "https://www.googleapis.com/auth/calendar.events"],
         "AUTH_PARAMS": {"access_type": "offline", "prompt": "consent"},
-    }
+    },
+    "zoom": {
+        # meeting:write:meeting ("Create a meeting for a user") covers the only Zoom
+        # API call this app makes — POST /v2/users/me/meetings (see
+        # apps/settings_app/views.py::zoom_create_meeting). This is the current
+        # granular scope name Zoom's newer Marketplace console uses; the classic
+        # "meeting:write"/"user:read" pair this used to list doesn't exist as a
+        # selectable scope on an app created under that console anymore, so
+        # requesting it here made every authorize request fail as an "Invalid
+        # redirect" (Zoom's authorize endpoint lumps a granted-scope mismatch into
+        # that same generic error). Must match whatever scope is actually enabled
+        # on the Zoom app itself in the Marketplace dashboard — this setting alone
+        # does not grant it; see integrations.md. Unlike Google, Zoom always returns
+        # a refresh token on every authorization, so no extra AUTH_PARAMS (no
+        # "offline access" equivalent needed) are required here.
+        "SCOPE": ["meeting:write:meeting"],
+    },
 }
 # Defaults to False in allauth — without this, SocialAccount rows get created on
 # connect but the actual access/refresh token is discarded, so tasks.calendar's

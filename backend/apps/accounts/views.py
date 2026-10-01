@@ -420,14 +420,28 @@ class MeView(generics.RetrieveUpdateAPIView):
 
     def retrieve(self, request, *args, **kwargs):
         user = self.get_object()
+        from django.conf import settings as dj_settings
         from allauth.socialaccount.models import SocialToken
         google_calendar_connected = SocialToken.objects.filter(
             account__user=user, account__provider="google"
         ).exists()
+        # Interim (see ZOOM_OAUTH_ENABLED in config/settings/base.py): while that flag
+        # is False, "connected" means the platform-wide Server-to-Server env vars are
+        # set — same for every workspace — not a per-user SocialToken.
+        if dj_settings.ZOOM_OAUTH_ENABLED:
+            zoom_connected = SocialToken.objects.filter(
+                account__user=user, account__provider="zoom"
+            ).exists()
+        else:
+            zoom_connected = bool(
+                dj_settings.ZOOM_S2S_ACCOUNT_ID and dj_settings.ZOOM_S2S_CLIENT_ID and dj_settings.ZOOM_S2S_CLIENT_SECRET
+            )
         return Response({
             "user":      UserSerializer(user).data,
             "workspace": WorkspaceSerializer(user.workspace).data,
             "google_calendar_connected": google_calendar_connected,
+            "zoom_connected": zoom_connected,
+            "zoom_oauth_enabled": dj_settings.ZOOM_OAUTH_ENABLED,
         })
 
     def partial_update(self, request, *args, **kwargs):
@@ -718,3 +732,60 @@ def google_calendar_connect(request):
 
     django_login(request, request.user, backend="django.contrib.auth.backends.ModelBackend")
     return redirect("/accounts/google/login/?process=connect")
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def google_calendar_disconnect(request):
+    """
+    POST /api/auth/google-calendar/disconnect/ — revoke this coach's own Google
+    Calendar connection from within CoachOS (previously only possible via Google's
+    own account settings, or allauth's unlinked default page at
+    /accounts/social/connections/ — see the OAuth verification questionnaire note
+    on the "what happens on disconnect" answer needing a real in-app flow).
+    """
+    from allauth.socialaccount.models import SocialAccount
+    from apps.activities.models import GoogleCalendarWatch
+
+    try:
+        account = SocialAccount.objects.get(user=request.user, provider="google")
+    except SocialAccount.DoesNotExist:
+        return Response({"detail": "Google Calendar is not connected."}, status=status.HTTP_400_BAD_REQUEST)
+
+    watch = GoogleCalendarWatch.objects.filter(coach=request.user).first()
+    if watch and watch.resource_id:
+        # Best-effort: deregister the push-notification channel with Google before the
+        # token that authorizes doing so is gone. A failure here (channel already expired,
+        # network hiccup) must not block the disconnect itself.
+        try:
+            from tasks.calendar import _build_service
+            service = _build_service(request.user)
+            if service:
+                service.channels().stop(body={
+                    "id": str(watch.channel_id), "resourceId": watch.resource_id,
+                }).execute()
+        except Exception:
+            pass
+    if watch:
+        watch.delete()
+
+    account.delete()  # cascades to the SocialToken via allauth's own FK
+    return Response({"detail": "Google Calendar disconnected.", "google_calendar_connected": False})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def zoom_connect(request):
+    """
+    GET /api/auth/zoom/connect/ — full-page browser navigation (not fetch).
+
+    Same JWT-session bridge as google_calendar_connect above, handing off to allauth's
+    generic OAuth2 "connect" flow for the zoom provider (auto-available at
+    /accounts/zoom/login/ once allauth.socialaccount.providers.zoom is installed —
+    no extra URL wiring needed beyond this bridge).
+    """
+    from django.contrib.auth import login as django_login
+    from django.shortcuts import redirect
+
+    django_login(request, request.user, backend="django.contrib.auth.backends.ModelBackend")
+    return redirect("/accounts/zoom/login/?process=connect")

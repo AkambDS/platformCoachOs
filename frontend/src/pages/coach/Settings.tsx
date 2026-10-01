@@ -2439,19 +2439,95 @@ function AuditLogTab() {
   )
 }
 
-// ── Stripe card — each workspace connects its OWN account, "bring your own key" ────
-function StripePaymentsCard() {
+// ── Integration tile icons — small brand-colored marks, no icon library needed ─────
+function GoogleCalendarIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24">
+      <rect x="6" y="1" width="2" height="5" rx="1" fill="#1a73e8" />
+      <rect x="16" y="1" width="2" height="5" rx="1" fill="#1a73e8" />
+      <rect x="2" y="4" width="20" height="18" rx="3" fill="#fff" stroke="#e0e0e0" />
+      <rect x="2" y="4" width="20" height="5" rx="2" fill="#4285F4" />
+      <rect x="5" y="12" width="4" height="4" fill="#34A853" />
+      <rect x="10" y="12" width="4" height="4" fill="#FBBC05" />
+      <rect x="15" y="12" width="4" height="4" fill="#EA4335" />
+    </svg>
+  )
+}
+function ZoomIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24">
+      <rect width="24" height="24" rx="6" fill="#2D8CFF" />
+      <rect x="4" y="8" width="11" height="8" rx="2" fill="#fff" />
+      <path d="M16 10.3L20 8v8l-4-2.3v-3.4z" fill="#fff" />
+    </svg>
+  )
+}
+function StripeIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24">
+      <rect width="24" height="24" rx="6" fill="#635BFF" />
+      <text x="12" y="17" textAnchor="middle" fontFamily="Georgia, 'Times New Roman', serif" fontWeight="700" fontSize="15" fill="#fff">S</text>
+    </svg>
+  )
+}
+
+// ── Integration tile — icon + name + status, description lives in the native
+// hover tooltip (title attr) instead of always-visible body copy, matching how
+// hints are done elsewhere in this app (see ClientDetail.tsx's title= usage).
+function IntegrationTile({ icon, name, connected, hint, active, onClick, href, onDisconnect }: {
+  icon: React.ReactNode; name: string; connected: boolean; hint: string
+  active?: boolean; onClick?: () => void; href?: string; onDisconnect?: () => void
+}) {
+  const Tag: any = href ? 'a' : 'div'
+  return (
+    // href is same-tab on purpose (Google Calendar's OAuth connect redirects back into
+    // this app) — unlike the Zoom Marketplace/Stripe Dashboard links inside the expanded
+    // panels below, which do open in a new tab since those are just reference docs.
+    <Tag
+      {...(href ? { href } : { onClick })}
+      title={hint}
+      style={{
+        // flex-grow 0 on purpose — a non-owner only sees the Google Calendar tile (Zoom/
+        // Stripe are owner-only below), and without a cap that lone tile would stretch to
+        // fill the whole row instead of staying a compact icon tile like its siblings.
+        flex: '0 1 180px', minWidth: 140, cursor: (href || onClick) ? 'pointer' : 'default', textAlign: 'center',
+        padding: '20px 12px', borderRadius: 10, textDecoration: 'none',
+        border: active ? '2px solid var(--ink)' : '1px solid var(--border)',
+        background: '#fff', display: 'block',
+      }}
+    >
+      <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>{icon}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>{name}</div>
+      <span className={`pill ${connected ? 'pill-green' : 'pill-grey'}`} style={{ fontSize: 10 }}>
+        {connected ? 'Connected' : 'Not connected'}
+      </span>
+      {connected && onDisconnect && (
+        <div style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDisconnect() }}
+            style={{
+              background: 'none', border: 'none', padding: 0, font: 'inherit',
+              fontSize: 11, color: 'var(--muted)', textDecoration: 'underline', cursor: 'pointer',
+            }}
+          >
+            Disconnect
+          </button>
+        </div>
+      )}
+    </Tag>
+  )
+}
+
+// ── Stripe panel — each workspace connects its OWN account, "bring your own key".
+// Status is owned by the parent (IntegrationsTab) so the tile row's "Connected"
+// pill and this expanded panel always agree and share one fetch.
+type StripeStatus = { connected: boolean; mode: string; last4: string; webhook_configured: boolean; webhook_url: string }
+function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setStatus: React.Dispatch<React.SetStateAction<StripeStatus>> }) {
   const { show } = useToast()
-  const [status, setStatus] = useState({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
   const [secretKey, setSecretKey] = useState('')
   const [webhookSecret, setWebhookSecret] = useState('')
-  const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-
-  const load = () => {
-    settingsApi.getStripeSettings().then(r => setStatus(r.data)).catch(() => {}).finally(() => setLoading(false))
-  }
-  useEffect(() => { load() }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function saveKey() {
     if (!secretKey.trim()) return
@@ -2492,22 +2568,17 @@ function StripePaymentsCard() {
     show('Webhook URL copied', 'success')
   }
 
-  if (loading) return null
-
   return (
-    <div className="card" style={{ marginBottom: 20 }}>
-      <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span>💳 Stripe — Accept Online Card Payments</span>
-        {status.connected && (
+    <>
+      {status.connected && (
+        <div style={{ marginBottom: 16 }}>
           <span className="pill pill-green" style={{ fontSize: 10 }}>
             Connected {status.mode && `(${status.mode} mode, ••${status.last4})`}
           </span>
-        )}
-      </div>
-      <div className="card-body">
-        <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
-          Connect your <strong>own</strong> Stripe account — client payments go straight to you, not
-          through CoachOS. Get your Secret Key from{' '}
+        </div>
+      )}
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
+          Get your Secret Key from{' '}
           <a href="https://dashboard.stripe.com/apikeys" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
             Stripe Dashboard → Developers → API keys
           </a>.
@@ -2565,8 +2636,7 @@ function StripePaymentsCard() {
             </div>
           </>
         )}
-      </div>
-    </div>
+    </>
   )
 }
 
@@ -2575,16 +2645,37 @@ function IntegrationsTab() {
   const { user } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
   const { show } = useToast()
-  const [zoom, setZoom] = useState({ account_id: '', client_id: '', client_secret: '' })
-  const [configured, setConfigured] = useState(false)
-  const [saving, setSaving] = useState(false)
-  const [testing, setTesting] = useState(false)
+  const [stripeStatus, setStripeStatus] = useState({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
+  const [zoomTesting, setZoomTesting] = useState(false)
+  // Accordion: which tile's credentials panel is open below the row. Only Stripe has
+  // one — Google Calendar and Zoom both connect via a plain OAuth link (Zoom's old
+  // Server-to-Server path, while ZOOM_OAUTH_ENABLED=False, is platform-wide/env-set
+  // now, not a per-workspace form — see config/settings/base.py — so there's nothing
+  // left for either to configure here).
+  const [expanded, setExpanded] = useState<'stripe' | null>(null)
 
+  const qc = useQueryClient()
   const { data: meData } = useQuery({
     queryKey: ['me-integrations'],
     queryFn: () => authApi.me().then(r => r.data),
   })
   const googleCalendarConnected = !!meData?.google_calendar_connected
+  const zoomOAuthEnabled = !!meData?.zoom_oauth_enabled
+  // meData.zoom_connected already means different things server-side depending on
+  // zoomOAuthEnabled (a SocialToken vs. the old workspace credentials being filled
+  // in) — see MeView — so this one value is correct to use either way.
+  const zoomConnected = !!meData?.zoom_connected
+
+  async function disconnectGoogleCalendar() {
+    if (!window.confirm('Disconnect Google Calendar? Sessions will stop syncing and client RSVP tracking will stop until you reconnect.')) return
+    try {
+      await authApi.disconnectGoogleCalendar()
+      qc.invalidateQueries({ queryKey: ['me-integrations'] })
+      show('Google Calendar disconnected')
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Failed to disconnect Google Calendar', 'error')
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -2592,106 +2683,92 @@ function IntegrationsTab() {
       show('Google Calendar connected')
       window.history.replaceState({}, '', window.location.pathname)
     }
+    if (params.get('zoom') === 'connected') {
+      show('Zoom connected')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
   }, [])
 
   useEffect(() => {
     if (!isOwner) return
-    settingsApi.getZoomSettings().then(r => {
-      setZoom({ account_id: r.data.account_id, client_id: r.data.client_id, client_secret: r.data.client_secret })
-      setConfigured(r.data.configured)
-    }).catch(() => {})
+    settingsApi.getStripeSettings().then(r => setStripeStatus(r.data)).catch(() => {})
   }, [isOwner])
 
-  async function save() {
-    setSaving(true)
-    try {
-      const r = await settingsApi.saveZoomSettings(zoom)
-      setConfigured(r.data.configured)
-      show('Zoom credentials saved', 'success')
-    } catch { show('Failed to save', 'error') } finally { setSaving(false) }
-  }
-
-  async function test() {
-    setTesting(true)
+  async function testZoom() {
+    setZoomTesting(true)
     try {
       await settingsApi.createZoomMeeting({ topic: 'Test Meeting', duration_minutes: 30 })
       show('Zoom connected ✓ Test meeting created successfully', 'success')
     } catch (err: any) {
       show(err?.response?.data?.detail || 'Zoom test failed', 'error')
-    } finally { setTesting(false) }
+    } finally { setZoomTesting(false) }
   }
 
+  const toggle = (key: 'stripe') => setExpanded(e => (e === key ? null : key))
+
   return (
-    <div style={{ maxWidth: 560 }}>
+    <div style={{ maxWidth: 640 }}>
       <div style={{ marginBottom: 24 }}>
         <h2 data-tour="settings-integrations" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
-        <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow.</p>
+        <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow. Hover a tile for details.</p>
       </div>
 
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <span>📅 Google Calendar — Sync Your Sessions</span>
-          {googleCalendarConnected && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
-        </div>
-        <div className="card-body">
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16 }}>
-            <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, margin: 0 }}>
-              {googleCalendarConnected
-                ? 'Connected — sessions sync to your calendar and client RSVPs update automatically.'
-                : 'Connect your own Google Calendar to sync scheduled sessions and track client accept/decline responses.'}
-            </p>
-            {!googleCalendarConnected && (
-              <a href="/api/auth/google-calendar/connect/" className="btn btn-outline btn-sm" style={{ whiteSpace: 'nowrap' }}>
-                Connect Google Calendar
-              </a>
-            )}
-          </div>
-        </div>
+      <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
+        <IntegrationTile
+          icon={<GoogleCalendarIcon />}
+          name="Google Calendar"
+          connected={googleCalendarConnected}
+          hint={googleCalendarConnected
+            ? 'Connected — sessions sync to your calendar and client RSVPs update automatically.'
+            : 'Connect your own Google Calendar to sync scheduled sessions and track client accept/decline responses.'}
+          href={googleCalendarConnected ? undefined : '/api/auth/google-calendar/connect/'}
+          onDisconnect={googleCalendarConnected ? disconnectGoogleCalendar : undefined}
+        />
+        {zoomOAuthEnabled ? (
+          <IntegrationTile
+            icon={<ZoomIcon />}
+            name="Zoom"
+            connected={zoomConnected}
+            hint={zoomConnected
+              ? 'Connected — scheduling a session with Zoom as the location auto-creates the meeting under your own Zoom account.'
+              : 'Connect your own Zoom account — no API keys needed. Each person schedules under their own Zoom identity, same as Calendly.'}
+            href={zoomConnected ? undefined : '/api/auth/zoom/connect/'}
+          />
+        ) : (
+          // Old path: one Server-to-Server Zoom app, shared by every workspace,
+          // configured server-side via env vars — nothing for any coach or owner to
+          // set up here. Click just runs a test meeting-creation call to confirm
+          // it's working; there's no credentials form anymore (see
+          // config/settings/base.py's ZOOM_OAUTH_ENABLED comment for why).
+          <IntegrationTile
+            icon={<ZoomIcon />}
+            name="Zoom"
+            connected={zoomConnected}
+            hint={zoomConnected
+              ? (zoomTesting ? 'Sending a test meeting request…' : 'Connected — scheduling a session with Zoom as the location auto-creates the meeting link. Click to send a test.')
+              : 'Zoom is not configured on this server yet — contact your admin.'}
+            onClick={zoomConnected && !zoomTesting ? testZoom : undefined}
+          />
+        )}
+        {isOwner && (
+          <IntegrationTile
+            icon={<StripeIcon />}
+            name="Stripe"
+            connected={stripeStatus.connected}
+            hint="Connect your own Stripe account so client invoice payments go straight to you, not through CoachOS."
+            active={expanded === 'stripe'}
+            onClick={() => toggle('stripe')}
+          />
+        )}
       </div>
 
-      {isOwner && (
-        <>
-          <StripePaymentsCard />
-
-          <div className="card">
-            <div className="card-hdr" style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span>📹 Zoom — Auto-generate Meeting Links</span>
-              {configured && <span className="pill pill-green" style={{ fontSize: 10 }}>Connected</span>}
-            </div>
-            <div className="card-body">
-              <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
-                Use a <strong>Server-to-Server OAuth</strong> app from{' '}
-                <a href="https://marketplace.zoom.us/" target="_blank" rel="noopener noreferrer" style={{ color: 'var(--blue)' }}>
-                  Zoom Marketplace
-                </a>. Create an app of type "Server-to-Server OAuth", then copy the credentials below.
-              </p>
-
-              <div className="fgroup">
-                <label className="flabel">Account ID</label>
-                <input className="finput" value={zoom.account_id} onChange={e => setZoom(z => ({ ...z, account_id: e.target.value }))} placeholder="Your Zoom Account ID" />
-              </div>
-              <div className="fgroup">
-                <label className="flabel">Client ID</label>
-                <input className="finput" value={zoom.client_id} onChange={e => setZoom(z => ({ ...z, client_id: e.target.value }))} placeholder="OAuth Client ID" />
-              </div>
-              <div className="fgroup">
-                <label className="flabel">Client Secret</label>
-                <input className="finput" type="password" value={zoom.client_secret} onChange={e => setZoom(z => ({ ...z, client_secret: e.target.value }))} placeholder={configured ? '••••••••' : 'OAuth Client Secret'} />
-              </div>
-
-              <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
-                <button className="btn btn-dark btn-sm" onClick={save} disabled={saving}>
-                  {saving ? 'Saving…' : 'Save Credentials'}
-                </button>
-                {configured && (
-                  <button className="btn btn-outline btn-sm" onClick={test} disabled={testing}>
-                    {testing ? 'Testing…' : 'Test Connection'}
-                  </button>
-                )}
-              </div>
-            </div>
+      {isOwner && expanded === 'stripe' && (
+        <div className="card">
+          <div className="card-hdr">Stripe — Accept Online Card Payments</div>
+          <div className="card-body">
+            <StripePaymentsCard status={stripeStatus} setStatus={setStripeStatus} />
           </div>
-        </>
+        </div>
       )}
     </div>
   )

@@ -53,6 +53,7 @@ export const authApi = {
   deleteMember:       (id: string)         => api.delete(`/api/auth/team/${id}/`),
   getMemberPermissions: (id: string)         => api.get(`/api/auth/team/${id}/permissions/`),
   setMemberPermissions: (id: string, d: any) => api.put(`/api/auth/team/${id}/permissions/`, d),
+  disconnectGoogleCalendar: () => api.post('/api/auth/google-calendar/disconnect/'),
 }
 export const settingsApi = {
   getWorkspace:    ()          => api.get('/api/settings/workspace/'),
@@ -106,8 +107,6 @@ export const settingsApi = {
   createAffiliation:    (d: any)             => api.post('/api/settings/affiliations/', d),
   updateAffiliation:    (id: number, d: any) => api.patch(`/api/settings/affiliations/${id}/`, d),
   deleteAffiliation:    (id: number)         => api.delete(`/api/settings/affiliations/${id}/`),
-  getZoomSettings:      ()                   => api.get('/api/settings/zoom/'),
-  saveZoomSettings:     (d: any)             => api.post('/api/settings/zoom/', d),
   createZoomMeeting:    (d: any)             => api.post('/api/settings/zoom/create-meeting/', d),
   getStripeSettings:    ()                   => api.get('/api/settings/stripe/'),
   saveStripeSettings:   (d: any)             => api.patch('/api/settings/stripe/', d),

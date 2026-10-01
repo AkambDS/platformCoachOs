@@ -992,38 +992,29 @@ def serve_workspace_logo(request, workspace_id):
 
 
 # ── Zoom integration ───────────────────────────────────────────────────────────
-
-@api_view(["GET", "POST"])
-@permission_classes([IsBusinessOwner])
-def zoom_settings(request):
-    """GET/POST /api/settings/zoom/ — store Zoom Server-to-Server OAuth credentials."""
-    workspace = request.user.workspace
-    integrations = workspace.integrations or {}
-    zoom = integrations.get("zoom", {})
-
-    if request.method == "GET":
-        return Response({
-            "account_id":    zoom.get("account_id", ""),
-            "client_id":     zoom.get("client_id", ""),
-            "client_secret": "***" if zoom.get("client_secret") else "",
-            "configured":    bool(zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret")),
-        })
-
-    data = request.data
-    zoom["account_id"]    = (data.get("account_id")    or "").strip()
-    zoom["client_id"]     = (data.get("client_id")     or "").strip()
-    # Only update secret if a real value was sent (not the masked "***")
-    if data.get("client_secret") and data["client_secret"] != "***":
-        zoom["client_secret"] = (data["client_secret"] or "").strip()
-
-    integrations["zoom"] = zoom
-    workspace.integrations = integrations
-    workspace.save(update_fields=["integrations"])
-    return Response({"detail": "Zoom credentials saved.", "configured": bool(zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret"))})
-
+# Each coach connects their OWN Zoom account via OAuth (Settings → Integrations →
+# "Connect Zoom", apps.accounts.views.zoom_connect) — same per-user pattern as Google
+# Calendar. Replaces an earlier design where the whole workspace shared one
+# Server-to-Server Zoom app (Account ID/Client ID/Secret typed into a form here);
+# that meant every coach's meetings were created under the same single Zoom
+# identity. See docs/integrations.md for the full rationale and setup steps.
+#
+# settings.ZOOM_OAUTH_ENABLED (interim, 2026-09-30): the OAuth app is still blocked
+# on an unresolved "Invalid redirect" error from Zoom's own console. While False,
+# every workspace shares ONE Server-to-Server Zoom app, sourced from
+# ZOOM_S2S_ACCOUNT_ID/CLIENT_ID/SECRET in .env — not a per-workspace credentials
+# form. There's exactly one real workspace on the platform right now, so this is a
+# deliberate simplification, not an oversight: it skips the "type credentials into
+# Settings" step entirely (no form, nothing for a workspace owner to configure) in
+# exchange for every workspace's meetings being created under that one Zoom
+# account — the same pooled-account tradeoff the per-workspace credentials form was
+# originally built to avoid (see the module-level docstring above). Revisit this if
+# a second real workspace joins before OAuth is unblocked. Delete this whole
+# old-path block (helper + branch below + the env vars) once OAuth is confirmed
+# working in prod and ZOOM_OAUTH_ENABLED=True for good.
 
 def _get_zoom_token(zoom_creds: dict) -> str:
-    """Exchange Zoom Server-to-Server OAuth credentials for an access token."""
+    """Old path: exchange Zoom Server-to-Server OAuth credentials for an access token."""
     import requests
     from base64 import b64encode
     account_id    = zoom_creds["account_id"]
@@ -1039,6 +1030,41 @@ def _get_zoom_token(zoom_creds: dict) -> str:
     return resp.json()["access_token"]
 
 
+def _get_zoom_access_token(user) -> str:
+    """Return a valid Zoom access token for this user's own connected account,
+    refreshing it first if expired. Raises ValueError if Zoom isn't connected."""
+    from datetime import timedelta
+    import requests
+    from django.utils import timezone
+    from allauth.socialaccount.models import SocialToken
+
+    try:
+        token = SocialToken.objects.select_related("app").get(
+            account__user=user, account__provider="zoom"
+        )
+    except SocialToken.DoesNotExist:
+        raise ValueError("Zoom is not connected. Connect your Zoom account in Settings → Integrations.")
+
+    if token.expires_at and token.expires_at > timezone.now():
+        return token.token
+
+    # Expired — refresh. Zoom rotates the refresh token on every use (the old one is
+    # invalidated), so the new one must be saved back, not just the access token.
+    resp = requests.post(
+        "https://zoom.us/oauth/token",
+        data={"grant_type": "refresh_token", "refresh_token": token.token_secret},
+        auth=(token.app.client_id, token.app.secret),
+        timeout=10,
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    token.token = data["access_token"]
+    token.token_secret = data.get("refresh_token", token.token_secret)
+    token.expires_at = timezone.now() + timedelta(seconds=data.get("expires_in", 3600))
+    token.save(update_fields=["token", "token_secret", "expires_at"])
+    return token.token
+
+
 @api_view(["POST"])
 @permission_classes([IsWorkspaceMember])
 def zoom_create_meeting(request):
@@ -1048,17 +1074,29 @@ def zoom_create_meeting(request):
     Returns: { join_url, meeting_id }
     """
     import requests as req_lib
-    workspace    = request.user.workspace
-    integrations = workspace.integrations or {}
-    zoom         = integrations.get("zoom", {})
+    from django.conf import settings as dj_settings
 
-    if not (zoom.get("account_id") and zoom.get("client_id") and zoom.get("client_secret")):
-        return Response({"detail": "Zoom is not configured. Add credentials in Settings → Integrations."}, status=400)
-
-    try:
-        token = _get_zoom_token(zoom)
-    except Exception as e:
-        return Response({"detail": f"Failed to authenticate with Zoom: {e}"}, status=400)
+    if dj_settings.ZOOM_OAUTH_ENABLED:
+        try:
+            token = _get_zoom_access_token(request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=400)
+        except Exception as e:
+            return Response({"detail": f"Failed to authenticate with Zoom: {e}"}, status=400)
+    else:
+        # Old path — one Server-to-Server credential, platform-wide, sourced from
+        # env (not a per-workspace DB value — see the block comment above).
+        zoom = {
+            "account_id":    dj_settings.ZOOM_S2S_ACCOUNT_ID,
+            "client_id":     dj_settings.ZOOM_S2S_CLIENT_ID,
+            "client_secret": dj_settings.ZOOM_S2S_CLIENT_SECRET,
+        }
+        if not (zoom["account_id"] and zoom["client_id"] and zoom["client_secret"]):
+            return Response({"detail": "Zoom is not configured on this server yet."}, status=400)
+        try:
+            token = _get_zoom_token(zoom)
+        except Exception as e:
+            return Response({"detail": f"Failed to authenticate with Zoom: {e}"}, status=400)
 
     topic    = (request.data.get("topic") or "Coaching Session").strip()
     start_time   = request.data.get("start_time", "")
