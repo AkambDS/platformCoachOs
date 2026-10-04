@@ -24,6 +24,7 @@ urlpatterns = [
     path("affiliations/",             views.affiliation_configs,              name="settings-affiliations"),
     path("affiliations/<int:pk>/",    views.affiliation_config_detail,       name="settings-affiliation-detail"),
     path("email-preview/",           views.email_preview,                  name="settings-email-preview"),
+    path("email-use-cases/",         views.email_use_cases,                name="settings-email-use-cases"),
     path("zoom/create-meeting/",     views.zoom_create_meeting,            name="settings-zoom-create-meeting"),
     path("stripe/",                  views.stripe_settings,                name="settings-stripe"),
 ]

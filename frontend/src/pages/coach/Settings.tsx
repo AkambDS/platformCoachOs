@@ -4,6 +4,8 @@ import { api, authApi, settingsApi, invoicesApi, auditApi } from '../../api/clie
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
+import { BUILTIN_TEXT } from '../../constants/emailStarters'
+import { useEmailUseCases, type EmailStarter } from '../../hooks/useEmailUseCases'
 import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays, ClipboardList, Copy } from 'lucide-react'
 
 const TIMEZONES = [
@@ -32,6 +34,7 @@ function WorkspaceTab() {
     workspace_timezone: workspace?.workspace_timezone  || 'America/New_York',
     cancellation_hours: workspace?.cancellation_hours  ?? 48,
     buffer_minutes:     workspace?.buffer_minutes      ?? 15,
+    reschedule_request_ttl_days: (workspace as any)?.reschedule_request_ttl_days ?? '',
     address:            (workspace as any)?.address    || '',
     city:               (workspace as any)?.city       || '',
     state:              (workspace as any)?.state      || '',
@@ -46,7 +49,11 @@ function WorkspaceTab() {
   const handleSave = async () => {
     setSaving(true)
     try {
-      const { data } = await settingsApi.updateWorkspace(form)
+      const payload = {
+        ...form,
+        reschedule_request_ttl_days: form.reschedule_request_ttl_days === '' ? null : Number(form.reschedule_request_ttl_days),
+      }
+      const { data } = await settingsApi.updateWorkspace(payload)
       if (user) rehydrate(user, { ...workspace, ...data })
       show('Workspace settings saved')
     } catch { show('Failed to save', 'error') }
@@ -190,6 +197,15 @@ function WorkspaceTab() {
                 <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>min</span>
               </div>
               <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>Gap auto-blocked after each session ends.</div>
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Reschedule Request Expiry <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never expire</span></label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <input className="finput" type="number" min={1} value={form.reschedule_request_ttl_days}
+                  onChange={e => set('reschedule_request_ttl_days', e.target.value)} placeholder="e.g. 5" style={{ marginBottom: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--muted)', whiteSpace: 'nowrap' }}>days</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>A client's pending reschedule request auto-clears if left unconfirmed this long.</div>
             </div>
           </div>
 
@@ -382,6 +398,251 @@ function ProfileTab() {
 // ── Pipeline Stages Tab ────────────────────────────────────────────────────────
 const STAGE_PRESET_COLORS = ['#8c8279','#2d6a9f','#2980b9','#c9a84c','#4a7c59','#1a1714','#7c4d9f','#c0392b','#16a085','#a0522d']
 
+type Freq = 'daily' | 'weekly' | 'monthly'
+const FREQ_OPTIONS: { key: Freq; label: string }[] = [
+  { key: 'daily', label: 'Daily' }, { key: 'weekly', label: 'Once a week' }, { key: 'monthly', label: 'Once a month' },
+]
+const WEEKDAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+const NTH = [{ v: 1, l: 'First' }, { v: 2, l: 'Second' }, { v: 3, l: 'Third' }, { v: 4, l: 'Fourth' }, { v: -1, l: 'Last' }]
+const ordinal = (n: number) => {
+  if (n >= 11 && n <= 13) return `${n}th`
+  return `${n}${{ 1: 'st', 2: 'nd', 3: 'rd' }[n % 10] || 'th'}`
+}
+
+// Which day a weekly / monthly follow-up goes out (PipelineStageConfig.alert_schedule,
+// read by tasks.pipeline._scheduled_today). Defaults match the backend: Monday / the 1st.
+type Sched = { weekday?: number; month_mode?: 'day' | 'nth'; month_day?: number; month_week?: number; month_weekday?: number }
+const scheduleText = (freq: string, o: Sched = {}) => {
+  if (freq === 'weekly') return `Every ${WEEKDAYS[o.weekday ?? 0]}`
+  if (freq === 'monthly') {
+    if (o.month_mode === 'nth') {
+      const nth = NTH.find(n => n.v === (o.month_week ?? 1))?.l || 'First'
+      return `${nth} ${WEEKDAYS[o.month_weekday ?? 0]} of the month`
+    }
+    return `${ordinal(o.month_day ?? 1)} of each month`
+  }
+  return 'Daily'
+}
+
+// Who can receive follow-ups for a stuck deal — each with its own on/off + frequency
+// (PipelineStageConfig.notify_* / *_frequency; sent by tasks.pipeline.dispatch_pipeline_alerts).
+const RECIPIENTS = [
+  { key: 'owner',  label: 'You',            hint: 'Workspace owner — the internal follow-up alert' },
+  { key: 'coach',  label: 'Assigned coach', hint: 'The coach on the deal — same alert, skipped if that’s you' },
+  { key: 'client', label: 'Client',         hint: 'A friendly check-in, not the internal alert — edit it in Settings → Emails' },
+] as const
+
+const emptyStageForm = () => ({
+  label: '', color: '#2d6a9f', insertAfterSlug: '__end__',
+  alerts_on: false, follow_up_days: '7', alert_stop_after_days: '',
+  notify_owner: true,  owner_frequency: 'daily' as Freq,
+  notify_coach: false, coach_frequency: 'daily' as Freq,
+  notify_client: false, client_frequency: 'weekly' as Freq,
+  schedule: {} as Record<string, Sched>,
+})
+
+const stageToForm = (s: any) => ({
+  label: s.label, color: s.color, insertAfterSlug: '',
+  alerts_on: !!s.follow_up_days, follow_up_days: s.follow_up_days ? String(s.follow_up_days) : '7',
+  alert_stop_after_days: s.alert_stop_after_days ? String(s.alert_stop_after_days) : '',
+  notify_owner: !!s.notify_owner,   owner_frequency: (s.owner_frequency || 'daily') as Freq,
+  notify_coach: !!s.notify_coach,   coach_frequency: (s.coach_frequency || 'daily') as Freq,
+  notify_client: !!s.notify_client, client_frequency: (s.client_frequency || 'weekly') as Freq,
+  schedule: (s.alert_schedule || {}) as Record<string, Sched>,
+})
+
+const formToPayload = (f: ReturnType<typeof emptyStageForm>) => ({
+  label: f.label.trim(), color: f.color,
+  follow_up_days: f.alerts_on && f.follow_up_days ? Number(f.follow_up_days) : null,
+  alert_stop_after_days: f.alerts_on && f.alert_stop_after_days ? Number(f.alert_stop_after_days) : null,
+  notify_owner: f.notify_owner,   owner_frequency: f.owner_frequency,
+  notify_coach: f.notify_coach,   coach_frequency: f.coach_frequency,
+  notify_client: f.notify_client, client_frequency: f.client_frequency,
+  alert_schedule: f.schedule,
+  // The old "max reminders to client" cap is replaced by the client's own frequency.
+  client_alert_max_count: null,
+})
+
+const sectionTitle: React.CSSProperties = {
+  fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', margin: '4px 0 10px',
+}
+
+function StageForm({ form, setForm, stages, isNew }: {
+  form: ReturnType<typeof emptyStageForm>
+  setForm: (fn: (f: ReturnType<typeof emptyStageForm>) => ReturnType<typeof emptyStageForm>) => void
+  stages: any[]; isNew: boolean
+}) {
+  const set = (k: string, v: any) => setForm(f => ({ ...f, [k]: v }))
+  const noneSelected = form.alerts_on && !form.notify_owner && !form.notify_coach && !form.notify_client
+  return (
+    <div>
+      <div style={sectionTitle}>Stage</div>
+      <div className="fgroup">
+        <label className="flabel">Name *</label>
+        <input className="finput" value={form.label} onChange={e => set('label', e.target.value)} placeholder="e.g. Contract Sent" />
+      </div>
+      {isNew && (
+        <div className="fgroup">
+          <label className="flabel">Position</label>
+          <select className="fselect" value={form.insertAfterSlug} onChange={e => set('insertAfterSlug', e.target.value)}>
+            <option value="__beginning__">At the beginning</option>
+            {stages.map((s: any) => <option key={s.slug} value={s.slug}>After: {s.label}</option>)}
+            <option value="__end__">At the end</option>
+          </select>
+        </div>
+      )}
+      <div className="fgroup">
+        <label className="flabel">Color</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+          {STAGE_PRESET_COLORS.map(c => (
+            <button key={c} type="button" aria-label={`Color ${c}`} onClick={() => set('color', c)}
+              style={{ width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0,
+                border: form.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
+          ))}
+        </div>
+      </div>
+
+      <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0 14px' }} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+        <div style={{ ...sectionTitle, margin: 0 }}>Follow-up emails</div>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer' }}>
+          <input type="checkbox" checked={form.alerts_on} onChange={e => set('alerts_on', e.target.checked)} />
+          Send follow-ups for this stage
+        </label>
+      </div>
+
+      {!form.alerts_on ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 6 }}>
+          No emails when a deal sits in this stage.
+        </div>
+      ) : (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="fgroup">
+              <label className="flabel">Start after</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input className="finput" type="number" min={1} max={365} value={form.follow_up_days}
+                  onChange={e => set('follow_up_days', e.target.value)} style={{ width: 80 }} />
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>days in stage</span>
+              </div>
+            </div>
+            <div className="fgroup">
+              <label className="flabel">Stop after</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <input className="finput" type="number" min={1} max={365} value={form.alert_stop_after_days}
+                  onChange={e => set('alert_stop_after_days', e.target.value)} placeholder="—" style={{ width: 80 }} />
+                <span style={{ fontSize: 12, color: 'var(--muted)' }}>days in stage</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Blank = until the deal moves stage</div>
+            </div>
+          </div>
+
+          <label className="flabel" style={{ marginBottom: 6 }}>Who gets them, and how often</label>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
+            {RECIPIENTS.map((r, i) => {
+              const on = (form as any)[`notify_${r.key}`] as boolean
+              const freq = (form as any)[`${r.key}_frequency`] as Freq
+              return (
+                <div key={r.key} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px',
+                  borderTop: i === 0 ? 'none' : '1px solid var(--border)', background: on ? '#fff' : 'var(--paper)',
+                }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, flex: '1 1 200px', cursor: 'pointer', minWidth: 0 }}>
+                    <input type="checkbox" checked={on} onChange={e => set(`notify_${r.key}`, e.target.checked)} style={{ marginTop: 2 }} />
+                    <span>
+                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)' }}>{r.label}</span>
+                      <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{r.hint}</span>
+                    </span>
+                  </label>
+                  <div role="radiogroup" aria-label={`${r.label} frequency`} style={{
+                    display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden',
+                    opacity: on ? 1 : 0.4, pointerEvents: on ? 'auto' : 'none',
+                  }}>
+                    {FREQ_OPTIONS.map(o => (
+                      <button key={o.key} type="button" role="radio" aria-checked={freq === o.key}
+                        onClick={() => set(`${r.key}_frequency`, o.key)}
+                        style={{
+                          border: 'none', padding: '5px 10px', fontSize: 12, cursor: 'pointer',
+                          background: freq === o.key ? 'var(--ink)' : '#fff', color: freq === o.key ? '#fff' : 'var(--ink)',
+                        }}>{o.label}</button>
+                    ))}
+                  </div>
+                  {on && freq !== 'daily' && (
+                    <SchedulePicker freq={freq} value={form.schedule[r.key] || {}}
+                      onChange={v => setForm(f => ({ ...f, schedule: { ...f.schedule, [r.key]: v } }))} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+          {noneSelected && (
+            <div style={{ fontSize: 11, color: '#b45309', marginTop: 6 }}>Pick at least one recipient, or switch follow-ups off.</div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, lineHeight: 1.5 }}>
+            Emails go out on the chosen day once a deal has been in this stage long enough — e.g. a deal that
+            becomes overdue on a Wednesday gets its first “every Monday” email the following Monday.
+            Everything stops as soon as the deal moves to another stage.
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function SchedulePicker({ freq, value, onChange }: { freq: Freq; value: Sched; onChange: (v: Sched) => void }) {
+  const sel = { padding: '4px 6px', fontSize: 12, border: '1px solid var(--border)', borderRadius: 6, background: '#fff' } as const
+  if (freq === 'weekly') {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexBasis: '100%', paddingLeft: 24, fontSize: 12, color: 'var(--muted)' }}>
+        Every
+        <select style={sel} value={value.weekday ?? 0} onChange={e => onChange({ ...value, weekday: Number(e.target.value) })}>
+          {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+        </select>
+      </div>
+    )
+  }
+  const mode = value.month_mode || 'day'
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', flexBasis: '100%', paddingLeft: 24, fontSize: 12, color: 'var(--muted)' }}>
+      On the
+      <select style={sel} value={mode === 'day' ? 'day' : String(value.month_week ?? 1)}
+        onChange={e => e.target.value === 'day'
+          ? onChange({ ...value, month_mode: 'day' })
+          : onChange({ ...value, month_mode: 'nth', month_week: Number(e.target.value) })}>
+        <option value="day">date…</option>
+        {NTH.map(n => <option key={n.v} value={n.v}>{n.l}</option>)}
+      </select>
+      {mode === 'day' ? (
+        <>
+          <select style={sel} value={value.month_day ?? 1} onChange={e => onChange({ ...value, month_day: Number(e.target.value) })}>
+            {Array.from({ length: 31 }, (_, i) => i + 1).map(d => <option key={d} value={d}>{ordinal(d)}</option>)}
+          </select>
+          of each month{(value.month_day ?? 1) > 28 ? ' (last day in shorter months)' : ''}
+        </>
+      ) : (
+        <>
+          <select style={sel} value={value.month_weekday ?? 0} onChange={e => onChange({ ...value, month_weekday: Number(e.target.value) })}>
+            {WEEKDAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+          </select>
+          of the month
+        </>
+      )}
+    </div>
+  )
+}
+
+function stageSummary(s: any) {
+  if (!s.follow_up_days) return null
+  const who = RECIPIENTS
+    .filter(r => s[`notify_${r.key}`])
+    .map(r => `${r.label} · ${scheduleText(s[`${r.key}_frequency`], (s.alert_schedule || {})[r.key])}`)
+  return {
+    when: `After ${s.follow_up_days} day${s.follow_up_days === 1 ? '' : 's'}` +
+      (s.alert_stop_after_days ? ` · stops at ${s.alert_stop_after_days} days` : ' · until it moves stage'),
+    who,
+  }
+}
+
 function PipelineTab() {
   const { show } = useToast()
   const qc = useQueryClient()
@@ -391,35 +652,33 @@ function PipelineTab() {
   })
   const [showAdd, setShowAdd] = useState(false)
   const [editTarget, setEditTarget] = useState<any>(null)
-  const [newForm, setNewForm] = useState({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, client_alert_max_count: '', insertAfterSlug: '__end__' })
-  const [editForm, setEditForm] = useState<any>({})
+  const [form, setForm] = useState(emptyStageForm)
   const [saving, setSaving] = useState(false)
 
+  const stageList = stages as any[]
+  const invalid = !form.label.trim() || (form.alerts_on && (!Number(form.follow_up_days) ||
+    (!form.notify_owner && !form.notify_coach && !form.notify_client)))
+
+  const openAdd = () => { setForm(emptyStageForm()); setShowAdd(true) }
+  const openEdit = (s: any) => { setForm(stageToForm(s)); setEditTarget(s) }
+
   const handleAdd = async () => {
-    if (!newForm.label.trim()) return
+    if (invalid) return
     setSaving(true)
-    const slug = newForm.slug.trim() || newForm.label.toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
-    const stageList = stages as any[]
+    const slug = form.label.toLowerCase().trim().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
     let order: number
-    if (newForm.insertAfterSlug === '__beginning__') {
+    if (form.insertAfterSlug === '__beginning__') {
       order = stageList.length > 0 ? stageList[0].order : 0
-    } else if (newForm.insertAfterSlug === '__end__' || !newForm.insertAfterSlug) {
+    } else if (form.insertAfterSlug === '__end__' || !form.insertAfterSlug) {
       order = stageList.length > 0 ? stageList[stageList.length - 1].order + 1 : 0
     } else {
-      const after = stageList.find(s => s.slug === newForm.insertAfterSlug)
+      const after = stageList.find(s => s.slug === form.insertAfterSlug)
       order = after ? after.order + 1 : stageList.length
     }
-    const payload = {
-      ...newForm, slug, order,
-      follow_up_days: newForm.follow_up_days ? Number(newForm.follow_up_days) : null,
-      alert_stop_after_days: newForm.alert_stop_after_days ? Number(newForm.alert_stop_after_days) : null,
-      client_alert_max_count: newForm.client_alert_max_count ? Number(newForm.client_alert_max_count) : null,
-    }
     try {
-      await settingsApi.createPipelineStage(payload)
+      await settingsApi.createPipelineStage({ ...formToPayload(form), slug, order })
       qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
       setShowAdd(false)
-      setNewForm({ label: '', slug: '', color: '#2d6a9f', follow_up_days: '', alert_stop_after_days: '', notify_owner: true, notify_client: false, client_alert_max_count: '', insertAfterSlug: '__end__' })
       show('Stage added')
     } catch (e: any) {
       show(e?.response?.data?.label?.[0] || e?.response?.data?.slug?.[0] || 'Failed to add stage', 'error')
@@ -427,15 +686,10 @@ function PipelineTab() {
   }
 
   const handleEdit = async () => {
+    if (invalid) return
     setSaving(true)
-    const payload = {
-      ...editForm,
-      follow_up_days: editForm.follow_up_days ? Number(editForm.follow_up_days) : null,
-      alert_stop_after_days: editForm.alert_stop_after_days ? Number(editForm.alert_stop_after_days) : null,
-      client_alert_max_count: editForm.client_alert_max_count ? Number(editForm.client_alert_max_count) : null,
-    }
     try {
-      await settingsApi.updatePipelineStage(editTarget.id, payload)
+      await settingsApi.updatePipelineStage(editTarget.id, formToPayload(form))
       qc.invalidateQueries({ queryKey: ['pipeline-stage-configs'] })
       setEditTarget(null)
       show('Stage updated')
@@ -457,150 +711,68 @@ function PipelineTab() {
   if (isLoading) return <div style={{ padding: 24, color: 'var(--muted)', fontSize: 13 }}>Loading…</div>
 
   return (
-    <div className="card" style={{ maxWidth: 700 }}>
-      <div className="card-hdr">
-        Pipeline Stages
-        <button className="btn btn-dark btn-sm" onClick={() => setShowAdd(true)}><Plus size={13} /> Add Stage</button>
-      </div>
-      <div style={{ padding: '10px 18px', fontSize: 12, color: 'var(--muted)', borderBottom: '1px solid var(--border)', background: 'var(--paper)' }}>
-        Set follow-up days per stage. A daily alert is sent to you when a deal exceeds that threshold.
-      </div>
-      <div className="card-body" style={{ padding: 0 }}>
-        {(stages as any[]).map((s: any) => (
-          <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '11px 18px', borderBottom: '1px solid var(--border)' }}>
-            <div style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-            <div style={{ flex: 1, fontSize: 13, fontWeight: 500 }}>{s.label}</div>
-            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-              {s.follow_up_days ? `Alert after ${s.follow_up_days}d` : <span style={{ color: '#bbb' }}>No alert</span>}
-            </div>
-            <button className="btn btn-ghost btn-sm" onClick={() => { setEditTarget(s); setEditForm({ label: s.label, color: s.color, follow_up_days: s.follow_up_days ?? '', alert_stop_after_days: s.alert_stop_after_days ?? '', notify_owner: s.notify_owner, notify_client: s.notify_client, client_alert_max_count: s.client_alert_max_count ?? '' }) }} style={{ padding: '2px 6px' }}>
-              <Pencil size={13} />
-            </button>
-            <button className="btn btn-ghost btn-sm" onClick={() => handleDelete(s)} style={{ color: '#c0392b', padding: '2px 6px' }}>
-              <Trash2 size={13} />
-            </button>
+    <div style={{ maxWidth: 820 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginBottom: 16 }}>
+        <div>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 24, color: 'var(--ink)', lineHeight: 1.2 }}>Pipeline stages</div>
+          <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4, maxWidth: 520 }}>
+            The stages a deal moves through. For any stage, choose when follow-up emails start when a deal
+            sits there too long, who gets them, and how often.
           </div>
-        ))}
+        </div>
+        <button className="btn btn-dark btn-sm" onClick={openAdd}><Plus size={13} /> Add Stage</button>
       </div>
 
-      {showAdd && (
-        <Modal title="Add Pipeline Stage" onClose={() => setShowAdd(false)} footer={
-          <>
-            <button className="btn btn-outline btn-sm" onClick={() => setShowAdd(false)}>Cancel</button>
-            <button className="btn btn-dark btn-sm" onClick={handleAdd} disabled={saving}>{saving ? 'Adding…' : 'Add'}</button>
-          </>
-        }>
-          <div className="fgroup">
-            <label className="flabel">Stage Name *</label>
-            <input className="finput" value={newForm.label} onChange={e => setNewForm(f => ({ ...f, label: e.target.value }))} placeholder="e.g. Contract Sent" />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Position in pipeline</label>
-            <select className="fselect" value={newForm.insertAfterSlug} onChange={e => setNewForm(f => ({ ...f, insertAfterSlug: e.target.value }))}>
-              <option value="__beginning__">At the beginning</option>
-              {(stages as any[]).map((s: any) => (
-                <option key={s.slug} value={s.slug}>After: {s.label}</option>
-              ))}
-            </select>
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
-            <input className="finput" type="number" min={1} max={365} value={newForm.follow_up_days}
-              onChange={e => setNewForm(f => ({ ...f, follow_up_days: e.target.value }))} placeholder="e.g. 14" />
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Once triggered, the alert repeats once a day until the deal moves stage (or the stop window below is reached).</div>
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Stop alerting after (days in stage) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop</span></label>
-            <input className="finput" type="number" min={1} max={365} value={newForm.alert_stop_after_days}
-              onChange={e => setNewForm(f => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="e.g. 30" />
-          </div>
-          <div style={{ display: 'flex', gap: 20, marginBottom: newForm.notify_client ? 10 : 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={newForm.notify_owner} onChange={e => setNewForm(f => ({ ...f, notify_owner: e.target.checked }))}
-                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={newForm.notify_client} onChange={e => setNewForm(f => ({ ...f, notify_client: e.target.checked }))}
-                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
-            </label>
-          </div>
-          {newForm.notify_client && (
-            <div className="fgroup">
-              <label className="flabel">Max reminders to client <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop on its own</span></label>
-              <input className="finput" type="number" min={1} max={365} value={newForm.client_alert_max_count}
-                onChange={e => setNewForm(f => ({ ...f, client_alert_max_count: e.target.value }))} placeholder="e.g. 3" />
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
-                Stops emailing the client after this many reminders, even if the deal is still stuck in this
-                stage. Your own "Notify me" reminders keep going per the stop window above either way.
+      <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        {stageList.map((s: any, i: number) => {
+          const sum = stageSummary(s)
+          return (
+            <div key={s.id} style={{
+              display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
+              padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: '1 1 220px', minWidth: 0 }}>
+                <span style={{ fontSize: 11, color: 'var(--muted)', width: 16, textAlign: 'right' }}>{i + 1}</span>
+                <span style={{ width: 10, height: 10, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
+                <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{s.label}</span>
+              </div>
+              <div style={{ flex: '2 1 300px', minWidth: 0 }}>
+                {sum ? (
+                  <>
+                    <div style={{ fontSize: 12, color: 'var(--ink)' }}>{sum.when}</div>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 5 }}>
+                      {sum.who.length ? sum.who.map(w => (
+                        <span key={w} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 10, background: '#eef3ec', color: '#2a5c35', fontWeight: 600 }}>{w}</span>
+                      )) : <span style={{ fontSize: 11, color: '#b45309' }}>No recipients selected</span>}
+                    </div>
+                  </>
+                ) : (
+                  <span style={{ fontSize: 12, color: 'var(--muted)' }}>No follow-ups</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
+                <button className="btn btn-outline btn-sm" onClick={() => openEdit(s)}><Pencil size={12} /> Edit</button>
+                {!s.is_builtin && (
+                  <button className="btn btn-outline btn-sm" onClick={() => handleDelete(s)} aria-label={`Delete ${s.label}`}
+                    style={{ color: '#c0392b', borderColor: '#f5c6c2' }}><Trash2 size={12} /></button>
+                )}
               </div>
             </div>
-          )}
-          <div className="fgroup">
-            <label className="flabel">Color</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-              {STAGE_PRESET_COLORS.map(c => (
-                <div key={c} onClick={() => setNewForm(f => ({ ...f, color: c }))}
-                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                    border: newForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
-              ))}
-            </div>
-          </div>
-        </Modal>
-      )}
+          )
+        })}
+      </div>
 
-      {editTarget && (
-        <Modal title={`Edit: ${editTarget.label}`} onClose={() => setEditTarget(null)} footer={
+      {(showAdd || editTarget) && (
+        <Modal title={showAdd ? 'Add pipeline stage' : `Edit stage: ${editTarget.label}`}
+          onClose={() => { setShowAdd(false); setEditTarget(null) }} footer={
           <>
-            <button className="btn btn-outline btn-sm" onClick={() => setEditTarget(null)}>Cancel</button>
-            <button className="btn btn-dark btn-sm" onClick={handleEdit} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+            <button className="btn btn-outline btn-sm" onClick={() => { setShowAdd(false); setEditTarget(null) }}>Cancel</button>
+            <button className="btn btn-dark btn-sm" onClick={showAdd ? handleAdd : handleEdit} disabled={saving || invalid}>
+              {saving ? 'Saving…' : showAdd ? 'Add stage' : 'Save'}
+            </button>
           </>
         }>
-          <div className="fgroup">
-            <label className="flabel">Stage Name *</label>
-            <input className="finput" value={editForm.label} onChange={e => setEditForm((f: any) => ({ ...f, label: e.target.value }))} />
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Follow-up alert after (days) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank for no alert</span></label>
-            <input className="finput" type="number" min={1} max={365} value={editForm.follow_up_days}
-              onChange={e => setEditForm((f: any) => ({ ...f, follow_up_days: e.target.value }))} placeholder="No alert" />
-            <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Once triggered, the alert repeats once a day until the deal moves stage (or the stop window below is reached).</div>
-          </div>
-          <div className="fgroup">
-            <label className="flabel">Stop alerting after (days in stage) <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop</span></label>
-            <input className="finput" type="number" min={1} max={365} value={editForm.alert_stop_after_days}
-              onChange={e => setEditForm((f: any) => ({ ...f, alert_stop_after_days: e.target.value }))} placeholder="Never stop" />
-          </div>
-          <div style={{ display: 'flex', gap: 20, marginBottom: editForm.notify_client ? 10 : 8 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={editForm.notify_owner} onChange={e => setEditForm((f: any) => ({ ...f, notify_owner: e.target.checked }))}
-                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify me
-            </label>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, cursor: 'pointer' }}>
-              <input type="checkbox" checked={editForm.notify_client} onChange={e => setEditForm((f: any) => ({ ...f, notify_client: e.target.checked }))}
-                style={{ width: 14, height: 14, accentColor: 'var(--gold)' }} /> Notify client
-            </label>
-          </div>
-          {editForm.notify_client && (
-            <div className="fgroup">
-              <label className="flabel">Max reminders to client <span style={{ color: 'var(--muted)', fontWeight: 400 }}>— leave blank to never stop on its own</span></label>
-              <input className="finput" type="number" min={1} max={365} value={editForm.client_alert_max_count}
-                onChange={e => setEditForm((f: any) => ({ ...f, client_alert_max_count: e.target.value }))} placeholder="Never stop" />
-              <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>
-                Stops emailing the client after this many reminders, even if the deal is still stuck in this
-                stage. Your own "Notify me" reminders keep going per the stop window above either way.
-              </div>
-            </div>
-          )}
-          <div className="fgroup">
-            <label className="flabel">Color</label>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-              {STAGE_PRESET_COLORS.map(c => (
-                <div key={c} onClick={() => setEditForm((f: any) => ({ ...f, color: c }))}
-                  style={{ width: 24, height: 24, borderRadius: '50%', background: c, cursor: 'pointer',
-                    border: editForm.color === c ? '3px solid var(--ink)' : '2px solid transparent' }} />
-              ))}
-            </div>
-          </div>
+          <StageForm form={form} setForm={setForm} stages={stageList} isNew={showAdd} />
         </Modal>
       )}
     </div>
@@ -1670,17 +1842,90 @@ function generateSampleHtml(key: string): string {
 // Named, reusable templates you build once and then assign to one or more
 // use-cases (invoice, reminders, client communication, …) — the single place
 // to define and edit every outbound email in the product.
-const GENERIC_USE_CASES = [
-  { key: 'confirmation',         label: 'Booking Confirmation' },
-  { key: 'reschedule',           label: 'Reschedule Notice' },
-  { key: 'reminder_24h',         label: '24h Reminder' },
-  { key: 'reminder_1h',          label: '1h Reminder' },
-  { key: 'invoice',              label: 'Invoice' },
-  { key: 'payment_receipt',      label: 'Payment Receipt' },
-  { key: 'client_communication', label: 'Client Communication' },
-  { key: 'team_invite',          label: 'Team Invite' },
-  { key: 'pipeline',             label: 'Pipeline Follow-up Alert' },
+// `audience` groups the list in the UI — who actually receives this email. The rest of
+// the use cases (coach copies, client-action notices, goal/note shared, …) come from
+// the backend's notice registry (GET /api/settings/email-use-cases/, tasks/email_notices.py)
+// and are appended at runtime — see useAllUseCases below.
+type UseCase = { key: string; label: string; audience: 'client' | 'coach' | 'team' }
+const GENERIC_USE_CASES: UseCase[] = [
+  { key: 'confirmation',         label: 'Booking Confirmation',     audience: 'client' },
+  { key: 'reschedule',           label: 'Reschedule Notice',        audience: 'client' },
+  { key: 'reminder_24h',         label: '24h Reminder',             audience: 'client' },
+  { key: 'reminder_1h',          label: '1h Reminder',              audience: 'client' },
+  { key: 'invoice',              label: 'Invoice',                  audience: 'client' },
+  { key: 'payment_receipt',      label: 'Payment Receipt',          audience: 'client' },
+  { key: 'portal_invite',        label: 'Portal Invite',            audience: 'client' },
+  { key: 'client_communication', label: 'Client Communication',     audience: 'client' },
+  { key: 'team_invite',          label: 'Team Invite',              audience: 'team' },
+  { key: 'pipeline',             label: 'Pipeline Follow-up Alert', audience: 'coach' },
 ]
+
+// Built-in eyebrow / heading per use case — shown as the placeholder in the editor's
+// Heading fields so a coach can see what they're overriding (blank = keep built-in).
+const BUILTIN_HEADINGS: Record<string, { eyebrow: string; heading: string }> = {
+  confirmation:    { eyebrow: 'Session Confirmed',     heading: 'Your session is confirmed' },
+  reschedule:      { eyebrow: 'Session Updated',       heading: 'Your session has been updated' },
+  reminder_24h:    { eyebrow: 'Reminder · 24 hours away', heading: 'Session reminder' },
+  reminder_1h:     { eyebrow: 'Upcoming in 1 hour',    heading: 'Session reminder' },
+  payment_receipt: { eyebrow: 'Payment Received',      heading: '$ amount paid' },
+  portal_invite:   { eyebrow: 'Portal Access',         heading: 'Your portal is ready' },
+  team_invite:     { eyebrow: 'Team Invitation',       heading: "You've been invited" },
+  pipeline:        { eyebrow: 'Follow-up required',    heading: '{client_name} needs attention' },
+}
+// One line on when each email goes out — shown under its name in the email list.
+const USE_CASE_WHEN: Record<string, string> = {
+  confirmation:            'When you book a session with "send confirmation" on',
+  reschedule:              'When a session time changes or a new time is confirmed',
+  reminder_24h:            'Automatically, 24 hours before a session',
+  reminder_1h:             'Automatically, 1 hour before a session',
+  invoice:                 'When you send an invoice',
+  payment_receipt:         'When a client pays an invoice',
+  portal_invite:           'When you give a client portal access',
+  client_communication:    'One-off messages you write from a client’s page',
+  cancellation:            'When a session is cancelled',
+  reschedule_ack:          'When a client requests a new time',
+  decline_reschedule:      'When you decline a client’s proposed time with a note',
+  goal_shared:             'When you share a goal with a client',
+  note_shared:             'When you share a session note with a client',
+  pipeline:                'When a deal sits in a stage past its follow-up threshold',
+  pipeline_client:         'When a client’s deal sits in a stage (if the stage notifies the client)',
+  coach_session_booked:    'Your copy when a session is booked',
+  coach_session_reminder:  'Your copy of the session reminder',
+  coach_session_updated:   'Your copy when a session is rescheduled',
+  coach_session_cancelled: 'Your copy when a session is cancelled',
+  client_confirmed_notice: 'When a client confirms from their email',
+  client_cancelled_notice: 'When a client cancels from their email',
+  client_rsvp_notice:      'When a client responds to the Google Calendar invite',
+  reschedule_request:      'When a client asks to reschedule',
+  payment_failed:          'When a client’s card payment fails',
+  contract_signed:         'When a client signs a contract',
+  team_invite:             'When you invite someone to your workspace',
+}
+
+// Which optional blocks a use case actually has — the editor only offers toggles for
+// blocks that exist in that email. Notices from the backend registry all have a
+// details card and a sign-off.
+const HAS_ACTIONS = new Set(['confirmation', 'reschedule', 'reminder_24h', 'reminder_1h'])
+const NO_DETAILS  = new Set(['team_invite', 'portal_invite', 'pipeline', 'decline_reschedule'])
+const NO_SIGNOFF  = new Set(['team_invite'])
+
+// Merges the backend notice registry into the static lists above.
+function useAllUseCases() {
+  const { notices, starters } = useEmailUseCases()
+  const useCases: UseCase[] = [...GENERIC_USE_CASES, ...notices.map(n => ({ key: n.key, label: n.label, audience: n.audience }))]
+  const samples: Record<string, { subject: string; intro: string; closing: string }> = { ...USE_CASE_SAMPLES }
+  const hints: Record<string, string[]> = { ...PLACEHOLDER_HINTS }
+  const headings: Record<string, { eyebrow: string; heading: string }> = { ...BUILTIN_HEADINGS }
+  notices.forEach(n => {
+    samples[n.key]  = { subject: n.subject, intro: n.intro, closing: n.closing }
+    hints[n.key]    = n.placeholders
+    headings[n.key] = { eyebrow: n.eyebrow, heading: n.heading }
+  })
+  // Starter subject/message/closing win over the older samples — they're what an
+  // un-customized email actually sends now (backend/tasks/email_starters.py).
+  Object.entries(starters).forEach(([k, st]) => { samples[k] = { subject: st.subject, intro: st.intro, closing: st.closing } })
+  return { useCases, samples, hints, headings, starters }
+}
 
 // Placeholders substituted at send time — differ per use case since each pulls from
 // a different backend context (a session, an invoice, a portal link, …).
@@ -1699,6 +1944,7 @@ const PLACEHOLDER_HINTS: Record<string, string[]> = {
   client_communication: ['{client_name}', '{client_first_name}', '{coach_name}', '{workspace_name}', '{workspace_owner}', '{client_email}', '{client_address}'],
   team_invite:          ['{invited_by_name}', '{workspace_name}', '{role}', '{accept_url}', '{owner_name}', '{owner_email}'],
   pipeline:             ['{owner_name}', '{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{stage_label}', '{days_in_stage}', '{follow_up_days}', '{deal_value}', '{stage_entered}'],
+  portal_invite:        ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{portal_url}'],
 }
 const DEFAULT_PLACEHOLDER_HINT = ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{coach_name}']
 
@@ -1747,6 +1993,11 @@ const USE_CASE_SAMPLES: Record<string, { subject: string; intro: string; closing
     subject: 'Welcome to LMT Consulting Coaching!',
     intro: `Welcome to LMT Consulting Coaching! I am honored to be working with you.<br><br>Let's get started - all coaching sessions begin with our DISC and Driving Forces assessment debrief.<br><br>What are DISC and Driving Forces?  The DISC is an assessment that measures observable behavior to create self-awareness around our actions.  Basically, it helps explain how we behave and how that behavior impacts our communication with others.  The Driving Forces Assessment shows us what motivates our decisions, essentially why we do what we do.  It is important to know when taking these assessments there are no right or wrong answers and one behavioral style or motivator is NOT better than another.  Each one of us is born with intrinsic gifts and when we use our natural talents, we find greater success and increased happiness.  Our use of these assessments is to help you understand your natural talents and how to capitalize on them in business and in life.  So relax, have fun and answer the questions based on the first thought that comes to your mind; try not to over-think or over-analyze your answers.  The assessments are simple to take, but be sure to set aside 15-20 minutes in a quiet place to complete the assessments.<br><br><a href="https://www.ttisurvey.com/465190CWY?locale=en_US" style="color:#b8922e;text-decoration:none;font-weight:600;">Click here to take your assessment now!</a>`,
     closing: 'The report will be sent directly to LMT Consulting. Upon receipt of your results, we will contact you via email to schedule your debrief.  Please know the session will run approximately 1 hour.  It will be important to set aside the appropriate time to review your results.  I look forward to speaking to you!',
+  },
+  portal_invite: {
+    subject: 'Your portal access is ready — {workspace_name}',
+    intro:   'Hi {client_first_name}, {workspace_name} has given you access to your client portal, where you can see your sessions, goals, invoices and shared materials.',
+    closing: 'If you have any questions, reply to this email or contact {coach_name}.',
   },
   pipeline: {
     subject: 'Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)',
@@ -1809,6 +2060,20 @@ const simpleMessageStartStyle = (ucKey: string) => ({
   show_header: ucKey !== 'invoice', header_bg: '#ffffff', accent_color: '#ffffff', show_footer: false,
 })
 
+// Shows a saved session template's blank subject/heading/sign-off as the built-in words
+// they stand for (same email either way), so the editor never hides text that the
+// preview shows — see the matching comment in EmailEditModal.tsx.
+const withBuiltinText = (t: any, starters: Record<string, EmailStarter>) => {
+  const uc = (t.use_cases && t.use_cases[0]) || ''
+  const builtin = BUILTIN_TEXT[uc]
+  if (!builtin) return t
+  const style = { ...t.style }
+  if (!style.eyebrow_text) style.eyebrow_text = builtin.eyebrow
+  if (!style.heading_text) style.heading_text = builtin.heading
+  if (!style.signoff_text) style.signoff_text = '— {workspace_name}'
+  return { ...t, subject: t.subject || starters[uc]?.subject || '', style }
+}
+
 const blankGenericTemplate = () => ({
   id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
   name: '', subject: '', intro: '', closing: '',
@@ -1819,6 +2084,7 @@ const blankGenericTemplate = () => ({
 })
 
 function GenericTemplatesTab() {
+  const { useCases, samples, hints, headings, starters } = useAllUseCases()
   const { workspace, user, rehydrate } = useAuthStore()
   const { show } = useToast()
   const [templates, setTemplates] = useState<any[]>((workspace as any)?.generic_templates || [])
@@ -1836,6 +2102,7 @@ function GenericTemplatesTab() {
   const [assigning, setAssigning] = useState(false)
   const [assignChecks, setAssignChecks] = useState<Record<string, boolean>>({})
   const [addingSample, setAddingSample] = useState<string | null>(null)
+  const [emailTab, setEmailTab] = useState<'client' | 'coach' | 'team' | 'library'>('client')
 
   const persist = async (nextTemplates: any[], nextMap: Record<string, string>) => {
     const { data } = await api.patch('/api/settings/workspace/', {
@@ -1849,7 +2116,6 @@ function GenericTemplatesTab() {
 
 
   const hasContractSample = templates.some(t => t.name === CONTRACT_SAMPLE.name)
-  const unusedUseCases = GENERIC_USE_CASES.filter(uc => !useCaseMap[uc.key])
 
   const handleAddContractSample = async () => {
     setAddingSample('contract')
@@ -1897,6 +2163,14 @@ function GenericTemplatesTab() {
       params.show_footer = t.style.show_footer === false ? '0' : '1'
       params.show_contact_line = t.style.show_contact_line === false ? '0' : '1'
       params.include_client_signature_line = t.include_client_signature_line ? '1' : '0'
+      // Content blocks: only sent once set, so each use case's own default (e.g. invoice's
+      // heading off) applies until the coach actually changes it.
+      for (const k of ['show_heading', 'show_signature', 'show_details', 'show_actions', 'show_calendar']) {
+        if (t.style[k] !== undefined) params[k] = t.style[k] === false ? '0' : '1'
+      }
+      for (const k of ['heading_text', 'eyebrow_text', 'signoff_text']) {
+        if (t.style[k]) params[k] = t.style[k]
+      }
       const { data } = await api.get('/api/settings/email-preview/', { params })
       setPreviewHtml(data.html)
     } catch { setPreviewHtml('') }
@@ -1911,7 +2185,10 @@ function GenericTemplatesTab() {
   }, [editing?.subject, editing?.intro, editing?.closing, editing?.style?.header_bg,
       editing?.style?.accent_color, editing?.style?.header_tagline, editing?.style?.show_header,
       editing?.style?.show_footer, editing?.style?.footer_text, editing?.style?.show_contact_line,
-      editing?.show_logo, editing?.include_client_signature_line])
+      editing?.show_logo, editing?.include_client_signature_line,
+      editing?.style?.show_heading, editing?.style?.show_signature, editing?.style?.show_details,
+      editing?.style?.show_actions, editing?.style?.show_calendar, editing?.style?.heading_text, editing?.style?.eyebrow_text,
+      editing?.style?.signoff_text])
 
   const openNew  = () => {
     setDirectAssignUseCase(null)
@@ -1921,7 +2198,7 @@ function GenericTemplatesTab() {
     // generic default, same as before this became use-case-aware.
     setEditing(mergeSimpleMessageContent({ ...blank, style: { ...blank.style, ...simpleMessageStartStyle('client_communication') } }))
   }
-  const openEdit = (t: any) => { setDirectAssignUseCase(null); setEditing(mergeSimpleMessageContent({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } })) }
+  const openEdit = (t: any) => { setDirectAssignUseCase(null); setEditing(withBuiltinText(mergeSimpleMessageContent({ ...t, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...t.style } }), starters)) }
   const setStyle = (k: string, v: string | boolean) => setEditing((e: any) => ({ ...e, style: { ...e.style, [k]: v } }))
 
   const handleDelete = async (id: string) => {
@@ -1951,21 +2228,6 @@ function GenericTemplatesTab() {
     show(`Duplicated "${t.name}" — edit the copy any time`)
   }
 
-  // The "effective" default for a use case — whichever template is currently assigned
-  // to it, or (if none) the built-in starter content — as a template-shaped object.
-  const getEffectiveDefault = (ucKey: string) => {
-    const assignedId = useCaseMap[ucKey]
-    const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
-    if (assigned) return assigned
-    const sample = USE_CASE_SAMPLES[ucKey]
-    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
-    return {
-      ...blankGenericTemplate(),
-      name: uc?.label || ucKey,
-      subject: sample?.subject || '', intro: sample?.intro || '', closing: sample?.closing || '',
-    }
-  }
-
   // "Edit" on a Default card — if something's already assigned to this slot, edit that
   // template directly (editing it is what changes the default). If nothing's assigned
   // yet, open a new editor pre-filled with the built-in starter content, pre-assigned to
@@ -1975,11 +2237,21 @@ function GenericTemplatesTab() {
     const assignedId = useCaseMap[ucKey]
     const assigned = assignedId ? templates.find(t => t.id === assignedId) : null
     if (assigned) {
-      setEditing(mergeSimpleMessageContent({ ...assigned, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } }))
+      setEditing(withBuiltinText(mergeSimpleMessageContent({ ...assigned, style: { show_header: true, show_footer: true, footer_text: '', show_contact_line: true, ...assigned.style } }), starters))
       return
     }
-    const sample = USE_CASE_SAMPLES[ucKey]
-    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
+    const starter = starters[ucKey]
+    if (starter) {
+      const blank = blankGenericTemplate()
+      setEditing({
+        ...blank, name: useCases.find(u => u.key === ucKey)?.label || ucKey,
+        subject: starter.subject, intro: starter.intro, closing: starter.closing,
+        use_cases: [ucKey], style: { ...blank.style, ...starter.style },
+      })
+      return
+    }
+    const sample = samples[ucKey]
+    const uc = useCases.find(u => u.key === ucKey)
     const blank = blankGenericTemplate()
     setEditing(mergeSimpleMessageContent({
       ...blank,
@@ -1992,21 +2264,6 @@ function GenericTemplatesTab() {
       // banner look via the Header/Footer checkboxes below if they want it.
       style: { ...blank.style, ...simpleMessageStartStyle(ucKey) },
     }))
-  }
-
-  const handleDuplicateDefault = async (ucKey: string) => {
-    const src = getEffectiveDefault(ucKey)
-    const uc = GENERIC_USE_CASES.find(u => u.key === ucKey)
-    const copy = {
-      ...src,
-      id: `tmpl-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-      name: `${uc?.label || ucKey} (Copy)`,
-      // Tagged for this use case so it's immediately selectable as an alternative —
-      // not "the" active default (useCaseMap still points at whatever it did before).
-      use_cases: [ucKey],
-    }
-    await persist([...templates, copy], useCaseMap)
-    show(`Duplicated the ${uc?.label || ucKey} default — edit the copy any time`)
   }
 
   const handleSaveTemplate = async () => {
@@ -2030,7 +2287,7 @@ function GenericTemplatesTab() {
           : t
         )
         await persist(taggedTemplates, nextMap)
-        show(`Saved — now the default for ${GENERIC_USE_CASES.find(u => u.key === directAssignUseCase)?.label || directAssignUseCase}`)
+        show(`Saved — now the default for ${useCases.find(u => u.key === directAssignUseCase)?.label || directAssignUseCase}`)
         setDirectAssignUseCase(null)
         setEditing(null)
         return
@@ -2042,7 +2299,7 @@ function GenericTemplatesTab() {
       // selectable alternative (but not currently active) would show every box
       // unchecked here, and saving would wipe its tags right back out.
       const checks: Record<string, boolean> = {}
-      GENERIC_USE_CASES.forEach(u => { checks[u.key] = (editing.use_cases || []).includes(u.key) })
+      useCases.forEach(u => { checks[u.key] = (editing.use_cases || []).includes(u.key) })
       setAssignChecks(checks)
       setAssigning(true)
     } catch (e: any) {
@@ -2054,7 +2311,7 @@ function GenericTemplatesTab() {
     setSaving(true)
     try {
       const nextMap = { ...useCaseMap }
-      GENERIC_USE_CASES.forEach(u => {
+      useCases.forEach(u => {
         if (assignChecks[u.key]) nextMap[u.key] = editing.id
         else if (nextMap[u.key] === editing.id) delete nextMap[u.key]
       })
@@ -2065,7 +2322,7 @@ function GenericTemplatesTab() {
       // alternative) must keep their own tags; recomputing everyone's use_cases from
       // nextMap would silently strip every non-active template back to unassigned.
       const nextTemplates = templates.map(t => t.id === editing.id
-        ? { ...t, use_cases: GENERIC_USE_CASES.filter(u => assignChecks[u.key]).map(u => u.key) }
+        ? { ...t, use_cases: useCases.filter(u => assignChecks[u.key]).map(u => u.key) }
         : t
       )
       await persist(nextTemplates, nextMap)
@@ -2086,7 +2343,7 @@ function GenericTemplatesTab() {
             Assigning it to a slot replaces whatever template was driving that email before.
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 20 }}>
-            {GENERIC_USE_CASES.map(u => {
+            {useCases.map(u => {
               const takenBy = useCaseMap[u.key] && useCaseMap[u.key] !== editing.id
                 ? templates.find(t => t.id === useCaseMap[u.key])?.name : null
               return (
@@ -2113,7 +2370,7 @@ function GenericTemplatesTab() {
   if (editing) {
     // Union of placeholders for whichever use cases this template is already assigned
     // to; falls back to the common baseline for a brand-new, not-yet-assigned template.
-    const assignedHints = (editing.use_cases || []).flatMap((uc: string) => PLACEHOLDER_HINTS[uc] || [])
+    const assignedHints = (editing.use_cases || []).flatMap((uc: string) => hints[uc] || [])
     const activePlaceholders = Array.from(new Set(assignedHints.length ? assignedHints : DEFAULT_PLACEHOLDER_HINT))
     // Client Communication and Invoice templates get the same single-"Message"-box editing
     // experience as Client Communication > New Message > Start Blank, instead of the
@@ -2121,7 +2378,8 @@ function GenericTemplatesTab() {
     // above.
     const effectiveUseCase = (editing.use_cases && editing.use_cases.length > 0) ? editing.use_cases[0] : 'client_communication'
     const isSimpleMessage = SIMPLE_MESSAGE_USE_CASES.has(effectiveUseCase)
-    const simpleMessagePlaceholders = PLACEHOLDER_HINTS[effectiveUseCase] || DEFAULT_PLACEHOLDER_HINT
+    const simpleMessagePlaceholders = hints[effectiveUseCase] || DEFAULT_PLACEHOLDER_HINT
+    const builtinHeading = headings[effectiveUseCase] || { eyebrow: '', heading: '' }
 
     return (
       <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
@@ -2136,14 +2394,75 @@ function GenericTemplatesTab() {
               <label className="flabel">Subject</label>
               <input className="finput" value={editing.subject} onChange={e => setEditing({ ...editing, subject: e.target.value })} placeholder="e.g. A quick note from {workspace_name}" />
             </div>
+            {!isSimpleMessage && (
+              <div className="fgroup">
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <label className="flabel">Heading</label>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                    <input type="checkbox" checked={editing.style.show_heading !== false}
+                      onChange={e => setStyle('show_heading', e.target.checked)} />
+                    Show
+                  </label>
+                </div>
+                <fieldset disabled={editing.style.show_heading === false} style={{ border: 'none', padding: 0, margin: 0, opacity: editing.style.show_heading === false ? 0.5 : 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <input className="finput" value={editing.style.eyebrow_text ?? ''} onChange={e => setStyle('eyebrow_text', e.target.value)}
+                    placeholder={`Small label above — default: ${builtinHeading.eyebrow || 'none'}`} />
+                  <input className="finput" value={editing.style.heading_text ?? ''} onChange={e => setStyle('heading_text', e.target.value)}
+                    placeholder={`Heading — default: ${builtinHeading.heading || 'none'}`} />
+                </fieldset>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3 }}>Leave blank to keep the default wording.</div>
+              </div>
+            )}
             <div className="fgroup">
-              <label className="flabel">{isSimpleMessage ? 'Message' : 'Body — Opening'}</label>
-              <textarea className="ftextarea" rows={isSimpleMessage ? 12 : 3} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />
+              <label className="flabel">Message</label>
+              <textarea className="ftextarea" rows={isSimpleMessage ? 12 : 5} value={editing.intro} onChange={e => setEditing({ ...editing, intro: e.target.value })} placeholder="Hi {client_name}, ..." />
             </div>
             {!isSimpleMessage && (
               <div className="fgroup">
-                <label className="flabel">Body — Closing</label>
-                <textarea className="ftextarea" rows={2} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon, ..." />
+                <label className="flabel">Closing</label>
+                <textarea className="ftextarea" rows={3} value={editing.closing} onChange={e => setEditing({ ...editing, closing: e.target.value })} placeholder="Talk soon, ..." />
+              </div>
+            )}
+            {!isSimpleMessage && (
+              <div className="fgroup">
+                <label className="flabel">What else to include</label>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {!NO_DETAILS.has(effectiveUseCase) && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={editing.style.show_details !== false}
+                        onChange={e => setStyle('show_details', e.target.checked)} />
+                      Details card (what / when / where)
+                    </label>
+                  )}
+                  {HAS_ACTIONS.has(effectiveUseCase) && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--muted)' }}
+                      title="Always included — this is how clients confirm, reschedule or cancel">
+                      <input type="checkbox" checked disabled />
+                      Confirm / Reschedule / Cancel buttons <span style={{ fontSize: 11 }}>(always included)</span>
+                    </label>
+                  )}
+                  {(effectiveUseCase === 'confirmation' || effectiveUseCase === 'reschedule') && (
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                      <input type="checkbox" checked={editing.style.show_calendar !== false}
+                        onChange={e => setStyle('show_calendar', e.target.checked)} />
+                      "Add to calendar" box
+                    </label>
+                  )}
+                  {!NO_SIGNOFF.has(effectiveUseCase) && (
+                    <>
+                      <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--ink)', cursor: 'pointer' }}>
+                        <input type="checkbox" checked={editing.style.show_signature !== false}
+                          onChange={e => setStyle('show_signature', e.target.checked)} />
+                        Sign-off
+                      </label>
+                      {editing.style.show_signature !== false && (
+                        <input className="finput" style={{ marginLeft: 22, width: 'calc(100% - 22px)' }}
+                          value={editing.style.signoff_text ?? ''} onChange={e => setStyle('signoff_text', e.target.value)}
+                          placeholder="— {workspace_name}" />
+                      )}
+                    </>
+                  )}
+                </div>
               </div>
             )}
             {isSimpleMessage ? (
@@ -2183,7 +2502,7 @@ function GenericTemplatesTab() {
                 <div className="fgrid">
                   <div className="fgroup">
                     <label className="flabel">Header Color</label>
-                    <ColorPicker value={editing.style.header_bg || '#1a2f4e'} onChange={c => setStyle('header_bg', c)} />
+                    <ColorPicker value={editing.style.header_bg || '#ffffff'} onChange={c => setStyle('header_bg', c)} />
                   </div>
                   <div className="fgroup">
                     <label className="flabel">Accent Color</label>
@@ -2269,90 +2588,142 @@ function GenericTemplatesTab() {
     )
   }
 
+  const tabs: { key: typeof emailTab; label: string; count: number }[] = [
+    { key: 'client',  label: 'To clients',          count: useCases.filter(u => u.audience === 'client').length },
+    { key: 'coach',   label: 'To you & coaches',    count: useCases.filter(u => u.audience === 'coach').length },
+    { key: 'team',    label: 'To team members',     count: useCases.filter(u => u.audience === 'team').length },
+    { key: 'library', label: 'Template library',    count: templates.length },
+  ]
+  const customizedCount = useCases.filter(u => useCaseMap[u.key] && templates.some(t => t.id === useCaseMap[u.key])).length
+
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <div style={{ fontSize: 13, color: 'var(--muted)', maxWidth: 480 }}>
-          Build a branded template once, then choose which emails it powers — confirmations, reminders,
-          invoices, portal invites, or one-off client messages.
+    <div style={{ maxWidth: 960 }}>
+      {/* Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
+        <div>
+          <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 24, fontWeight: 400, color: 'var(--ink)', lineHeight: 1.2 }}>Emails</div>
+          <div style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>
+            Every email CoachOS sends on your behalf. {customizedCount} of {useCases.length} customized — the rest use the built-in wording.
+          </div>
         </div>
         <button className="btn btn-dark btn-sm" onClick={openNew}>+ New Template</button>
       </div>
 
-      {unusedUseCases.length > 0 && (
-        <div className="card" style={{ padding: 14, marginBottom: 16, background: '#faf6ed', border: '1px solid #e8dcc0' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Still on built-in defaults</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
-            These use cases haven't been customized yet. Edit to activate and personalize; duplicate to
-            start a copy without touching the built-in content.
-          </div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-            {unusedUseCases.map(uc => (
-              <div key={uc.key} style={{
-                display: 'flex', alignItems: 'center', gap: 4, padding: '4px 4px 4px 12px',
-                border: '1px solid var(--border)', borderRadius: 20, background: '#fff', fontSize: 12,
+      {/* Audience tabs */}
+      <div role="tablist" style={{ display: 'flex', gap: 4, borderBottom: '1px solid var(--border)', marginBottom: 16, overflowX: 'auto' }}>
+        {tabs.map(t => {
+          const active = emailTab === t.key
+          return (
+            <button key={t.key} role="tab" aria-selected={active} onClick={() => setEmailTab(t.key)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer', whiteSpace: 'nowrap',
+                padding: '10px 14px', marginBottom: -1, fontSize: 13,
+                fontWeight: active ? 600 : 500, color: active ? 'var(--ink)' : 'var(--muted)',
+                borderBottom: `2px solid ${active ? 'var(--ink)' : 'transparent'}`,
+                display: 'flex', alignItems: 'center', gap: 8,
               }}>
-                <span>{uc.label}</span>
-                <button className="btn btn-outline btn-sm" style={{ padding: '3px 8px', borderRadius: 14 }}
-                  onClick={() => openDefaultEditor(uc.key)}><Pencil size={11} /></button>
-                <button className="btn btn-outline btn-sm" style={{ padding: '3px 8px', borderRadius: 14 }}
-                  title="Duplicate — creates an independently-editable copy"
-                  onClick={() => handleDuplicateDefault(uc.key)}><Copy size={11} /></button>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+              {t.label}
+              <span style={{
+                fontSize: 11, fontWeight: 600, padding: '1px 7px', borderRadius: 10,
+                background: active ? 'var(--ink)' : '#efebe5', color: active ? '#fff' : 'var(--muted)',
+              }}>{t.count}</span>
+            </button>
+          )
+        })}
+      </div>
 
-      {!hasContractSample && (
-        <div className="card" style={{ padding: 14, marginBottom: 16, background: '#faf6ed', border: '1px solid #e8dcc0' }}>
-          <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>Quick start</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10 }}>
-            Contract Agreement is a standalone sample, not tied to a single use case — add it as a starting point.
-          </div>
-          <button className="btn btn-outline btn-sm" disabled={addingSample === 'contract'}
-            onClick={handleAddContractSample}>
-            {addingSample === 'contract' ? 'Adding…' : '+ Contract Agreement'}
-          </button>
-        </div>
-      )}
-
-      {templates.length > 0 && (
-        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 3 }}>All Saved Templates</div>
-      )}
-      {templates.length === 0 ? (
-        <div className="card"><div className="card-body" style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
-          No generic templates yet — add a sample above, or create one from scratch to reuse across invoices, reminders, and client messages.
-        </div></div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 14 }}>
-          {templates.map(t => {
-            const activeFor = GENERIC_USE_CASES.filter(uc => useCaseMap[uc.key] === t.id).map(uc => uc.label)
+      {emailTab !== 'library' ? (
+        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+          {useCases.filter(u => u.audience === emailTab).map((uc, i) => {
+            const assigned = useCaseMap[uc.key] ? templates.find(t => t.id === useCaseMap[uc.key]) : null
+            const subject = assigned?.subject || samples[uc.key]?.subject || ''
             return (
-            <div key={t.id} className="card" style={{ padding: 16 }}>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>{t.name || 'Untitled'}</div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, minHeight: 32 }}>
-                {(t.use_cases || []).length
-                  ? (t.use_cases || []).map((uc: string) => GENERIC_USE_CASES.find(u => u.key === uc)?.label || uc).join(', ')
-                  : 'Not assigned to any use yet'}
-              </div>
-              {activeFor.length > 0 && (
-                <div style={{
-                  display: 'inline-block', marginBottom: 10, padding: '2px 10px', borderRadius: 20,
-                  fontSize: 11, fontWeight: 600, background: '#e8f5e9', color: '#2d6a2d',
-                }}>
-                  ✓ Active default for {activeFor.join(', ')}
+              <div key={uc.key} style={{
+                display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+              }}>
+                <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{uc.label}</div>
+                  <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{USE_CASE_WHEN[uc.key] || ''}</div>
+                  {subject && (
+                    <div title={subject} style={{
+                      fontSize: 12, color: '#6e6560', marginTop: 6, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>
+                      <span style={{ color: 'var(--muted)', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', marginRight: 6 }}>Subject</span>
+                      {subject}
+                    </div>
+                  )}
                 </div>
-              )}
-              <div style={{ display: 'flex', gap: 6 }}>
-                <button className="btn btn-outline btn-sm" onClick={() => openEdit(t)} style={{ flex: 1, justifyContent: 'center' }}><Pencil size={12} /> Edit</button>
-                <button className="btn btn-outline btn-sm" onClick={() => handleDuplicate(t)} title="Duplicate — creates an independently-editable copy"><Copy size={12} /></button>
-                <button className="btn btn-outline btn-sm" onClick={() => handleDelete(t.id)} style={{ color: '#c0392b', borderColor: '#f5c6c2' }}><Trash2 size={12} /></button>
+                <div style={{ flex: '0 0 auto' }}>
+                  {assigned ? (
+                    <span title={`Using template "${assigned.name}"`} style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600,
+                      padding: '3px 10px', borderRadius: 12, background: '#e6f0e4', color: '#2a5c35', maxWidth: 220,
+                    }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2a5c35', flexShrink: 0 }} />
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Customized · {assigned.name}</span>
+                    </span>
+                  ) : (
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600,
+                      padding: '3px 10px', borderRadius: 12, background: '#f1eee9', color: '#8c8279',
+                    }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#b8b2ab' }} />
+                      Built-in
+                    </span>
+                  )}
+                </div>
+                <button className="btn btn-outline btn-sm" style={{ flex: '0 0 auto' }} onClick={() => openDefaultEditor(uc.key)}>
+                  <Pencil size={12} /> Edit
+                </button>
               </div>
-            </div>
             )
           })}
         </div>
+      ) : (
+        <>
+          <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+            <span>Reusable templates you can assign to one or more emails, or pick when writing a client message.</span>
+            {!hasContractSample && (
+              <button className="btn btn-outline btn-sm" disabled={addingSample === 'contract'} onClick={handleAddContractSample}>
+                {addingSample === 'contract' ? 'Adding…' : '+ Add Contract Agreement sample'}
+              </button>
+            )}
+          </div>
+          {templates.length === 0 ? (
+            <div className="card"><div className="card-body" style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', fontSize: 13 }}>
+              No saved templates yet. Customize any email, or create one from scratch with + New Template.
+            </div></div>
+          ) : (
+            <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+              {templates.map((t, i) => {
+                const activeFor = useCases.filter(uc => useCaseMap[uc.key] === t.id).map(uc => uc.label)
+                const taggedFor = (t.use_cases || []).map((uc: string) => useCases.find(u => u.key === uc)?.label || uc)
+                return (
+                  <div key={t.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+                    padding: '14px 18px', borderTop: i === 0 ? 'none' : '1px solid var(--border)',
+                  }}>
+                    <div style={{ flex: '1 1 280px', minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{t.name || 'Untitled'}</div>
+                      <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+                        {activeFor.length
+                          ? <>Active for <span style={{ color: '#2a5c35', fontWeight: 600 }}>{activeFor.join(', ')}</span></>
+                          : taggedFor.length ? `Available for ${taggedFor.join(', ')}` : 'Not assigned to any email yet'}
+                      </div>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6, flex: '0 0 auto' }}>
+                      <button className="btn btn-outline btn-sm" onClick={() => openEdit(t)}><Pencil size={12} /> Edit</button>
+                      <button className="btn btn-outline btn-sm" onClick={() => handleDuplicate(t)} title="Duplicate" aria-label={`Duplicate ${t.name}`}><Copy size={12} /></button>
+                      <button className="btn btn-outline btn-sm" onClick={() => handleDelete(t.id)} title="Delete" aria-label={`Delete ${t.name}`}
+                        style={{ color: '#c0392b', borderColor: '#f5c6c2' }}><Trash2 size={12} /></button>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </>
       )}
     </div>
   )

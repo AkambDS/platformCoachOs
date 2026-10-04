@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { PageHeader, Modal, StatusBadge, useToast } from '../../components/ui'
+import { PageHeader, Modal, StatusBadge, useToast, displayActivityStatus } from '../../components/ui'
+import { DeclineRescheduleModal } from '../../components/DeclineRescheduleModal'
 import { useAuthStore } from '../../store/auth'
 import {
   CalendarDays, MapPin, User, Clock, ChevronRight, Mail, CheckCircle2, Circle, XCircle,
@@ -165,6 +166,41 @@ function ActivityFormModal({
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
       </div>
+      {isEdit && initial?.requested_start_at && (
+        <div style={{
+          marginBottom: 16, padding: '12px 14px', borderRadius: 'var(--radius-sm)',
+          background: '#fdf3e0', border: '1px solid #e8c874',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+        }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#8a6a1f', marginBottom: 2 }}>
+              CLIENT PROPOSED A NEW TIME
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+              {new Date(initial.requested_start_at).toLocaleString()}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: '#8a6a1f', color: '#fff', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => {
+              // Preserve the session's current duration rather than hardcoding one —
+              // the proposed slot was computed to match it already (see
+              // apps.activities.availability.compute_available_slots), this just carries
+              // that same length into the manually-applied start/end fields.
+              const durationMs = form.end_at && form.start_at
+                ? new Date(toUTC(form.end_at)).getTime() - new Date(toUTC(form.start_at)).getTime()
+                : 60 * 60 * 1000
+              const newStart = new Date(initial.requested_start_at)
+              const newEnd = new Date(newStart.getTime() + durationMs)
+              setForm(f => ({ ...f, start_at: toLocalInput(newStart.toISOString()), end_at: toLocalInput(newEnd.toISOString()) }))
+            }}
+          >
+            Use This Time
+          </button>
+        </div>
+      )}
       <div className="fgrid">
         <div className="fgroup">
           <label className="flabel">Start *</label>
@@ -413,9 +449,10 @@ function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }
 }
 
 // ── Activity Detail Side Panel ─────────────────────────────────────────────────
-function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onStatusChange }: any) {
+function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onStatusChange, onConfirmReschedule, onDeclineReschedule }: any) {
   const isActive = ['scheduled', 'late', 'rescheduled'].includes(activity.status)
   const [showEmailPreview, setShowEmailPreview] = useState(false)
+  const [showDecline, setShowDecline] = useState(false)
   // Logged automatically when a coach sends a one-off Client Communication email (see
   // ClientMessageDraftViewSet.send) — not a schedulable session, so the confirmation/
   // reminder/cancellation notification pipeline (built for real appointments) doesn't
@@ -483,13 +520,35 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
     >
       <div className="kv"><span className="kvl">Client</span><span className="kvv">{activity.client_name}</span></div>
       <div className="kv"><span className="kvl">Type</span><span className="kvv">{(activity.activity_type || '').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())}</span></div>
-      <div className="kv"><span className="kvl">Status</span><span className="kvv"><StatusBadge status={activity.status} /></span></div>
+      <div className="kv"><span className="kvl">Status</span><span className="kvv"><StatusBadge status={displayActivityStatus(activity)} /></span></div>
       {!isCommunicationLog && (
         <div className="kv"><span className="kvl">Client Response</span><span className="kvv"><RsvpBadge activity={activity} /></span></div>
       )}
       <div className="kv"><span className="kvl">Start</span><span className="kvv">{new Date(activity.start_at).toLocaleString()}</span></div>
       {activity.end_at && <div className="kv"><span className="kvl">End</span><span className="kvv">{new Date(activity.end_at).toLocaleString()}</span></div>}
       {activity.location && <div className="kv"><span className="kvl">Location</span><span className="kvv">{activity.location}</span></div>}
+      {activity.requested_start_at && (
+        <div style={{
+          marginTop: 12, padding: '12px 14px', borderRadius: 'var(--radius-sm)',
+          background: '#fdf3e0', border: '1px solid #e8c874',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#8a6a1f', marginBottom: 4 }}>
+            CLIENT REQUESTED A NEW TIME
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 10 }}>
+            {new Date(activity.requested_start_at).toLocaleString()}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-sm" style={{ background: '#8a6a1f', color: '#fff', border: 'none' }}
+              onClick={() => onConfirmReschedule(activity.id)}>
+              Confirm New Time
+            </button>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowDecline(true)}>
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
       {activity.notes && (
         <div style={{ marginTop: 12, fontSize: 13, color: '#555', lineHeight: 1.6, background: 'var(--paper)', padding: 12, borderRadius: 'var(--radius-sm)', maxHeight: 320, overflowY: 'auto', whiteSpace: 'pre-wrap' }}>
           {activity.notes}
@@ -499,6 +558,15 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
     </Modal>
     {showEmailPreview && (
       <EmailPreviewModal activityId={activity.id} onClose={() => setShowEmailPreview(false)} />
+    )}
+    {showDecline && (
+      <DeclineRescheduleModal
+        onClose={() => setShowDecline(false)}
+        onDecline={async (message, sendEmail) => {
+          await onDeclineReschedule(activity.id, message, sendEmail)
+          setShowDecline(false)
+        }}
+      />
     )}
     </>
   )
@@ -588,6 +656,28 @@ export default function Activities() {
       const labels: Record<string, string> = { completed: 'Marked complete', late: 'Marked late', rescheduled: 'Marked rescheduled' }
       showToast(labels[newStatus] || 'Status updated')
     } catch { showToast('Failed to update status', 'error') }
+  }
+
+  const handleConfirmReschedule = async (id: string) => {
+    try {
+      await activitiesApi.confirmReschedule(id)
+      qc.invalidateQueries({ queryKey: ['activities-list'] })
+      setDetailTarget(null)
+      showToast('New time confirmed — client notified')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to confirm new time', 'error')
+    }
+  }
+
+  const handleDeclineReschedule = async (id: string, message: string, sendEmail: boolean) => {
+    try {
+      await activitiesApi.declineReschedule(id, { message, send_email: sendEmail })
+      qc.invalidateQueries({ queryKey: ['activities-list'] })
+      setDetailTarget(null)
+      showToast(sendEmail ? 'Declined — client notified' : 'Declined')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to decline', 'error')
+    }
   }
 
   return (
@@ -740,7 +830,7 @@ export default function Activities() {
                       </div>
                     ) : <span style={{ color: 'var(--border)' }}>—</span>}
                   </td>
-                  <td><StatusBadge status={a.status} /></td>
+                  <td><StatusBadge status={displayActivityStatus(a)} /></td>
                   <td>{a.activity_type !== 'client_communication' && <RsvpBadge activity={a} />}</td>
                   <td style={{ textAlign: 'right' }}>
                     <ChevronRight size={14} color="var(--border)" />
@@ -779,6 +869,8 @@ export default function Activities() {
           onEdit={(a: any) => { setEditTarget(a); setDetailTarget(null) }}
           onCancel={(a: any) => { setCancelTarget(a); setDetailTarget(null) }}
           onStatusChange={handleStatusChange}
+          onConfirmReschedule={handleConfirmReschedule}
+          onDeclineReschedule={handleDeclineReschedule}
         />
       )}
 

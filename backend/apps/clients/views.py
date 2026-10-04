@@ -27,7 +27,8 @@ from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, Cl
 from .serializers import (ClientListSerializer, ClientDetailSerializer,
                           AssessmentSerializer, ClientGoalSerializer,
                           CommitmentSerializer, GoalProgressSerializer,
-                          ClientNoteSerializer, ClientMessageDraftSerializer)
+                          ClientNoteSerializer, ClientMessageDraftSerializer,
+                          CoachAvailabilityRuleSerializer)
 from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser, IsBusinessOwner, require_tab
 
 
@@ -577,13 +578,20 @@ class ClientNoteViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         client = self._get_client()
-        serializer.save(workspace=self.request.user.workspace,
+        note = serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)
         _log(self.request, client, "created_note")
+        if note.visible_to_client:
+            from tasks.email import send_note_shared_email
+            send_note_shared_email.delay(str(note.id))
 
     def perform_update(self, serializer):
+        was_visible = serializer.instance.visible_to_client
         instance = serializer.save()
         _log(self.request, instance.client, "updated_note")
+        if not was_visible and instance.visible_to_client:
+            from tasks.email import send_note_shared_email
+            send_note_shared_email.delay(str(instance.id))
 
     def perform_destroy(self, instance):
         _log(self.request, instance.client, "deleted_note")
@@ -1134,8 +1142,11 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         client = get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
-        serializer.save(workspace=self.request.user.workspace,
+        goal = serializer.save(workspace=self.request.user.workspace,
                         client=client, created_by=self.request.user)
+        if goal.visible_to_client:
+            from tasks.email import send_goal_shared_email
+            send_goal_shared_email.delay(str(goal.id))
 
     def perform_update(self, serializer):
         was_visible = serializer.instance.visible_to_client
@@ -1144,7 +1155,31 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
         # already-shared goal's title/date, or unsharing it, stays silent.
         if not was_visible and goal.visible_to_client:
             from tasks.email import send_goal_shared_email
-            send_goal_shared_email(str(goal.id))
+            send_goal_shared_email.delay(str(goal.id))
+
+
+# ── Coach Availability tab ───────────────────────────────────────────────────────
+# Weekly open-hours blocks the assigned coach offers THIS specific client — scoped
+# per (coach, client) pair, not shared across the coach's whole caseload (confirmed
+# product decision, not an oversight — see CoachAvailabilityRule's model docstring).
+class CoachAvailabilityRuleViewSet(viewsets.ModelViewSet):
+    serializer_class   = CoachAvailabilityRuleSerializer
+    permission_classes = [IsCoachOrAbove]
+
+    def get_queryset(self):
+        from apps.activities.models import CoachAvailabilityRule
+        return CoachAvailabilityRule.objects.filter(
+            workspace=self.request.user.workspace,
+            client_id=self.kwargs["client_pk"],
+            client__in=_client_qs(self.request),
+        )
+
+    def perform_create(self, serializer):
+        client = get_object_or_404(_client_qs(self.request), pk=self.kwargs["client_pk"])
+        # The assigned coach's own availability for this client — not whoever happens
+        # to be adding the rule (relevant when a business owner edits a coach's client).
+        coach = client.coach or self.request.user
+        serializer.save(workspace=self.request.user.workspace, client=client, coach=coach)
 
 
 # ── Email Communication tab ─────────────────────────────────────────────────────

@@ -17,6 +17,9 @@ note_router.register(r"", views.ClientNoteViewSet, basename="client-note")
 message_router = DefaultRouter()
 message_router.register(r"", views.ClientMessageDraftViewSet, basename="client-message-draft")
 
+availability_router = DefaultRouter()
+availability_router.register(r"", views.CoachAvailabilityRuleViewSet, basename="client-availability")
+
 urlpatterns = [
     path("email-log/",             views.email_log_sent),
     path("email-log/scheduled/",   views.email_log_scheduled),
@@ -26,4 +29,5 @@ urlpatterns = [
     path("<uuid:client_pk>/assessments/", include(assessment_router.urls)),
     path("<uuid:client_pk>/notes/",       include(note_router.urls)),
     path("<uuid:client_pk>/messages/",    include(message_router.urls)),
+    path("<uuid:client_pk>/availability/", include(availability_router.urls)),
 ]

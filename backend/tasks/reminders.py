@@ -100,3 +100,38 @@ def dispatch_activity_reminders():
 
     logger.info(f"dispatch_activity_reminders: {dispatched} tasks queued")
     return dispatched
+
+
+@shared_task(name="tasks.reminders.expire_stale_reschedule_requests")
+def expire_stale_reschedule_requests():
+    """Daily: auto-clear a pending client-proposed reschedule time
+    (Activity.requested_start_at) that's sat unconfirmed/undeclined past the owning
+    workspace's configured TTL (Workspace.reschedule_request_ttl_days, default 5,
+    blank = never expire — same "leave blank to never" convention already used for
+    PipelineStageConfig.alert_stop_after_days). Silent by design (calendar.md §7.2/§9.2
+    Task 5) — no email to the client, same as Decline. Ages off requested_at, not
+    updated_at, since the latter bumps on any unrelated edit to the activity and would
+    otherwise make a genuinely stale request look fresh forever.
+    """
+    from apps.activities.models import Activity
+
+    now = timezone.now()
+    expired = 0
+    pending = (
+        Activity.objects
+        .filter(requested_start_at__isnull=False, requested_at__isnull=False)
+        .select_related("workspace")
+    )
+    for activity in pending:
+        ttl_days = activity.workspace.reschedule_request_ttl_days
+        if ttl_days is None:
+            continue
+        if now - activity.requested_at >= timedelta(days=ttl_days):
+            Activity.objects.filter(pk=activity.pk).update(
+                requested_start_at=None, requested_at=None,
+            )
+            expired += 1
+            logger.info(f"Expired stale reschedule request for activity {activity.id} (TTL {ttl_days}d)")
+
+    logger.info(f"expire_stale_reschedule_requests: {expired} cleared")
+    return expired

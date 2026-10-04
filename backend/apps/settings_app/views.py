@@ -328,6 +328,24 @@ def activity_type_config_detail(request, pk):
     return Response(ser.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
+@api_view(["GET"])
+@permission_classes([IsWorkspaceMember])
+def email_use_cases(request):
+    """GET /api/settings/email-use-cases/ — every template-driven "notice" email
+    (tasks/email_notices.NOTICES): label, audience, built-in copy, and placeholders;
+    plus the starter content for every email (tasks/email_starters.STARTERS).
+    Settings → Generic Templates appends these to its own list, so the editor's
+    starting copy is always exactly what sends when nothing's been customized."""
+    from tasks.email_notices import NOTICES
+    from tasks.email_starters import STARTERS
+    return Response({
+        "notices": [{"key": key, **d} for key, d in NOTICES.items()],
+        # Starter content for every email except invoice / client communication — what
+        # an un-customized email sends and what the editor opens with.
+        "starters": STARTERS,
+    })
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsWorkspaceMember])
 def email_preview(request):
@@ -351,6 +369,8 @@ def email_preview(request):
                                    build_invoice_email, build_payment_receipt_email, build_portal_invite_email,
                                    build_client_communication_email, build_invite_email, build_pipeline_alert_email)
     from tasks.email import _logo_src, _owner_info, _resolve_generic_template
+    from tasks.email_html import build_cancellation_email
+    from tasks.email_notices import NOTICES, render_notice
 
     email_type = params.get("type", "confirmation")
     workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
@@ -385,6 +405,13 @@ def email_preview(request):
         # Pipeline alert placeholders
         stage_label="Proposal Sent", days_in_stage="9", follow_up_days="5",
         deal_value="$2,400", stage_entered="June 12, 2026",
+        # Notice placeholders (tasks/email_notices.py)
+        recipient_first_name="Mike", recipient_name="Coach Mike", session_date="Jun 5",
+        proposed_time="Thursday, June 6 at 2:00 PM", rsvp_verb="accepted",
+        message="Could we move this to Thursday afternoon instead?",
+        goal_title="Lead weekly team check-ins", target_date="August 30, 2026",
+        note_topic="Session Recap", document_title="Coaching Services Agreement",
+        signed_at="June 5, 2026 at 10:42 AM", portal_url="#",
     )
     if email_type == "client_communication":
         # Real client/coach name (not the generic Jane Smith / Coach Mike placeholders) —
@@ -471,17 +498,21 @@ def email_preview(request):
     # unconditionally before the invoice branch below ever runs, so a default set only
     # there (which used to be True here vs. False in the real send) was silently
     # overridden and never actually took effect.
-    raw_show_heading = params.get("show_heading")
-    if raw_show_heading is not None:
-        style["show_heading"] = raw_show_heading not in ("0", "false", "False")
-    else:
-        style["show_heading"] = saved_style.get("show_heading", False)
-
-    raw_show_signature = params.get("show_signature")
-    if raw_show_signature is not None:
-        style["show_signature"] = raw_show_signature not in ("0", "false", "False")
-    else:
-        style["show_signature"] = saved_style.get("show_signature", False)
+    # Invoice keeps its heading/sign-off off by default (see send_invoice_email); every
+    # other email shows them unless the template turns them off — matching what the
+    # real send paths (compose_body in tasks/email_html.py) do.
+    _block_default = email_type != "invoice"
+    for key in ("show_heading", "show_signature", "show_details", "show_actions", "show_calendar"):
+        raw = params.get(key)
+        if raw is not None:
+            style[key] = raw not in ("0", "false", "False")
+        else:
+            style[key] = saved_style.get(key, _block_default if key in ("show_heading", "show_signature") else True)
+    # Free-text overrides for the built-in heading / eyebrow / sign-off ('' = built-in).
+    for key in ("heading_text", "eyebrow_text", "signoff_text"):
+        v = params.get(key, saved_style.get(key, ""))
+        if v:
+            style[key] = v
 
     if email_type == "confirmation":
         # Allow callers (e.g. the Schedule Activity preview) to pass the real client/
@@ -501,7 +532,9 @@ def email_preview(request):
             coach_name=_preview_coach_name, coach_email="",
             dt_human=_preview_session_time,
             owner_email=owner_email, owner_name=owner_name,
-            google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
+            google_cal_url="#", custom_intro=custom_intro, custom_closing=custom_closing,
+            # Sample links so the preview shows the response buttons every real send has.
+            confirm_url="#", cancel_url="#", reschedule_url="#",
             style=style,
         )
 
@@ -516,7 +549,8 @@ def email_preview(request):
             coach_name="Coach Mike", coach_email="",
             dt_human="Wednesday, June 5 at 10:00 AM",
             owner_email=owner_email, owner_name=owner_name,
-            google_cal_url="", custom_intro=custom_intro, custom_closing=custom_closing,
+            google_cal_url="#", custom_intro=custom_intro, custom_closing=custom_closing,
+            cancel_url="#", reschedule_url="#",
             style=style,
         )
 
@@ -534,6 +568,7 @@ def email_preview(request):
             time_label=time_label,
             owner_email=owner_email, owner_name=owner_name,
             custom_intro=custom_intro, custom_closing=custom_closing,
+            cancel_url="#", reschedule_url="#",
             style=style,
         )
 
@@ -709,6 +744,42 @@ def email_preview(request):
             pipeline_url=f"{frontend_url}/pipeline",
             custom_intro=custom_intro, custom_closing=custom_closing,
             style=style,
+        )
+
+    elif email_type == "cancellation":
+        client   = SimpleNamespace(first_name="Jane", full_name="Jane Smith", email="jane@example.com")
+        activity = SimpleNamespace(title="Discovery Session", activity_type="session",
+                                   location="123 Main St", client=client)
+        html = build_cancellation_email(
+            activity=activity, workspace_name=workspace.name, logo_url=logo_url,
+            coach_name="Coach Mike", coach_email="", dt_human="Wednesday, June 5 at 10:00 AM",
+            owner_email=owner_email, owner_name=owner_name,
+            custom_intro=custom_intro, custom_closing=custom_closing, style=style,
+        )
+
+    elif email_type in NOTICES:
+        values = dict(DUMMY)
+        sample_rows = {
+            "goal_shared":     [("Goal", values["goal_title"]), ("Target date", values["target_date"])],
+            "note_shared":     [("Topic", values["note_topic"]), ("Session date", "June 5, 2026")],
+            "payment_failed":  [("Invoice", "#INV-0042"), ("Amount", "$150.00"), ("Client", "Jane Smith")],
+            "contract_signed": [("Document", values["document_title"]), ("Client", "Jane Smith"), ("Signed", values["signed_at"])],
+            "decline_reschedule": [],
+            "reschedule_request": [("What", "Discovery Session"), ("Current", values["session_time"]),
+                                   ("Proposed", values["proposed_time"]), ("Message", values["message"])],
+            "reschedule_ack":  [("What", "Discovery Session"), ("Current", values["session_time"]),
+                                ("Proposed", values["proposed_time"])],
+        }.get(email_type, [("What", "Discovery Session"), ("When", values["session_time"]),
+                           ("Where", "123 Main St"), ("Client", "Jane Smith (jane@example.com)")])
+        cta = None if NOTICES[email_type]["audience"] == "client" and email_type not in ("goal_shared", "note_shared") \
+            else ("Open in CoachOS" if NOTICES[email_type]["audience"] == "coach" else "View in your portal", "#")
+        _, html, _ = render_notice(
+            workspace, email_type, values, rows=sample_rows, cta=cta, logo_url=logo_url,
+            owner_email=owner_email, owner_name=owner_name,
+            tmpl=dict(subject=params.get("subject", tmpl.get("subject", "")),
+                      intro=raw_intro or NOTICES[email_type]["intro"],
+                      closing=raw_closing if ("closing" in params or tmpl) else NOTICES[email_type]["closing"],
+                      style=style),
         )
 
     else:

@@ -6,6 +6,7 @@ urlpatterns = [
     path("login/",                                   views.PortalLoginView.as_view(),          name="portal-login"),
     path("me/",                                      views.PortalMeView.as_view(),             name="portal-me"),
     path("goals/",                                   views.PortalGoalsView.as_view(),          name="portal-goals"),
+    path("goals/<uuid:goal_id>/",                    views.PortalGoalDetailView.as_view(),     name="portal-goal-detail"),
     path("goals/<uuid:goal_id>/progress/",           views.PortalProgressView.as_view(),       name="portal-progress"),
     path("materials/",                               views.PortalMaterialsView.as_view(),      name="portal-materials"),
     path("materials/<uuid:material_id>/view-config/", views.PortalMaterialViewConfigView.as_view(), name="portal-material-view-config"),

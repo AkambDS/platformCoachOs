@@ -1,7 +1,7 @@
 import { useEffect, useRef, useCallback } from 'react'
 
-const WARN_MS   = 15 * 60 * 1000  // 15 minutes → show warning
-const LOGOUT_MS = 30 * 60 * 1000  // 30 minutes → auto logout
+const DEFAULT_WARN_MS   = 15 * 60 * 1000  // 15 minutes → show warning
+const DEFAULT_LOGOUT_MS = 30 * 60 * 1000  // 30 minutes → auto logout
 
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click']
 
@@ -9,10 +9,16 @@ export function useInactivityTimer({
   enabled,
   onWarn,
   onLogout,
+  warnMs   = DEFAULT_WARN_MS,
+  logoutMs = DEFAULT_LOGOUT_MS,
 }: {
   enabled: boolean
   onWarn: () => void
   onLogout: () => void
+  // Overridable per caller — e.g. the client portal uses a longer window than the
+  // coach app's default 15/30 min (see ClientPortal.tsx for why).
+  warnMs?: number
+  logoutMs?: number
 }) {
   const warnTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
   const logoutTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -30,9 +36,9 @@ export function useInactivityTimer({
     warnTimer.current = setTimeout(() => {
       warned.current = true
       onWarn()
-      logoutTimer.current = setTimeout(onLogout, LOGOUT_MS - WARN_MS)
-    }, WARN_MS)
-  }, [enabled, clear, onWarn, onLogout])
+      logoutTimer.current = setTimeout(onLogout, logoutMs - warnMs)
+    }, warnMs)
+  }, [enabled, clear, onWarn, onLogout, warnMs, logoutMs])
 
   // Call from warning modal "Stay logged in" button
   const stayActive = useCallback(() => {

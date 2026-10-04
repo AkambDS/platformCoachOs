@@ -77,6 +77,15 @@ def _resolve_generic_template(workspace, use_case: str) -> dict:
                 "style":         tmpl.get("style", {}),
                 "attachments":   tmpl.get("attachments", []),
             }
+    # Nothing assigned in Settings → the starter (tasks/email_starters.py) — exactly what
+    # Settings shows as "Built-in" and what its editor opens with. The legacy per-use-case
+    # dict is only still consulted for use cases without a starter (invoice, client
+    # communication); for everything else it held content the Settings UI never showed,
+    # which made "Built-in" in Settings and the email actually sent disagree.
+    from tasks.email_starters import starter_for
+    starter = starter_for(use_case)
+    if starter:
+        return starter
     return (workspace.email_templates or {}).get(use_case, {})
 
 
@@ -188,6 +197,41 @@ def _format_address(addr: dict) -> str:
     street = " ".join(p for p in (addr.get("street", ""), addr.get("street2", "")) if p)
     city_state_zip = ", ".join(p for p in (addr.get("city", ""), " ".join(p for p in (addr.get("state", ""), addr.get("zip", "")) if p)) if p)
     return ", ".join(p for p in (street, city_state_zip) if p)
+
+
+def _session_notice_values(activity, dt: str, recipient_first: str = "", recipient_full: str = "") -> dict:
+    """Placeholder values shared by every session-related notice (tasks/email_notices.py)."""
+    client = activity.client
+    coach_name = activity.coach.full_name if activity.coach else activity.workspace.name
+    return dict(
+        client_name=client.full_name, client_first_name=client.first_name,
+        client_email=client.email or "", coach_name=coach_name,
+        workspace_name=activity.workspace.name,
+        session_title=activity.title, session_time=dt,
+        recipient_first_name=recipient_first or recipient_full or coach_name,
+        recipient_name=recipient_full or recipient_first or coach_name,
+    )
+
+
+def _session_notice_rows(activity, dt: str, when_label: str = "When", include_client: bool = True) -> list:
+    client = activity.client
+    rows = [("What", activity.title), (when_label, dt), ("Where", activity.location or "")]
+    if include_client:
+        rows.append(("Client", f"{client.full_name}{f' ({client.email})' if client.email else ''}"))
+    return rows
+
+
+def _template_plain(intro: str, closing: str, links: list = None) -> str:
+    """Plain-text alternative built from the same message/closing text as the HTML
+    (so the two never say different things), plus any action links as "Label: url"."""
+    def clean(t):
+        t = re.sub(r"<br\s*/?>", "\n", t or "", flags=re.IGNORECASE)
+        return re.sub(r"<[^>]+>", "", t).strip()
+    parts = [clean(intro)]
+    if links:
+        parts.append("\n".join(f"{label}: {url}" for label, url in links if url))
+    parts.append(clean(closing))
+    return "\n\n".join(p for p in parts if p)
 
 
 class _PartialFormatMap(dict):
@@ -664,14 +708,7 @@ def send_activity_confirmation_email(activity_id: str):
         cancel_url      = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
         reschedule_url  = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour {activity.activity_type} has been scheduled.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A calendar invite (.ics) is attached — open it to add this session to your calendar.\n\n"
-            f"Confirm attendance: {confirm_url}\n"
-            f"Request reschedule: {reschedule_url}\n"
-            f"Cancel session:     {cancel_url}\n\n— {workspace.name}"
-        )
+        plain = _template_plain(custom_intro, custom_closing, [("Confirm attendance", confirm_url), ("Request reschedule", reschedule_url), ("Cancel session", cancel_url)])
         saved_style      = tmpl.get("style", {})
         from_email_addr  = _workspace_from_email(workspace)
 
@@ -739,29 +776,15 @@ def send_activity_confirmation_email(activity_id: str):
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
-            frontend_url  = getattr(settings, "FRONTEND_URL", "").rstrip("/")
-            coach_subject = f"Session booked: {activity.title} with {client.full_name}"
-            coach_first   = activity.coach.first_name if activity.coach else coach_name
-            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
-            coach_plain   = (
-                f"Hi {coach_first},\n\n"
-                f"A session has been scheduled with your client {client.full_name}.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  When:   {dt}"
-                f"{loc_note}\n"
-                f"  Client: {client.full_name}"
-                f"{f' ({client.email})' if client.email else ''}\n\n"
-                f"View in CoachOS: {frontend_url}/clients/{client.id}\n\n"
-                f"— {workspace.name}"
+            from tasks.email_notices import send_notice, app_url
+            coach = activity.coach
+            send_notice(
+                workspace, "coach_session_booked", [coach_email],
+                _session_notice_values(activity, dt, coach.first_name if coach else "", coach.full_name if coach else ""),
+                rows=_session_notice_rows(activity, dt),
+                cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
+                attachments=[("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")],
             )
-            coach_msg = EmailMultiAlternatives(
-                subject=coach_subject,
-                body=coach_plain,
-                from_email=_workspace_from_email(workspace),
-                to=[coach_email],
-            )
-            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
-            coach_msg.send()
             logger.info(f"Coach copy sent to {coach_email} for activity {activity_id}")
 
         from django.utils import timezone
@@ -822,13 +845,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
         cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
         reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        plain = (
-            f"Hi {client.first_name},\n\nThis is a reminder that you have a "
-            f"{activity.activity_type} in {time_label}.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"Cancel session:     {cancel_url}\n"
-            f"Request reschedule: {reschedule_url}\n\n— {workspace.name}"
-        )
+        plain = _template_plain(custom_intro, custom_closing, [("Request reschedule", reschedule_url), ("Cancel session", cancel_url)])
         saved_style      = tmpl.get("style", {})
         from_email_addr  = _workspace_from_email(workspace)
 
@@ -893,26 +910,15 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
-            coach_first   = activity.coach.first_name if activity.coach else coach_name
-            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
-            coach_subject = f"Reminder: {activity.title} with {client.full_name} in {time_label}"
-            coach_plain   = (
-                f"Hi {coach_first},\n\n"
-                f"Reminder: you have a session with {client.full_name} in {time_label}.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  When:   {dt}"
-                f"{loc_note}\n"
-                f"  Client: {client.full_name}"
-                f"{f' ({client.email})' if client.email else ''}\n\n"
-                f"— {workspace.name}"
+            from tasks.email_notices import send_notice, app_url
+            coach = activity.coach
+            values = _session_notice_values(activity, dt, coach.first_name if coach else "", coach.full_name if coach else "")
+            values["time_label"] = time_label
+            send_notice(
+                workspace, "coach_session_reminder", [coach_email], values,
+                rows=_session_notice_rows(activity, dt),
+                cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
             )
-            coach_msg = EmailMultiAlternatives(
-                subject=coach_subject,
-                body=coach_plain,
-                from_email=_workspace_from_email(workspace),
-                to=[coach_email],
-            )
-            coach_msg.send()
             logger.info(f"Coach reminder copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
@@ -956,14 +962,7 @@ def send_activity_reschedule_email(activity_id: str):
         cancel_url     = f"{backend_url}/session/cancel/{make_session_token('cancel', str(activity.id))}/"
         reschedule_url = f"{backend_url}/session/reschedule/{make_session_token('reschedule', str(activity.id))}/"
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour session has been updated.\n\n"
-            f"  What:   {activity.title}\n  When:   {dt}{location_line}\n  Coach:  {coach_name}\n\n"
-            f"A new calendar invite is attached. Open it to update your calendar.\n\n"
-            f"Request reschedule: {reschedule_url}\n"
-            f"Cancel session:     {cancel_url}\n\n"
-            f"— {workspace.name}"
-            )
+        plain = _template_plain(custom_intro, custom_closing, [("Request reschedule", reschedule_url), ("Cancel session", cancel_url)])
         saved_style     = tmpl.get("style", {})
         _show_logo      = tmpl.get("show_logo", True)
         _eff_logo_url   = _logo_src(workspace) if _show_logo else ""
@@ -1029,28 +1028,15 @@ def send_activity_reschedule_email(activity_id: str):
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
-            coach_first   = activity.coach.first_name if activity.coach else coach_name
-            loc_note      = f"\n  Where:  {activity.location}" if activity.location else ""
-            coach_subject = f"Session updated: {activity.title} with {client.full_name}"
-            coach_plain   = (
-                f"Hi {coach_first},\n\n"
-                f"The following session with {client.full_name} has been rescheduled "
-                f"and the client has been notified.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  When:   {dt}"
-                f"{loc_note}\n"
-                f"  Client: {client.full_name}"
-                f"{f' ({client.email})' if client.email else ''}\n\n"
-                f"— {workspace.name}"
+            from tasks.email_notices import send_notice, app_url
+            coach = activity.coach
+            send_notice(
+                workspace, "coach_session_updated", [coach_email],
+                _session_notice_values(activity, dt, coach.first_name if coach else "", coach.full_name if coach else ""),
+                rows=_session_notice_rows(activity, dt),
+                cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
+                attachments=[("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")],
             )
-            coach_msg = EmailMultiAlternatives(
-                subject=coach_subject,
-                body=coach_plain,
-                from_email=_workspace_from_email(workspace),
-                to=[coach_email],
-            )
-            coach_msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
-            coach_msg.send()
             logger.info(f"Coach reschedule copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reschedule_email failed: {e}")
@@ -1074,23 +1060,31 @@ def send_activity_cancellation_email(activity_id: str):
         owner_email, owner_name = _owner_info(workspace)
         ics_bytes   = _build_ics(activity, method="CANCEL", cancelled=True)
 
-        plain = (
-            f"Hi {client.first_name},\n\nYour upcoming {activity.activity_type} has been cancelled.\n\n"
-            f"  What:   {activity.title}\n  Was:    {dt}\n  Coach:  {coach_name}\n\n"
-            f"Please contact {coach_name} to reschedule.\n\n— {workspace.name}"
-        )
+        from tasks.email_notices import resolve_notice_template, send_notice, app_url
+        tmpl      = resolve_notice_template(workspace, "cancellation")
+        tmpl_vars = _session_notice_values(activity, dt)
+        tmpl_vars.update(client_address=_format_address(client.primary_address),
+                         session_date=activity.start_at.strftime("%b %d").replace(" 0", " "))
+        custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
+        custom_closing = _apply_tmpl(tmpl.get("closing", ""), **tmpl_vars)
+        subject        = _apply_tmpl(tmpl.get("subject", ""), **tmpl_vars)
+
+        plain = _template_plain(custom_intro, custom_closing)
         html = build_cancellation_email(
             activity=activity,
             workspace_name=workspace.name,
-            logo_url=_logo_src(workspace),
+            logo_url=_logo_src(workspace) if tmpl.get("show_logo", True) else "",
             coach_name=coach_name,
             coach_email=coach_email,
             dt_human=dt,
             owner_email=owner_email,
             owner_name=owner_name,
+            custom_intro=custom_intro,
+            custom_closing=custom_closing,
+            style=tmpl.get("style", {}),
         )
         msg = EmailMultiAlternatives(
-            subject=f"Cancelled: {activity.title} on {activity.start_at.strftime('%b %d').replace(' 0', ' ')}",
+            subject=subject,
             body=plain,
             from_email=_workspace_from_email(workspace),
             to=[client.email],
@@ -1101,31 +1095,21 @@ def send_activity_cancellation_email(activity_id: str):
 
         from apps.clients.models import EmailLog
         EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_CANCELLATION,
-                     client=client, subject=f"Cancelled: {activity.title}", recipient_email=client.email,
+                     client=client, subject=subject, recipient_email=client.email,
                      related_id=activity_id, body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         notify_email = coach_email or owner_email
-        notify_name  = (activity.coach.first_name if activity.coach else None) or owner_name or workspace.name
         if notify_email:
-            coach_plain = (
-                f"Hi {notify_name},\n\n"
-                f"The following session with {client.full_name} has been cancelled "
-                f"and the client has been notified.\n\n"
-                f"  What:   {activity.title}\n"
-                f"  Was:    {dt}\n"
-                f"  Client: {client.full_name}"
-                f"{f' ({client.email})' if client.email else ''}\n\n"
-                f"— {workspace.name}"
+            coach = activity.coach
+            send_notice(
+                workspace, "coach_session_cancelled", [notify_email],
+                _session_notice_values(activity, dt, (coach.first_name if coach else "") or owner_name,
+                                       (coach.full_name if coach else "") or owner_name),
+                rows=_session_notice_rows(activity, dt, when_label="Was"),
+                cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
+                attachments=[("cancel.ics", ics_bytes, "text/calendar")],
             )
-            coach_msg = EmailMultiAlternatives(
-                subject=f"Session cancelled: {activity.title} with {client.full_name}",
-                body=coach_plain,
-                from_email=_workspace_from_email(workspace),
-                to=[notify_email],
-            )
-            coach_msg.attach("cancel.ics", ics_bytes, "text/calendar")
-            coach_msg.send()
             logger.info(f"Coach cancellation copy sent to {notify_email} for activity {activity_id}")
 
         from django.utils import timezone
@@ -1318,6 +1302,7 @@ def send_payment_receipt_email(invoice_id: str):
         workspace = invoice.workspace
         owner_email, owner_name = _owner_info(workspace)
 
+        from django.utils import timezone
         last_payment = invoice.payments.order_by("-paid_at").first()
         payment_date = (last_payment.paid_at if last_payment else timezone.now()).strftime("%B %d, %Y")
         amount_paid  = f"{invoice.amount_paid:,.2f}"
@@ -1351,11 +1336,7 @@ def send_payment_receipt_email(invoice_id: str):
                 style=tmpl.get("style", {}),
             )
 
-        plain = (
-            f"Hi {invoice.client.first_name},\n\n"
-            f"Thank you — payment of ${amount_paid} for invoice #{invoice.number} has been received.\n\n"
-            f"— {workspace.name}"
-        )
+        plain = _template_plain(custom_intro, custom_closing)
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain,
@@ -1383,18 +1364,21 @@ def send_payment_receipt_email(invoice_id: str):
 @shared_task(name="tasks.email.send_payment_failed_email")
 def send_payment_failed_email(invoice_id: str):
     from apps.invoicing.models import Invoice
+    from tasks.email_notices import send_notice, app_url
     try:
         invoice = Invoice.objects.select_related("client", "coach", "workspace").get(id=invoice_id)
-        msg = EmailMessage(
-            subject=f"Payment failed — Invoice #{invoice.number}",
-            body=(
-                f"Payment failed for invoice #{invoice.number} (${invoice.total}) "
-                f"for {invoice.client.full_name}."
-            ),
-            from_email=_workspace_from_email(invoice.workspace),
-            to=[invoice.coach.email],
+        if not invoice.coach or not invoice.coach.email:
+            return
+        client = invoice.client
+        send_notice(
+            invoice.workspace, "payment_failed", [invoice.coach.email],
+            dict(recipient_first_name=invoice.coach.first_name or invoice.coach.full_name,
+                 recipient_name=invoice.coach.full_name,
+                 client_name=client.full_name, client_first_name=client.first_name,
+                 invoice_number=invoice.number, amount=str(invoice.total)),
+            rows=[("Invoice", f"#{invoice.number}"), ("Amount", f"${invoice.total}"), ("Client", client.full_name)],
+            cta=("Open invoice", app_url(f"/invoices/{invoice.id}")),
         )
-        msg.send()
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
 
@@ -1530,12 +1514,11 @@ def send_feedback_status_email(ticket_id: str):
         logger.error(f"send_feedback_status_email failed: {e}")
 
 
-def send_pipeline_alert(deal_id: str, notify_client: bool = False):
-    """Send a styled HTML pipeline follow-up alert to the business owner (and optionally
-    the client). notify_client is decided by the caller (tasks.pipeline.dispatch_pipeline_alerts),
-    not recomputed here — it already factors in PipelineStageConfig.notify_client AND the
-    independent client_alert_max_count cap, which this function has no way to check on
-    its own (that requires comparing against Deal.client_alert_count, tracked by the caller)."""
+def send_pipeline_alert(deal_id: str, recipient: str = "owner") -> bool:
+    """Send the internal pipeline follow-up alert ("pipeline" template) to the workspace
+    owner (recipient="owner") or the deal's assigned coach (recipient="coach"). Who and
+    how often is decided by tasks.pipeline.dispatch_pipeline_alerts. The client never
+    gets this one — they get send_pipeline_client_checkin instead. Returns True if sent."""
     from apps.pipeline.models import Deal, PipelineStageConfig
     from django.utils import timezone as dj_tz
     from django.core.mail import EmailMultiAlternatives
@@ -1545,13 +1528,20 @@ def send_pipeline_alert(deal_id: str, notify_client: bool = False):
         workspace = deal.workspace
         client    = deal.client
         owner_email, owner_name = _owner_info(workspace)
-        if not owner_email:
-            return
+        if recipient == "coach":
+            if not deal.coach or not deal.coach.email:
+                return False
+            # {owner_name} in the template is the greeting name — the coach's, here.
+            to_email, owner_name = deal.coach.email, deal.coach.full_name
+        else:
+            to_email = owner_email
+        if not to_email:
+            return False
 
         try:
             cfg = PipelineStageConfig.objects.get(workspace=workspace, slug=deal.stage)
         except PipelineStageConfig.DoesNotExist:
-            return
+            return False
 
         stage_label   = cfg.label
         stage_color   = cfg.color or "#1a2f4e"
@@ -1576,7 +1566,7 @@ def send_pipeline_alert(deal_id: str, notify_client: bool = False):
             f"Follow-up needed: {client_name} — {stage_label} ({days_in_stage} days)"
         )
 
-        plain_body = (
+        plain_body = _template_plain(custom_intro, custom_closing, [("View your pipeline", pipeline_url)]) if custom_intro else (
             f"Hi {owner_name},\n\n"
             f"{client_name}'s deal has been in '{stage_label}' for {days_in_stage} days "
             f"(threshold: {cfg.follow_up_days} days).\n\n"
@@ -1634,195 +1624,168 @@ def send_pipeline_alert(deal_id: str, notify_client: bool = False):
                 style=saved_style,
             )
 
-        recipients = [owner_email]
-        if notify_client and client.email:
-            recipients.append(client.email)
-
         msg = EmailMultiAlternatives(
             subject=subject,
             body=plain_body,
             from_email=_workspace_from_email(workspace),
-            to=recipients,
+            to=[to_email],
         )
         msg.attach_alternative(html_body, "text/html")
         msg.send()
-        logger.info(f"Pipeline alert sent for deal {deal_id} ({stage_label})")
+        logger.info(f"Pipeline alert sent to {recipient} for deal {deal_id} ({stage_label})")
+        return True
     except Exception as e:
         logger.error(f"send_pipeline_alert failed for deal {deal_id}: {e}")
+        return False
+
+
+def send_pipeline_client_checkin(deal_id: str) -> bool:
+    """The client-facing follow-up for a deal that's been sitting in a stage — a friendly
+    check-in ("pipeline_client" template, Settings → Emails), never the internal alert.
+    Replies go to the deal's coach (or the owner)."""
+    from apps.pipeline.models import Deal
+    from tasks.email_notices import send_notice
+    try:
+        deal = Deal.objects.select_related("workspace", "client", "coach").get(id=deal_id)
+        client, workspace = deal.client, deal.workspace
+        if not client.email:
+            return False
+        owner_email, owner_name = _owner_info(workspace)
+        coach = deal.coach or client.coach
+        send_notice(
+            workspace, "pipeline_client", [client.email],
+            dict(client_name=client.full_name, client_first_name=client.first_name,
+                 coach_name=coach.full_name if coach else (owner_name or workspace.name)),
+            reply_to=[(coach.email if coach else "") or owner_email],
+        )
+        logger.info(f"Pipeline client check-in sent for deal {deal_id}")
+        return True
+    except Exception as e:
+        logger.error(f"send_pipeline_client_checkin failed for deal {deal_id}: {e}")
+        return False
 
 
 # ── Client session action notifications ────────────────────────────────────────
+# All template-driven via tasks/email_notices.py (Settings → Generic Templates).
 
-def send_client_confirmation_notice(activity_id: str):
-    """Email the coach when a client confirms attendance via their email link."""
+def _coach_notice(activity_id: str, key: str, task_name: str, extra_values: dict = None):
+    """Shared body for the "client did X" notices to the session's coach."""
     from apps.activities.models import Activity
+    from tasks.email_notices import send_notice, app_url
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         coach = activity.coach
         if not coach or not coach.email:
             return
-        workspace   = activity.workspace
-        client_name = activity.client.full_name
-        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
-        subject = f"{client_name} confirmed attendance"
-        body = (
-            f"Hi {coach.first_name or coach.full_name},\n\n"
-            f"{client_name} has confirmed their attendance for:\n\n"
-            f"  What:  {activity.title}\n"
-            f"  When:  {dt}\n\n"
-            f"The session is marked as confirmed in CoachOS.\n\n"
-            f"— {workspace.name}"
-        )
-        EmailMultiAlternatives(
-            subject=subject, body=body,
-            from_email=_workspace_from_email(workspace), to=[coach.email],
-        ).send()
-        logger.info(f"Client confirmation notice sent to coach {coach.email} for activity {activity_id}")
+        workspace = activity.workspace
+        dt = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        values = _session_notice_values(activity, dt, coach.first_name, coach.full_name)
+        values.update(extra_values or {})
+        send_notice(workspace, key, [coach.email], values,
+                    rows=_session_notice_rows(activity, dt, include_client=False),
+                    cta=("Open in CoachOS", app_url(f"/clients/{activity.client_id}")))
+        logger.info(f"{key} sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
-        logger.error(f"send_client_confirmation_notice failed: {e}")
-        _report_send_failure("send_client_confirmation_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
+        logger.error(f"{task_name} failed: {e}")
+        _report_send_failure(task_name, e, workspace=locals().get("workspace"), activity_id=activity_id)
+
+
+def send_client_confirmation_notice(activity_id: str):
+    """Email the coach when a client confirms attendance via their email link."""
+    _coach_notice(activity_id, "client_confirmed_notice", "send_client_confirmation_notice")
 
 
 @shared_task(name="tasks.email.send_client_cancellation_notice")
 def send_client_cancellation_notice(activity_id: str):
     """Email the coach when a client cancels via their email link."""
-    from apps.activities.models import Activity
-    try:
-        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
-        coach = activity.coach
-        if not coach or not coach.email:
-            return
-
-        workspace   = activity.workspace
-        client_name = activity.client.full_name
-        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
-
-        subject = f"Session cancelled by {client_name}"
-        body    = (
-            f"Hi {coach.first_name or coach.full_name},\n\n"
-            f"{client_name} has cancelled their session:\n\n"
-            f"  What:  {activity.title}\n"
-            f"  When:  {dt}\n\n"
-            f"The session has been marked as cancelled in CoachOS.\n\n"
-            f"— {workspace.name}"
-        )
-        msg = EmailMultiAlternatives(
-            subject=subject,
-            body=body,
-            from_email=_workspace_from_email(workspace),
-            to=[coach.email],
-        )
-        msg.send()
-        logger.info(f"Client cancellation notice sent to coach {coach.email} for activity {activity_id}")
-    except Exception as e:
-        logger.error(f"send_client_cancellation_notice failed: {e}")
-        _report_send_failure("send_client_cancellation_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
+    _coach_notice(activity_id, "client_cancelled_notice", "send_client_cancellation_notice")
 
 
 @shared_task(name="tasks.email.send_client_rsvp_notice")
 def send_client_rsvp_notice(activity_id: str, response_status: str):
     """Email the coach when a client accepts/declines/tentatively-RSVPs the Google Calendar invite."""
-    from apps.activities.models import Activity
-    try:
-        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
-        coach = activity.coach
-        if not coach or not coach.email:
-            return
-
-        workspace   = activity.workspace
-        client_name = activity.client.full_name
-        dt          = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
-        verb = {"accepted": "accepted", "declined": "declined", "tentative": "tentatively accepted"}.get(
-            response_status, response_status
-        )
-
-        subject = f"{client_name} {verb} the calendar invite"
-        body    = (
-            f"Hi {coach.first_name or coach.full_name},\n\n"
-            f"{client_name} has {verb} the calendar invite for:\n\n"
-            f"  What:  {activity.title}\n"
-            f"  When:  {dt}\n\n"
-            f"— {workspace.name}"
-        )
-        EmailMultiAlternatives(
-            subject=subject, body=body,
-            from_email=_workspace_from_email(workspace), to=[coach.email],
-        ).send()
-        logger.info(f"RSVP notice ({response_status}) sent to coach {coach.email} for activity {activity_id}")
-    except Exception as e:
-        logger.error(f"send_client_rsvp_notice failed: {e}")
-        _report_send_failure("send_client_rsvp_notice", e, workspace=locals().get("workspace"), activity_id=activity_id)
+    verb = {"accepted": "accepted", "declined": "declined", "tentative": "tentatively accepted"}.get(
+        response_status, response_status
+    )
+    _coach_notice(activity_id, "client_rsvp_notice", "send_client_rsvp_notice", {"rsvp_verb": verb})
 
 
 @shared_task(name="tasks.email.send_client_reschedule_request")
 def send_client_reschedule_request(activity_id: str, message: str = ""):
     """Email the coach (and business owner as fallback) when a client requests a reschedule."""
     from apps.activities.models import Activity
+    from tasks.email_notices import send_notice, app_url
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
         workspace    = activity.workspace
-        client_name  = activity.client.full_name
         client_email = activity.client.email or ""
-        dt           = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        tz_name      = getattr(workspace, "workspace_timezone", "")
+        dt           = _fmt_dt_human(activity.start_at, tz_name)
+        requested_dt = _fmt_dt_human(activity.requested_start_at, tz_name) if activity.requested_start_at else ""
 
         # Notify assigned coach; fall back to business owner
         coach = activity.coach
         if coach and coach.email:
-            recipient_email = coach.email
-            recipient_name  = coach.first_name or coach.full_name
+            recipient_email, recipient_first, recipient_full = coach.email, coach.first_name, coach.full_name
         else:
             owner_email, owner_name = _owner_info(workspace)
             if not owner_email:
                 logger.warning(f"No recipient for reschedule notice on activity {activity_id}")
                 return
-            recipient_email = owner_email
-            recipient_name  = owner_name or workspace.name
+            recipient_email, recipient_first, recipient_full = owner_email, "", owner_name or workspace.name
 
-        subject = f"Reschedule request from {client_name}"
-        note    = f"\nClient's message:\n  {message}\n" if message else ""
-        body    = (
-            f"Hi {recipient_name},\n\n"
-            f"{client_name} has requested to reschedule their session:\n\n"
-            f"  What:  {activity.title}\n"
-            f"  When:  {dt}\n"
-            f"{note}\n"
-            f"Please reply to {client_email} or update the session in CoachOS.\n\n"
-            f"— {workspace.name}"
+        values = _session_notice_values(activity, dt, recipient_first, recipient_full)
+        values.update(proposed_time=requested_dt or "No specific time proposed", message=message or "")
+        send_notice(
+            workspace, "reschedule_request", [recipient_email], values,
+            rows=_session_notice_rows(activity, dt, when_label="Current", include_client=False)
+                 + [("Proposed", requested_dt), ("Message", message)],
+            cta=("Review in CoachOS", app_url(f"/clients/{activity.client_id}")),
+            reply_to=[client_email],
         )
-        msg = EmailMultiAlternatives(
-            subject=subject,
-            body=body,
-            from_email=_workspace_from_email(workspace),
-            to=[recipient_email],
-            reply_to=[client_email] if client_email else [],
-        )
-        msg.send()
         logger.info(f"Reschedule request sent to {recipient_email} for activity {activity_id}")
 
         # ── Acknowledge to client ───────────────────────────────────────────────
         if client_email:
-            coach_display = (coach.full_name if coach else workspace.name)
-            ack_subject   = f"Reschedule request received — {activity.title}"
-            ack_body      = (
-                f"Hi {activity.client.first_name or client_name},\n\n"
-                f"Your reschedule request has been received and forwarded to {coach_display}.\n\n"
-                f"  What:  {activity.title}\n"
-                f"  When:  {dt}\n\n"
-                f"They will reach out to confirm a new time. "
-                f"If you need to follow up, you can reply to this email.\n\n"
-                f"— {workspace.name}"
-            )
-            ack_msg = EmailMultiAlternatives(
-                subject=ack_subject,
-                body=ack_body,
-                from_email=_workspace_from_email(workspace),
-                to=[client_email],
+            send_notice(
+                workspace, "reschedule_ack", [client_email], values,
+                rows=[("What", activity.title), ("Current", dt), ("Proposed", requested_dt)],
                 reply_to=[recipient_email],
             )
-            ack_msg.send()
             logger.info(f"Reschedule acknowledgement sent to {client_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_reschedule_request failed: {e}")
+
+
+@shared_task(name="tasks.email.send_decline_reschedule_email")
+def send_decline_reschedule_email(activity_id: str, message: str):
+    """Email the client the coach's own message when declining their proposed time
+    (apps.activities.views.ActivityViewSet.decline_reschedule — calendar.md §7.3/§9.2
+    Task 4). Only ever fires when the coach has written something themselves and
+    explicitly opted into sending it — the view never calls this with an empty message
+    or without that opt-in. The coach's text fills {message} in the "decline_reschedule"
+    template, so the wrapper around it (greeting, sign-off, branding) is editable too."""
+    from apps.activities.models import Activity
+    from apps.clients.models import EmailLog
+    from tasks.email_notices import send_notice
+    try:
+        activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
+        client = activity.client
+        if not client.email:
+            return
+
+        workspace = activity.workspace
+        dt        = _fmt_dt_human(activity.start_at, getattr(workspace, "workspace_timezone", ""))
+        values    = _session_notice_values(activity, dt)
+        values["message"] = message
+        send_notice(
+            workspace, "decline_reschedule", [client.email], values,
+            reply_to=[activity.coach.email] if activity.coach and activity.coach.email else [],
+            log=dict(category=EmailLog.Category.CLIENT_MESSAGE, client=client, related_id=activity_id),
+        )
+        logger.info(f"Decline message sent to {client.email} for activity {activity_id}")
+    except Exception as e:
+        logger.error(f"send_decline_reschedule_email failed: {e}")
 
 
 # ── Portal invite ──────────────────────────────────────────────────────────────
@@ -2049,6 +2012,7 @@ def send_contract_signed_notice(draft_id: str):
     apps.clients.public_views.ContractSignView.post right after the signature is
     captured — mirrors the pattern used for session confirm/cancel notices."""
     from apps.clients.models import ClientMessageDraft
+    from tasks.email_notices import send_notice, app_url
     try:
         draft = ClientMessageDraft.objects.select_related("client", "client__coach", "workspace").get(id=draft_id)
         client, workspace = draft.client, draft.workspace
@@ -2062,19 +2026,15 @@ def send_contract_signed_notice(draft_id: str):
         if not to_addrs:
             return
 
-        subject = f"Signed: {draft.subject or 'Agreement'} — {client.full_name}"
+        title      = draft.subject or "Agreement"
         signed_str = draft.client_signed_at.strftime("%B %d, %Y at %I:%M %p") if draft.client_signed_at else ""
-        plain = (
-            f"{client.full_name} has signed \"{draft.subject or 'Agreement'}\" on {signed_str}.\n\n"
-            f"A copy of the signed document has been saved to their Files.\n\n"
-            f"— CoachOS"
+        send_notice(
+            workspace, "contract_signed", sorted(to_addrs),
+            dict(client_name=client.full_name, client_first_name=client.first_name,
+                 document_title=title, signed_at=signed_str),
+            rows=[("Document", title), ("Client", client.full_name), ("Signed", signed_str)],
+            cta=("Open client", app_url(f"/clients/{client.id}")),
         )
-        msg = EmailMultiAlternatives(
-            subject=subject, body=plain,
-            from_email=_workspace_from_email(workspace),
-            to=list(to_addrs),
-        )
-        msg.send()
         logger.info(f"Contract-signed notice sent for draft {draft_id}")
     except Exception as e:
         logger.error(f"send_contract_signed_notice failed: {e}")
@@ -2087,6 +2047,7 @@ def send_goal_shared_email(goal_id: str):
     Sharing itself only ever set that flag with no other side effect; nothing told the
     client it happened until they next logged into their portal on their own."""
     from apps.clients.models import ClientGoal, EmailLog
+    from tasks.email_notices import send_notice, app_url
     try:
         goal = ClientGoal.objects.select_related("client", "client__workspace", "client__coach").get(id=goal_id)
         client = goal.client
@@ -2094,67 +2055,73 @@ def send_goal_shared_email(goal_id: str):
         if not client.email:
             return
 
-        frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
-        portal_url   = f"{frontend_url}/client-portal"
-        coach_name   = client.coach.full_name if client.coach else workspace.name
-        owner_email, owner_name = _owner_info(workspace)
-        logo_url = _logo_src(workspace)
+        portal_url      = app_url("/client-portal")
+        coach_name      = client.coach.full_name if client.coach else workspace.name
         target_date_str = goal.target_date.strftime("%B %d, %Y") if goal.target_date else ""
-
-        subject = f"New goal shared — {workspace.name}"
-        plain = (
-            f"Hi {client.first_name},\n\n"
-            f"{coach_name} shared a new goal with you:\n\n"
-            f"{goal.title}\n"
-            + (f"{goal.description}\n\n" if goal.description else "\n")
-            + (f"Target date: {target_date_str}\n\n" if target_date_str else "\n")
-            + f"View it in your client portal: {portal_url}\n\n"
-            f"— {workspace.name}"
+        send_notice(
+            workspace, "goal_shared", [client.email],
+            dict(client_name=client.full_name, client_first_name=client.first_name,
+                 coach_name=coach_name, goal_title=goal.title, target_date=target_date_str,
+                 portal_url=portal_url),
+            rows=[("Goal", goal.title), ("Details", goal.description or ""), ("Target date", target_date_str)],
+            cta=("View in your portal", portal_url),
+            log=dict(category=EmailLog.Category.GOAL_SHARED, client=client, related_id=goal_id),
         )
-
-        logo_img = (
-            f'<img src="{logo_url}" alt="{workspace.name}" '
-            f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;margin:0 auto 4px;" />'
-        ) if logo_url else f'<span style="font-family:Georgia,serif;font-size:20px;color:#f7f4ef;">{workspace.name}</span>'
-        html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#faf8f4;">
-<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
-  <tr><td align="center">
-  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#fff;border-radius:8px;overflow:hidden;">
-    <tr><td style="background:#1a2f4e;padding:22px;text-align:center;">{logo_img}</td></tr>
-    <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d9b96a,#b8922e);"></td></tr>
-    <tr><td style="padding:32px 36px;font-family:Arial,sans-serif;">
-      <p style="margin:0 0 16px;font-size:15px;color:#3a3530;">Hi {client.first_name},</p>
-      <p style="margin:0 0 20px;font-size:15px;color:#3a3530;line-height:1.6;">{coach_name} shared a new goal with you:</p>
-      <div style="border:1px solid #ede9e1;border-radius:8px;padding:18px 20px;margin-bottom:24px;">
-        <div style="font-family:Georgia,serif;font-size:19px;color:#16130f;margin-bottom:6px;">{goal.title}</div>
-        {f'<div style="font-size:14px;color:#6e6560;line-height:1.6;margin-bottom:8px;">{goal.description}</div>' if goal.description else ''}
-        {f'<div style="font-size:12.5px;color:#9e9890;">Target date: {target_date_str}</div>' if target_date_str else ''}
-      </div>
-      <a href="{portal_url}" style="display:inline-block;background:#1a2f4e;color:#fff;text-decoration:none;
-         padding:12px 28px;border-radius:6px;font-size:14px;font-weight:600;">View in Your Portal</a>
-      <p style="margin:28px 0 0;font-size:12.5px;color:#9e9890;">Questions? Reply to this email or contact {owner_name or owner_email}.</p>
-    </td></tr>
-  </table>
-  </td></tr>
-</table>
-</body></html>"""
-
-        msg = EmailMultiAlternatives(
-            subject=subject, body=plain,
-            from_email=_workspace_from_email(workspace),
-            to=[client.email],
-        )
-        msg.attach_alternative(html, "text/html")
-        msg.send()
         logger.info(f"Goal-shared email sent to {client.email} for goal {goal_id}")
-
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.GOAL_SHARED,
-                     client=client, subject=subject, recipient_email=client.email,
-                     related_id=goal_id, body_html=html)
     except Exception as e:
         logger.error(f"send_goal_shared_email failed: {e}")
+
+
+def _note_preview_text(text: str, limit: int = 400) -> str:
+    """Session notes are stored as free text, or as a JSON blob behind a
+    "##STRUCTURED##" prefix (see frontend's parseStructured) holding
+    {notes, reflection, commitment}. Pull something readable out of either
+    shape for the notification email, rather than showing raw JSON."""
+    import json
+    prefix = "##STRUCTURED##"
+    if text.startswith(prefix):
+        try:
+            data = json.loads(text[len(prefix):])
+            preview = (data.get("notes") or data.get("reflection") or data.get("commitment") or "").strip()
+        except Exception:
+            preview = ""
+    else:
+        preview = (text or "").strip()
+    if len(preview) > limit:
+        preview = preview[:limit].rstrip() + "…"
+    return preview
+
+
+@shared_task(name="tasks.email.send_note_shared_email")
+def send_note_shared_email(note_id: str):
+    """Notifies the client that their coach shared a note — triggered from
+    ClientNoteViewSet the moment visible_to_client flips False -> True, on
+    either create or update. Mirrors send_goal_shared_email above."""
+    from apps.clients.models import ClientNote, EmailLog
+    from tasks.email_notices import send_notice, app_url
+    try:
+        note = ClientNote.objects.select_related("client", "client__workspace", "client__coach").get(id=note_id)
+        client = note.client
+        workspace = client.workspace
+        if not client.email:
+            return
+
+        portal_url       = app_url("/client-portal")
+        coach_name       = client.coach.full_name if client.coach else workspace.name
+        topic            = (note.topic or "").strip() or "Session Note"
+        session_date_str = note.session_date.strftime("%B %d, %Y") if note.session_date else ""
+        send_notice(
+            workspace, "note_shared", [client.email],
+            dict(client_name=client.full_name, client_first_name=client.first_name,
+                 coach_name=coach_name, note_topic=topic, session_date=session_date_str,
+                 portal_url=portal_url),
+            rows=[("Topic", topic), ("Note", _note_preview_text(note.text)), ("Session date", session_date_str)],
+            cta=("View in your portal", portal_url),
+            log=dict(category=EmailLog.Category.NOTE_SHARED, client=client, related_id=note_id),
+        )
+        logger.info(f"Note-shared email sent to {client.email} for note {note_id}")
+    except Exception as e:
+        logger.error(f"send_note_shared_email failed: {e}")
 
 
 @shared_task(name="tasks.email.send_error_alert_email")

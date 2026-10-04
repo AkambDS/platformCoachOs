@@ -7,6 +7,10 @@ interface PublicBranding { name: string; logo_url: string; primary_colour: strin
 
 export default function Register() {
   const [form, setForm] = useState({ workspace_name: '', full_name: '', email: '', password: '' })
+  // Separate from form.email being non-empty — that was also true the instant the user
+  // typed their first character, which locked the field read-only after exactly one
+  // keystroke (see the readOnly logic below).
+  const [prefilledFromInvite, setPrefilledFromInvite] = useState(false)
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [pending, setPending] = useState(false)
@@ -33,8 +37,9 @@ export default function Register() {
           full_name: recipient_name || f.full_name,
           email: recipient_email || f.email,
         }))
+        if (recipient_email) setPrefilledFromInvite(true)
       })
-      .catch(() => {})
+      .catch(() => setError('This invite link is invalid or has expired. Contact whoever sent it for a new one.'))
   }, [registrationToken])
 
   const update = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
@@ -185,7 +190,7 @@ export default function Register() {
                 <label className="auth-label">
                   <span className="auth-label-text">
                     Email
-                    {registrationToken && form.email && (
+                    {prefilledFromInvite && (
                       <span style={{ marginLeft: 8, fontSize: 11, color: '#2d6a4f', fontWeight: 400 }}>
                         (pre-filled from invite)
                       </span>
@@ -197,8 +202,8 @@ export default function Register() {
                     value={form.email}
                     onChange={update('email')}
                     placeholder="sarah@example.com"
-                    readOnly={!!(registrationToken && form.email)}
-                    style={registrationToken && form.email ? { background: '#f5f5f5', color: 'var(--muted)', cursor: 'not-allowed' } : undefined}
+                    readOnly={prefilledFromInvite}
+                    style={prefilledFromInvite ? { background: '#f5f5f5', color: 'var(--muted)', cursor: 'not-allowed' } : undefined}
                     required
                   />
                 </label>

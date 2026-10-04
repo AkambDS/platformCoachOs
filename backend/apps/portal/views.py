@@ -18,6 +18,9 @@ from apps.library.serializers import KnowledgeItemSerializer
 from .models import PortalLoginCode
 
 CODE_LIFETIME_MINUTES = 10
+# How long a client stays logged in after successfully entering their code —
+# they don't need to re-request/re-enter a code again until this expires.
+PORTAL_SESSION_LIFETIME_HOURS = 24
 
 
 # ── Portal JWT authentication ──────────────────────────────────────────────────
@@ -232,7 +235,7 @@ class PortalLoginView(APIView):
         token["workspace_id"] = str(client.workspace_id)
         token["role"]         = "portal_client"
         token["email"]        = client.email
-        token.set_exp(lifetime=timedelta(hours=8))
+        token.set_exp(lifetime=timedelta(hours=PORTAL_SESSION_LIFETIME_HOURS))
 
         coach_name = client.coach.full_name if client.coach else client.workspace.name
 
@@ -271,17 +274,21 @@ class PortalMeView(APIView):
 
 
 class PortalGoalsView(APIView):
-    """GET /api/portal/goals/ — client sees own active goals + recent commitments."""
+    """GET /api/portal/goals/ — client's own goals (any status) + the coach's active
+    shared goals, plus recent commitments. POST — client sets their own goal."""
     authentication_classes = [PortalJWTAuthentication]
     permission_classes     = [IsAuthenticated]
 
     def get(self, request):
         client_id, workspace_id = _get_portal_claims(request)
 
+        from django.db.models import Q
         goals = list(ClientGoal.objects.filter(
             client_id=client_id, workspace_id=workspace_id,
-            status="active", visible_to_client=True,
-        ))
+        ).filter(
+            Q(created_by__isnull=True) |                     # client's own — always show
+            Q(visible_to_client=True, status="active")        # coach's — only if shared + active
+        ).order_by("-created_at"))
         commitments = Commitment.objects.filter(
             client_id=client_id, workspace_id=workspace_id
         ).order_by("-created_at")[:10]
@@ -295,6 +302,77 @@ class PortalGoalsView(APIView):
             "goals":       goals_data,
             "commitments": CommitmentSerializer(commitments, many=True).data,
         })
+
+    def post(self, request):
+        client_id, workspace_id = _get_portal_claims(request)
+        title = (request.data.get("title") or "").strip()
+        if not title:
+            raise ValidationError({"title": "Title is required."})
+        target_date = _parse_session_date(request.data.get("target_date"))
+        if not target_date:
+            raise ValidationError({"target_date": "A valid target date is required."})
+
+        goal = ClientGoal.objects.create(
+            workspace_id=workspace_id,
+            client_id=client_id,
+            title=title,
+            description=(request.data.get("description") or "").strip(),
+            target_date=target_date,
+            status=ClientGoal.Status.ACTIVE,
+            created_by=None,
+        )
+        data = ClientGoalSerializer(goal).data
+        data["progress_entries"] = []
+        return Response(data, status=201)
+
+
+class PortalGoalDetailView(APIView):
+    """PATCH/DELETE /api/portal/goals/{goal_id}/ — a client's own goals only; a
+    coach-authored goal stays read-only here even when shared (progress is still
+    logged through PortalProgressView)."""
+    authentication_classes = [PortalJWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+
+    def _get_goal(self, goal_id, client_id, workspace_id):
+        try:
+            return ClientGoal.objects.get(
+                pk=goal_id, client_id=client_id, workspace_id=workspace_id,
+                created_by__isnull=True,
+            )
+        except ClientGoal.DoesNotExist:
+            raise NotFound()
+
+    def patch(self, request, goal_id):
+        client_id, workspace_id = _get_portal_claims(request)
+        goal = self._get_goal(goal_id, client_id, workspace_id)
+
+        title = (request.data.get("title") or "").strip()
+        if not title:
+            raise ValidationError({"title": "Title is required."})
+        goal.title = title
+        goal.description = (request.data.get("description") or "").strip()
+
+        if "target_date" in request.data:
+            target_date = _parse_session_date(request.data.get("target_date"))
+            if not target_date:
+                raise ValidationError({"target_date": "A valid target date is required."})
+            goal.target_date = target_date
+
+        status_value = request.data.get("status")
+        if status_value in ClientGoal.Status.values:
+            goal.status = status_value
+
+        goal.save(update_fields=["title", "description", "target_date", "status", "updated_at"])
+        data = ClientGoalSerializer(goal).data
+        progress = GoalProgress.objects.filter(goal=goal).order_by("-created_at")
+        data["progress_entries"] = GoalProgressSerializer(progress, many=True).data
+        return Response(data)
+
+    def delete(self, request, goal_id):
+        client_id, workspace_id = _get_portal_claims(request)
+        goal = self._get_goal(goal_id, client_id, workspace_id)
+        goal.delete()
+        return Response(status=204)
 
 
 class PortalProgressView(APIView):
@@ -559,6 +637,8 @@ class PortalNotesView(APIView):
             workspace_id=workspace_id,
             text=text,
             note_type="general",
+            topic=(request.data.get("topic") or "").strip(),
+            session_date=_parse_session_date(request.data.get("session_date")),
             created_by=None,
         )
         return Response(_serialize_note(note), status=201)
@@ -588,7 +668,11 @@ class PortalNoteDetailView(APIView):
         if not text:
             return Response({"detail": "text is required."}, status=400)
         note.text = text
-        note.save(update_fields=["text", "updated_at"])
+        if "topic" in request.data:
+            note.topic = (request.data.get("topic") or "").strip()
+        if "session_date" in request.data:
+            note.session_date = _parse_session_date(request.data.get("session_date"))
+        note.save(update_fields=["text", "topic", "session_date", "updated_at"])
         return Response(_serialize_note(note))
 
     def delete(self, request, note_id):
@@ -598,11 +682,25 @@ class PortalNoteDetailView(APIView):
         return Response(status=204)
 
 
+def _parse_session_date(value):
+    """'YYYY-MM-DD' -> date, or None for blank/missing/malformed input — a bad date
+    from the client should never 500 the request, just fall back to "not set"."""
+    import datetime
+    if not value:
+        return None
+    try:
+        return datetime.date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _serialize_note(note):
     return {
         "id":               str(note.id),
         "text":             note.text,
         "note_type":        note.note_type,
+        "topic":            note.topic,
+        "session_date":     note.session_date.isoformat() if note.session_date else None,
         "created_by_name":  note.created_by.full_name if note.created_by else None,
         "client_owned":     note.created_by is None,   # client can edit/delete own notes
         "created_at":       note.created_at.isoformat(),

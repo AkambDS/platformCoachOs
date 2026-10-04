@@ -310,6 +310,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.calendar.renew_expiring_watch_channels",
         "schedule": crontab(hour=3, minute=0),
     },
+    # Auto-clear a pending client reschedule proposal the coach never confirmed/
+    # declined within the workspace's configured TTL (calendar.md §7.2/§9.2 Task 5)
+    "expire-stale-reschedule-requests": {
+        "task": "tasks.reminders.expire_stale_reschedule_requests",
+        "schedule": crontab(hour=4, minute=0),
+    },
     # Flip Sent invoices with no payment at all past their due date to Overdue —
     # runs before dispatch-subscription-invoices so a freshly-cloned period invoice
     # never gets swept up by the same run.
@@ -323,11 +329,12 @@ CELERY_BEAT_SCHEDULE = {
         "task": "tasks.invoicing.dispatch_subscription_invoices",
         "schedule": crontab(hour=7, minute=0),
     },
-    # Pipeline follow-up alerts — daily nudge for deals stuck past their stage's
-    # follow-up threshold, until the deal moves or its alert window closes
+    # Pipeline follow-up emails for deals stuck past their stage's threshold. Runs every
+    # hour; each workspace is handled at 8 AM in its own timezone (tasks.pipeline.SEND_HOUR),
+    # so it's 8 AM Eastern year-round regardless of DST.
     "dispatch-pipeline-alerts": {
         "task": "tasks.pipeline.dispatch_pipeline_alerts",
-        "schedule": crontab(hour=8, minute=0),
+        "schedule": crontab(minute=0),
     },
     # Retry any invite email that failed to send at invitation-creation time
     "retry-pending-invites": {

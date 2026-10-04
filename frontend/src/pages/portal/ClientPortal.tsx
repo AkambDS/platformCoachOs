@@ -2,7 +2,7 @@
  * CoachOS — Client Portal
  * Standalone page — no AppShell. Uses CoachOS CSS design system.
  */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import axios from 'axios'
 import {
   LayoutDashboard, Target, CalendarDays, StickyNote, Folder, Receipt, LogOut,
@@ -11,12 +11,13 @@ import {
 import { useInactivityTimer } from '../../hooks/useInactivityTimer'
 import InactivityWarningModal from '../../components/InactivityWarningModal'
 import { InlineOfficeViewer } from '../../components/OfficeEditor'
+import { useToast } from '../../components/ui'
 
 const BASE = import.meta.env.VITE_API_BASE_URL || ''
 
 const api = axios.create({ baseURL: BASE, headers: { 'Content-Type': 'application/json' } })
 api.interceptors.request.use(cfg => {
-  const tok = sessionStorage.getItem('portal_token')
+  const tok = localStorage.getItem('portal_token')
   if (tok) cfg.headers['Authorization'] = `Bearer ${tok}`
   return cfg
 })
@@ -25,7 +26,7 @@ api.interceptors.request.use(cfg => {
 interface Session { token: string; client_name: string; workspace_name: string; coach_name: string }
 interface Branding { name: string; logo_url: string; primary_colour: string }
 interface GoalProgress { id: string; progress_text: string; created_at: string }
-interface Goal { id: string; title: string; description: string; target_date: string | null; status: string; progress_count: number; progress_entries: GoalProgress[] }
+interface Goal { id: string; title: string; description: string; target_date: string | null; status: string; progress_count: number; progress_entries: GoalProgress[]; client_owned?: boolean; created_by_name?: string | null }
 interface Commitment { id: string; text: string; created_at: string }
 interface Activity { id: string; title: string; activity_type: string; status: string; start_at: string; end_at: string | null; location: string; meeting_link: string; coach_name: string }
 interface InvoiceItem { description: string; quantity: string; unit_price: string; line_total: string }
@@ -35,7 +36,7 @@ interface Invoice { id: string; number: string; status: string; total: string; a
 // which don't exist on that serializer at all, so the "download" link and real file-type
 // badge silently never rendered (fell back to undefined → always "file"/nothing to click).
 interface Material { id: string; title: string; content_type: string; file_name?: string; presigned_url?: string; inline_url?: string; url?: string; video_url?: string }
-interface Note { id: string; text: string; note_type: string; created_by_name: string | null; client_owned: boolean; created_at: string; updated_at: string }
+interface Note { id: string; text: string; note_type: string; topic?: string | null; session_date?: string | null; created_by_name: string | null; client_owned: boolean; created_at: string; updated_at: string }
 interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -52,6 +53,48 @@ function fmtTime(iso: string) {
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
 }
 function isUpcoming(iso: string) { return new Date(iso) > new Date() }
+
+// ── Note date-key helpers — mirrors the coach side's Notes explorer (ClientDetail.tsx)
+// so notes group/sort/display the same way here. Duplicated rather than imported since
+// the portal is a standalone bundle with no other dependency on coach-only pages.
+function todayISO(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+// The calendar day a note is grouped/sorted/searched under — session date if set,
+// else the date it was written.
+function noteDateKey(n: Note): string {
+  return n.session_date || n.created_at?.slice(0, 10) || ''
+}
+function dayKeyToDate(key: string): Date {
+  return new Date(`${key}T12:00:00`)
+}
+function fmtDayKey(key: string): string {
+  if (!key) return '—'
+  return dayKeyToDate(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+function noteDateGroupLabel(key: string): string {
+  if (key === todayISO()) return 'Today'
+  const y = new Date(); y.setDate(y.getDate() - 1)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  if (key === `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`) return 'Yesterday'
+  return fmtDayKey(key)
+}
+// Sorted newest-day-first, then grouped under Today/Yesterday/date headers.
+function groupNotesByDate(notes: Note[]): { label: string; notes: Note[] }[] {
+  const sorted = [...notes].sort((a, b) => {
+    const ka = noteDateKey(a), kb = noteDateKey(b)
+    return ka === kb ? 0 : ka < kb ? 1 : -1
+  })
+  const map = new Map<string, Note[]>()
+  for (const n of sorted) {
+    const label = noteDateGroupLabel(noteDateKey(n))
+    if (!map.has(label)) map.set(label, [])
+    map.get(label)!.push(n)
+  }
+  return Array.from(map, ([label, notes]) => ({ label, notes }))
+}
 
 function Pill({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -90,10 +133,10 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
     e.preventDefault(); setError(''); setLoading(true)
     try {
       const { data } = await axios.post(`${BASE}/api/portal/login/`, { email, code })
-      sessionStorage.setItem('portal_token', data.token)
-      sessionStorage.setItem('portal_client_name', data.client_name)
-      sessionStorage.setItem('portal_workspace_name', data.workspace_name)
-      sessionStorage.setItem('portal_coach_name', data.coach_name)
+      localStorage.setItem('portal_token', data.token)
+      localStorage.setItem('portal_client_name', data.client_name)
+      localStorage.setItem('portal_workspace_name', data.workspace_name)
+      localStorage.setItem('portal_coach_name', data.coach_name)
       onLogin(data)
     } catch (err: any) {
       setError(err?.response?.data?.detail || 'That code is invalid or has expired.')
@@ -101,75 +144,150 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
   }
 
   const wsName = branding?.name || 'CoachOS'
-  return (
-    <div className="auth-split" style={{ minHeight: '100vh' }}>
-      <div className="auth-brand">
-        <div>
-          <div className="auth-brand-logo">{wsName}</div>
-          <h1 className="auth-brand-headline" style={{ marginTop: 48 }}>Your coaching<br /><em>portal</em></h1>
-          <p className="auth-brand-sub" style={{ marginTop: 24 }}>Access your goals, sessions, files, and invoices — all in one place.</p>
-          <ul className="auth-brand-features" style={{ marginTop: 32 }}>
-            <li>Track your coaching goals &amp; progress</li>
-            <li>View upcoming &amp; past sessions</li>
-            <li>Download shared resources</li>
-            <li>Review and pay invoices</li>
-          </ul>
-        </div>
-      </div>
-      <div className="auth-form-area">
-        <div className="auth-form-card">
-          {branding?.logo_url && <img src={branding.logo_url} alt={wsName} style={{ maxHeight: 48, maxWidth: 180, objectFit: 'contain', marginBottom: 24, display: 'block' }} />}
-          <h2 className="auth-form-title">Client Portal</h2>
+  const inputStyle: React.CSSProperties = {
+    width: '100%', boxSizing: 'border-box', padding: '13px 14px', fontSize: 14,
+    fontFamily: "'DM Sans', sans-serif", border: '1px solid var(--border)', borderRadius: 6,
+    background: '#fff', color: 'var(--ink)', marginBottom: 18,
+  }
+  const btnStyle: React.CSSProperties = {
+    width: '100%', padding: 13, background: 'var(--navy)', color: 'var(--paper)', border: 'none',
+    borderRadius: 6, fontSize: 13, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
+    cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+  }
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em',
+    textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 8,
+  }
 
-          {step === 'email' ? (
-            <>
-              <p className="auth-form-sub">Enter your email address to access your portal</p>
-              <form onSubmit={submitEmail}>
-                <div className="fgroup">
-                  <label className="flabel">Email Address</label>
-                  <input className="auth-input" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required autoFocus />
-                </div>
-                {error && <div className="auth-error">{error}</div>}
-                <button type="submit" className="auth-btn" disabled={loading} style={{ marginTop: 8 }}>
-                  {loading ? 'Sending…' : 'Send Login Code'}
-                </button>
-              </form>
-              <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
-                You'll need an invitation from your coach to access this portal.
-              </p>
-            </>
-          ) : (
-            <>
-              <p className="auth-form-sub">{info || `Enter the 6-digit code we emailed to ${email}`}</p>
-              <form onSubmit={submitCode}>
-                <div className="fgroup">
-                  <label className="flabel">Login Code</label>
-                  <input
-                    className="auth-input" type="text" inputMode="numeric" pattern="[0-9]*"
-                    maxLength={6} value={code}
-                    onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="123456" required autoFocus
-                    style={{ letterSpacing: '0.3em', textAlign: 'center', fontSize: 20 }}
-                  />
-                </div>
-                {error && <div className="auth-error">{error}</div>}
-                <button type="submit" className="auth-btn" disabled={loading || code.length !== 6} style={{ marginTop: 8 }}>
-                  {loading ? 'Verifying…' : 'Access My Portal'}
-                </button>
-              </form>
-              <p style={{ marginTop: 24, fontSize: 12, color: 'var(--muted)', textAlign: 'center', lineHeight: 1.6 }}>
-                Didn't get it? Check spam, or{' '}
-                <button
-                  type="button"
-                  onClick={() => { setStep('email'); setCode(''); setError('') }}
-                  style={{ background: 'none', border: 'none', padding: 0, color: 'inherit', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
-                >
-                  use a different email
-                </button>.
-              </p>
-            </>
-          )}
+  return (
+    <div style={{ minHeight: '100vh', width: '100%', background: 'var(--paper)', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+      <style>{'@media (max-width: 900px) { .portal-login-divider { display: none; } .portal-login-left { text-align: center; align-items: center !important; } .portal-login-word { display: none; } }'}</style>
+
+      {/* oversized background word — real texture, fills the page instead of leaving it bare */}
+      <span aria-hidden="true" className="portal-login-word" style={{
+        position: 'absolute', top: '50%', left: '38%', transform: 'translate(-50%, -54%)',
+        fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontStyle: 'italic',
+        fontSize: 'min(26vw, 400px)', lineHeight: 1, color: 'var(--navy)', opacity: 0.028,
+        whiteSpace: 'nowrap', userSelect: 'none', pointerEvents: 'none', zIndex: 0,
+      }}>progress</span>
+
+      {/* masthead */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '40px 48px 0', position: 'relative', zIndex: 1 }}>
+        {branding?.logo_url ? (
+          <img src={branding.logo_url} alt={wsName} style={{ maxHeight: 72, maxWidth: 300, objectFit: 'contain' }} />
+        ) : (
+          <>
+            <div style={{ width: 68, height: 68, borderRadius: 12, background: 'var(--navy)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <span style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontSize: 32, color: 'var(--gold-light)' }}>{wsName.charAt(0)}</span>
+            </div>
+            <span style={{ fontSize: 16, letterSpacing: '0.14em', textTransform: 'uppercase', color: 'var(--ink-soft)', fontWeight: 600 }}>{wsName}</span>
+          </>
+        )}
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', flexWrap: 'wrap', alignItems: 'center', width: '100%', maxWidth: 1180, margin: '0 auto', boxSizing: 'border-box', position: 'relative', zIndex: 1 }}>
+
+        {/* LEFT — editorial column: what the portal actually gives the client */}
+        <div className="portal-login-left" style={{ flex: '1 1 480px', minWidth: 320, padding: '64px 56px 64px 48px', boxSizing: 'border-box', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center' }}>
+          <span aria-hidden="true" style={{ position: 'absolute', top: -56, left: 28, fontFamily: "'Cormorant Garamond', serif", fontSize: 380, lineHeight: 1, color: 'var(--navy)', opacity: 0.07, userSelect: 'none', pointerEvents: 'none' }}>&ldquo;</span>
+
+          <div style={{ position: 'relative', display: 'flex', flexDirection: 'column', maxWidth: 460 }}>
+            <h1 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, fontSize: 40, lineHeight: 1.22, color: 'var(--ink)', margin: '0 0 16px' }}>
+              A quiet place to keep up with your own progress.
+            </h1>
+            <p style={{ fontSize: 14.5, color: 'var(--muted)', lineHeight: 1.65, margin: '0 0 28px', maxWidth: 400 }}>
+              Everything from your coaching program — goals, notes, and what's next — stays in one workspace between sessions.
+            </p>
+
+            <div style={{ width: 36, height: 2, background: 'var(--gold)', marginBottom: 28 }} />
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: 'var(--gold)', fontWeight: 600, flexShrink: 0, width: 20 }}>01</span>
+                <span style={{ fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.5 }}>Goals you can actually see move, logged between sessions</span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: 'var(--gold)', fontWeight: 600, flexShrink: 0, width: 20 }}>02</span>
+                <span style={{ fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.5 }}>Every session's notes, kept in order and easy to find</span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
+                <span style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 15, color: 'var(--gold)', fontWeight: 600, flexShrink: 0, width: 20 }}>03</span>
+                <span style={{ fontSize: 14, color: 'var(--ink-soft)', lineHeight: 1.5 }}>Resources your coach hands you, always on hand</span>
+              </div>
+            </div>
+          </div>
         </div>
+
+        <div className="portal-login-divider" style={{ width: 1, alignSelf: 'stretch', margin: '72px 0', background: 'var(--border)' }} />
+
+        {/* RIGHT — the actual sign-in card */}
+        <div style={{ flex: '1 1 380px', minWidth: 320, padding: '48px 48px 64px 56px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <div style={{ width: '100%', maxWidth: 380 }}>
+
+            <div style={{ background: '#fff', border: '1px solid var(--cream)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(26,23,20,0.04), 0 16px 40px rgba(26,23,20,0.07)' }}>
+              <div style={{ height: 3, background: 'linear-gradient(90deg, var(--gold), var(--gold-light) 50%, var(--gold))' }} />
+              <div style={{ padding: '40px 36px 36px' }}>
+                <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, fontSize: 27, color: 'var(--ink)', margin: '0 0 8px' }}>Client Portal</h2>
+
+                {step === 'email' ? (
+                  <>
+                    <p style={{ fontSize: 13.5, color: 'var(--muted)', margin: '0 0 28px', lineHeight: 1.6 }}>Enter your email and we'll send a one-time code to sign in.</p>
+                    <form onSubmit={submitEmail}>
+                      <label htmlFor="portal-email" style={labelStyle}>Email address</label>
+                      <input id="portal-email" type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required autoFocus style={inputStyle} />
+                      {error && <div style={{ fontSize: 12.5, color: '#b3261e', marginBottom: 12 }}>{error}</div>}
+                      <button type="submit" disabled={loading} style={btnStyle}>
+                        {loading ? 'Sending…' : 'Send login code'}
+                      </button>
+                    </form>
+                    <p style={{ marginTop: 18, fontSize: 12, color: 'var(--muted-faint)', lineHeight: 1.6 }}>
+                      You'll need an invitation from your coach to access this portal.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p style={{ fontSize: 13.5, color: 'var(--muted)', margin: '0 0 28px', lineHeight: 1.6 }}>{info || `Enter the 6-digit code we emailed to ${email}`}</p>
+                    <form onSubmit={submitCode}>
+                      <label htmlFor="portal-code" style={labelStyle}>Login code</label>
+                      <input
+                        id="portal-code" type="text" inputMode="numeric" pattern="[0-9]*"
+                        maxLength={6} value={code}
+                        onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                        placeholder="123456" required autoFocus
+                        style={{ ...inputStyle, letterSpacing: '0.3em', textAlign: 'center', fontSize: 20 }}
+                      />
+                      {error && <div style={{ fontSize: 12.5, color: '#b3261e', marginBottom: 12 }}>{error}</div>}
+                      <button type="submit" disabled={loading || code.length !== 6} style={btnStyle}>
+                        {loading ? 'Verifying…' : 'Access my portal'}
+                      </button>
+                    </form>
+                    <p style={{ marginTop: 18, fontSize: 12, color: 'var(--muted-faint)', lineHeight: 1.6 }}>
+                      Didn't get it? Check spam, or{' '}
+                      <button
+                        type="button"
+                        onClick={() => { setStep('email'); setCode(''); setError('') }}
+                        style={{ background: 'none', border: 'none', padding: 0, color: 'var(--gold)', textDecoration: 'underline', cursor: 'pointer', font: 'inherit' }}
+                      >
+                        use a different email
+                      </button>.
+                    </p>
+                  </>
+                )}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 7, marginTop: 24 }}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--muted-faint)" strokeWidth="2" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg>
+              <span style={{ fontSize: 11.5, color: 'var(--muted-faint)' }}>Visible only to you and your coach</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      {/* footer — anchors the bottom of the page instead of leaving it bare */}
+      <div style={{ textAlign: 'center', padding: '28px 24px 32px', position: 'relative', zIndex: 1 }}>
+        <span style={{ fontSize: 11.5, color: 'var(--muted-faint)' }}>Powered by CoachOS</span>
       </div>
     </div>
   )
@@ -186,10 +304,12 @@ function OverviewTab({ me, goals, activities, invoices }: { me: MeData | null; g
     .sort((a, b) => new Date(a.start_at).getTime() - new Date(b.start_at).getTime())
     .slice(0, 5)
 
-  // Active goals with a due date, soonest (or most overdue) first.
+  // Active goals with a due date, soonest (or most overdue) first — plain string
+  // comparison on the 'YYYY-MM-DD' value, no Date() parsing (see the overdue check
+  // below for why that matters for a date-only string).
   const goalsDue = goals
     .filter(g => g.status === 'active' && g.target_date)
-    .sort((a, b) => new Date(a.target_date!).getTime() - new Date(b.target_date!).getTime())
+    .sort((a, b) => (a.target_date! < b.target_date! ? -1 : a.target_date! > b.target_date! ? 1 : 0))
 
   // Outstanding invoices due within the next 30 days — always includes anything
   // already overdue, regardless of how long ago it was due.
@@ -259,14 +379,18 @@ function OverviewTab({ me, goals, activities, invoices }: { me: MeData | null; g
           ) : (
             <div>
               {goalsDue.map((g, i) => {
-                const overdue = new Date(g.target_date!) < new Date(now.toDateString())
+                // Plain string comparison on 'YYYY-MM-DD' keys — avoids the timezone
+                // bug of parsing a date-only string through `new Date(...)`, which
+                // reads it as UTC midnight and can roll it back a day in negative-UTC
+                // timezones (so a goal due "today" would wrongly show as overdue).
+                const overdue = g.target_date! < todayISO()
                 return (
                   <div key={g.id} style={{ padding: '14px 20px', borderBottom: i < goalsDue.length - 1 ? '1px solid var(--border)' : 'none' }}>
                     <div style={{ fontWeight: 600, fontSize: 13.5, color: 'var(--ink)' }}>{g.title}</div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
                       <Pill status={overdue ? 'overdue' : 'scheduled'} />
                       <span style={{ fontSize: 12, color: overdue ? '#b3261e' : 'var(--muted)', fontWeight: overdue ? 600 : 400 }}>
-                        {overdue ? 'Was due' : 'Due'} {fmtDate(g.target_date!)}
+                        {overdue ? 'Was due' : 'Due'} {fmtDayKey(g.target_date!)}
                       </span>
                     </div>
                     <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
@@ -326,80 +450,337 @@ function OverviewTab({ me, goals, activities, invoices }: { me: MeData | null; g
 }
 
 // ── Goals ─────────────────────────────────────────────────────────────────────
-function GoalsTab({ goals, commitments, onProgressSaved }: { goals: Goal[]; commitments: Commitment[]; onProgressSaved: (goalId: string, entry: GoalProgress) => void }) {
-  const [openGoal, setOpenGoal] = useState<string | null>(null)
+// Date-grouping for the goals explorer — same structural pattern as the Notes
+// explorer's groupNotesByDate, but keyed on target_date (every goal requires one,
+// so no created_at fallback needed) and sorted soonest-first (ascending) since a
+// goal is a forward-looking deadline, not a backward-looking log entry.
+function goalDateKey(g: Goal): string {
+  return g.target_date || ''
+}
+function goalDateGroupLabel(key: string): string {
+  if (!key) return 'No target date'
+  const today = todayISO()
+  if (key === today) return 'Today'
+  const d = new Date(); d.setDate(d.getDate() + 1)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const tomorrow = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+  if (key === tomorrow) return 'Tomorrow'
+  if (key < today) return `Overdue — ${fmtDayKey(key)}`
+  return fmtDayKey(key)
+}
+function groupGoalsByDate(goals: Goal[]): { label: string; goals: Goal[] }[] {
+  const sorted = [...goals].sort((a, b) => {
+    const ka = goalDateKey(a), kb = goalDateKey(b)
+    return ka === kb ? 0 : ka < kb ? -1 : 1
+  })
+  const map = new Map<string, Goal[]>()
+  for (const g of sorted) {
+    const label = goalDateGroupLabel(goalDateKey(g))
+    if (!map.has(label)) map.set(label, [])
+    map.get(label)!.push(g)
+  }
+  return Array.from(map, ([label, goals]) => ({ label, goals }))
+}
+
+function GoalsTab({ goals, setGoals, commitments, showToast, onProgressSaved }: {
+  goals: Goal[]; setGoals: React.Dispatch<React.SetStateAction<Goal[]>>; commitments: Commitment[]
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void
+  onProgressSaved: (goalId: string, entry: GoalProgress) => void
+}) {
   const [text, setText] = useState('')
   const [saving, setSaving] = useState(false)
+
+  // New-goal compose form
+  const [newTitle, setNewTitle]             = useState('')
+  const [newDescription, setNewDescription] = useState('')
+  const [newTargetDate, setNewTargetDate]   = useState('')
+  const [creating, setCreating]             = useState(false)
+
+  // Collapsed by default — same as the Notes explorer; a click expands a row,
+  // nothing auto-opens.
+  const [expandedId, setExpandedId]         = useState<string | null>(null)
+  const [openProgressId, setOpenProgressId] = useState<string | null>(null)
+
+  // Editing one of the client's own goals
+  const [editId, setEditId]                 = useState<string | null>(null)
+  const [editTitle, setEditTitle]           = useState('')
+  const [editDescription, setEditDescription] = useState('')
+  const [editTargetDate, setEditTargetDate] = useState('')
+  const [editSaving, setEditSaving]         = useState(false)
+
+  const [searchTitle, setSearchTitle] = useState('')
+  const [searchDate, setSearchDate]   = useState('')
+
+  const hasSearch = !!(searchTitle.trim() || searchDate)
+  const filteredGoals = useMemo(() => {
+    if (!hasSearch) return goals
+    const q = searchTitle.trim().toLowerCase()
+    return goals.filter(g => {
+      if (q && !g.title.toLowerCase().includes(q)) return false
+      if (searchDate && goalDateKey(g) !== searchDate) return false
+      return true
+    })
+  }, [goals, searchTitle, searchDate, hasSearch])
+
+  useEffect(() => {
+    if (expandedId && !goals.some(g => g.id === expandedId)) setExpandedId(null)
+  }, [goals, expandedId])
 
   async function saveProgress(goalId: string) {
     if (!text.trim()) return
     setSaving(true)
     try {
       const { data } = await api.post(`/api/portal/goals/${goalId}/progress/`, { progress_text: text })
-      onProgressSaved(goalId, data); setText(''); setOpenGoal(null)
-    } catch { } finally { setSaving(false) }
+      onProgressSaved(goalId, data); setText(''); setOpenProgressId(null)
+      showToast('Progress saved')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to save progress', 'error')
+    } finally { setSaving(false) }
   }
 
-  if (!goals.length && !commitments.length) return (
-    <div className="empty"><div className="empty-icon">🎯</div><h3>No goals yet</h3><p>Your coach will add goals here.</p></div>
-  )
+  async function createGoal() {
+    if (!newTitle.trim() || !newTargetDate) return
+    setCreating(true)
+    try {
+      const { data } = await api.post('/api/portal/goals/', {
+        title: newTitle, description: newDescription, target_date: newTargetDate,
+      })
+      setGoals(prev => [data, ...prev])
+      setNewTitle(''); setNewDescription(''); setNewTargetDate('')
+      showToast('Goal added')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || err?.response?.data?.target_date?.[0] || 'Failed to save goal', 'error')
+    } finally { setCreating(false) }
+  }
+
+  function startEdit(g: Goal) {
+    setEditId(g.id); setEditTitle(g.title); setEditDescription(g.description || ''); setEditTargetDate(g.target_date || '')
+  }
+  function cancelEdit() {
+    setEditId(null); setEditTitle(''); setEditDescription(''); setEditTargetDate('')
+  }
+
+  async function saveEdit(goalId: string) {
+    if (!editTitle.trim() || !editTargetDate) return
+    setEditSaving(true)
+    try {
+      const { data } = await api.patch(`/api/portal/goals/${goalId}/`, {
+        title: editTitle, description: editDescription, target_date: editTargetDate,
+      })
+      setGoals(prev => prev.map(g => g.id === goalId ? { ...g, ...data } : g))
+      cancelEdit()
+      showToast('Goal updated')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to update goal', 'error')
+    } finally { setEditSaving(false) }
+  }
+
+  async function deleteGoal(goalId: string) {
+    if (!confirm('Delete this goal?')) return
+    try {
+      await api.delete(`/api/portal/goals/${goalId}/`)
+      setGoals(prev => prev.filter(g => g.id !== goalId))
+      showToast('Goal deleted')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to delete goal', 'error')
+    }
+  }
 
   return (
     <div>
-      <div style={{ padding: '24px 0 20px' }}><h1 className="page-title">Your Goals</h1></div>
-      {goals.map(g => (
-        <div key={g.id} className="card" style={{ marginBottom: 16 }}>
-          <div className="card-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-            <div>
-              <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--ink)' }}>{g.title}</div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-                <Pill status={g.status} />
-                {g.target_date && <span style={{ fontSize: 12, color: 'var(--muted)' }}>Target: {fmtDate(g.target_date)}</span>}
-                <span style={{ fontSize: 12, color: 'var(--muted)' }}>{g.progress_count} updates</span>
-              </div>
-            </div>
-            <button className={`btn btn-sm ${openGoal === g.id ? 'btn-outline' : 'btn-dark'}`}
-              onClick={() => { setOpenGoal(openGoal === g.id ? null : g.id); setText('') }}>
-              {openGoal === g.id ? 'Cancel' : '+ Progress'}
+      <div style={{ padding: '24px 0 20px' }}>
+        <h1 className="page-title">Your Goals</h1>
+        <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Goals your coach set with you, plus any you set for yourself.</p>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24, alignItems: 'start' }}>
+
+        {/* Left — set your own goal */}
+        <div className="card" style={{ position: 'sticky', top: 80 }}>
+          <div className="card-hdr"><span>NEW GOAL</span></div>
+          <div className="card-body">
+            <label style={microLabelStyle}>Title</label>
+            <input type="text" className="finput" value={newTitle} onChange={e => setNewTitle(e.target.value)}
+              placeholder="e.g. Run a 10k" style={{ marginBottom: 10 }} />
+            <label style={microLabelStyle}>Target date</label>
+            <input type="date" className="finput" value={newTargetDate} onChange={e => setNewTargetDate(e.target.value)}
+              style={{ marginBottom: 10 }} />
+            <label style={microLabelStyle}>Notes (optional)</label>
+            <textarea className="finput" value={newDescription} onChange={e => setNewDescription(e.target.value)}
+              rows={4} placeholder="Any detail you want to add…" style={{ resize: 'vertical', marginBottom: 12 }} />
+            <button className="btn btn-dark" style={{ width: '100%' }} onClick={createGoal}
+              disabled={creating || !newTitle.trim() || !newTargetDate}>
+              {creating ? 'SAVING…' : 'SAVE GOAL'}
             </button>
           </div>
-          <div className="card-body">
-            {g.description && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 16 }}>{g.description}</p>}
-            {openGoal === g.id && (
-              <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 4, padding: 16, marginBottom: 16 }}>
-                <div className="fgroup">
-                  <label className="flabel">Progress Update</label>
-                  <textarea className="finput" value={text} onChange={e => setText(e.target.value)} rows={3} autoFocus placeholder="Describe your progress…" style={{ resize: 'vertical' }} />
+        </div>
+
+        {/* Right — goals explorer: searchable by title/date, grouped by target
+            date, collapsed by default — mirrors the Notes explorer. */}
+        <div>
+          {goals.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: '1 1 auto' }}>
+                  <label style={microLabelStyle}>Search by title</label>
+                  <input type="text" className="finput" placeholder="e.g. 10k" value={searchTitle}
+                    onChange={e => setSearchTitle(e.target.value)} style={{ width: '100%' }} />
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-                  <button className="btn btn-dark btn-sm" onClick={() => saveProgress(g.id)} disabled={saving || !text.trim()}>{saving ? 'Saving…' : 'Save'}</button>
+                <div style={{ flexShrink: 0, width: 160 }}>
+                  <label style={microLabelStyle}>Search by target date</label>
+                  <input type="date" className="finput" value={searchDate}
+                    onChange={e => setSearchDate(e.target.value)} style={{ width: '100%' }} />
                 </div>
               </div>
-            )}
-            {g.progress_entries?.length > 0 && (
-              <div>
-                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>History</div>
-                {g.progress_entries.map(e => (
-                  <div key={e.id} style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 4, marginBottom: 8, border: '1px solid var(--cream)' }}>
-                    <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>{e.progress_text}</div>
-                    <div style={{ fontSize: 11, color: 'var(--muted-faint)', marginTop: 4 }}>{fmtDate(e.created_at)}</div>
+              {hasSearch && (
+                <button className="btn btn-outline btn-sm" style={{ marginTop: 6 }}
+                  onClick={() => { setSearchTitle(''); setSearchDate('') }}>
+                  Clear search
+                </button>
+              )}
+            </div>
+          )}
+
+          {!goals.length && !commitments.length ? (
+            <div className="empty"><div className="empty-icon">🎯</div><h3>No goals yet</h3><p>Write your first goal on the left, or your coach will add one here.</p></div>
+          ) : goals.length > 0 && filteredGoals.length === 0 ? (
+            <div className="empty"><div className="empty-icon">🎯</div><h3>No matching goals</h3><p>Try a different title or date.</p></div>
+          ) : (
+            <>
+              <div style={{ fontSize: 18, fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, color: 'var(--ink)', marginBottom: 16 }}>
+                Your Goals <span style={{ color: 'var(--muted)', fontSize: 14 }}>{filteredGoals.length}</span>
+              </div>
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--white)', marginBottom: 16 }}>
+                {groupGoalsByDate(filteredGoals).map(group => (
+                  <div key={group.label}>
+                    <div style={{
+                      padding: '6px 16px', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
+                      color: 'var(--muted)', background: 'var(--paper)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+                    }}>
+                      {group.label}
+                    </div>
+                    {group.goals.map(g => {
+                      const isExpanded = expandedId === g.id
+                      const isEditing  = editId === g.id
+                      const isLoggingProgress = openProgressId === g.id
+
+                      return (
+                        <div key={g.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          {/* Row header — click to expand/collapse */}
+                          <div onClick={() => setExpandedId(isExpanded ? null : g.id)}
+                            style={{ padding: '12px 16px', cursor: 'pointer', display: 'flex', gap: 8, background: isExpanded ? 'var(--paper)' : 'transparent' }}>
+                            <span style={{
+                              fontSize: 9, color: 'var(--muted)', marginTop: 3, flexShrink: 0,
+                              display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+                            }}>▸</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {g.title}
+                                </span>
+                                <Pill status={g.status} />
+                              </div>
+                              {!isExpanded && (
+                                <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 4 }}>
+                                  {g.client_owned ? 'Your goal' : `From ${g.created_by_name || 'your coach'}`} · {g.progress_count} update{g.progress_count === 1 ? '' : 's'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Expanded preview / edit / progress */}
+                          {isExpanded && (
+                            <div style={{ padding: '0 16px 16px 32px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  <span className="pill" style={{ fontSize: 9 }}>
+                                    {g.client_owned ? 'Your goal' : `From ${g.created_by_name || 'your coach'}`}
+                                  </span>
+                                  {g.target_date && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Target: {fmtDayKey(g.target_date)}</span>}
+                                </div>
+                                {g.client_owned && !isEditing && (
+                                  <div style={{ display: 'flex', gap: 2 }}>
+                                    <button onClick={() => startEdit(g)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 8px', fontSize: 12 }}>
+                                      Edit
+                                    </button>
+                                    <button onClick={() => deleteGoal(g.id)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', color: 'var(--muted)', fontSize: 17, lineHeight: 1 }}>
+                                      ×
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {isEditing ? (
+                                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', marginBottom: 12 }}>
+                                  <label style={microLabelStyle}>Title</label>
+                                  <input type="text" className="finput" value={editTitle} onChange={e => setEditTitle(e.target.value)} style={{ marginBottom: 10 }} />
+                                  <label style={microLabelStyle}>Target date</label>
+                                  <input type="date" className="finput" value={editTargetDate} onChange={e => setEditTargetDate(e.target.value)} style={{ marginBottom: 10 }} />
+                                  <label style={microLabelStyle}>Notes</label>
+                                  <textarea className="finput" value={editDescription} onChange={e => setEditDescription(e.target.value)} rows={3} style={{ resize: 'vertical', marginBottom: 12 }} />
+                                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+                                    <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                                    <button className="btn btn-dark btn-sm" onClick={() => saveEdit(g.id)} disabled={editSaving || !editTitle.trim() || !editTargetDate}>
+                                      {editSaving ? 'Saving…' : 'Save'}
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                g.description && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>{g.description}</p>
+                              )}
+
+                              <button className={`btn btn-sm ${isLoggingProgress ? 'btn-outline' : 'btn-dark'}`}
+                                onClick={() => { setOpenProgressId(isLoggingProgress ? null : g.id); setText('') }}
+                                style={{ marginBottom: 12 }}>
+                                {isLoggingProgress ? 'Cancel' : '+ Progress'}
+                              </button>
+
+                              {isLoggingProgress && (
+                                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', marginBottom: 12 }}>
+                                  <label style={microLabelStyle}>Progress Update</label>
+                                  <textarea className="finput" value={text} onChange={e => setText(e.target.value)} rows={3} autoFocus placeholder="Describe your progress…" style={{ resize: 'vertical', marginBottom: 10 }} />
+                                  <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+                                    <button className="btn btn-dark btn-sm" onClick={() => saveProgress(g.id)} disabled={saving || !text.trim()}>{saving ? 'Saving…' : 'Save'}</button>
+                                  </div>
+                                </div>
+                              )}
+
+                              {g.progress_entries?.length > 0 && (
+                                <div>
+                                  <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>History</div>
+                                  {g.progress_entries.map(e => (
+                                    <div key={e.id} style={{ padding: '10px 14px', background: 'var(--paper)', borderRadius: 4, marginBottom: 8, border: '1px solid var(--cream)' }}>
+                                      <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.6 }}>{e.progress_text}</div>
+                                      <div style={{ fontSize: 11, color: 'var(--muted-faint)', marginTop: 4 }}>{fmtDate(e.created_at)}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 ))}
               </div>
-            )}
-          </div>
+            </>
+          )}
+
+          {commitments.length > 0 && (
+            <div className="card" style={{ marginTop: 8 }}>
+              <div className="card-hdr">Commitments</div>
+              <table className="tbl"><tbody>
+                {commitments.map(c => (
+                  <tr key={c.id}><td>{c.text}</td><td style={{ color: 'var(--muted)', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtDate(c.created_at)}</td></tr>
+                ))}
+              </tbody></table>
+            </div>
+          )}
         </div>
-      ))}
-      {commitments.length > 0 && (
-        <div className="card" style={{ marginTop: 8 }}>
-          <div className="card-hdr">Commitments</div>
-          <table className="tbl"><tbody>
-            {commitments.map(c => (
-              <tr key={c.id}><td>{c.text}</td><td style={{ color: 'var(--muted)', textAlign: 'right', whiteSpace: 'nowrap' }}>{fmtDate(c.created_at)}</td></tr>
-            ))}
-          </tbody></table>
-        </div>
-      )}
+      </div>
     </div>
   )
 }
@@ -576,41 +957,80 @@ function StructuredDisplay({ data }: { data: { notes: string; reflection: string
   )
 }
 
-function fmtRelative(iso: string) {
-  const d = new Date(iso), now = new Date()
-  const diff = now.getTime() - d.getTime()
-  if (diff < 60000) return 'Just now'
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
-  if (diff < 86400000) return `Today at ${fmtTime(iso)}`
-  if (diff < 172800000) return `Yesterday at ${fmtTime(iso)}`
-  return fmtDate(iso)
+// ── Notes Tab ─────────────────────────────────────────────────────────────────
+const microLabelStyle: React.CSSProperties = {
+  fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase',
+  color: 'var(--muted)', display: 'block', marginBottom: 4,
 }
 
-const NOTE_TYPE_PILL: Record<string, string> = { session: 'pill-blue', observation: 'pill-gold', commitment: 'pill-green', general: 'pill-grey' }
-const NOTE_TYPE_LABEL: Record<string, string> = { session: 'Session Note', observation: 'Observation', commitment: 'Commitment', general: 'General' }
+function NotesTab({ notes, setNotes, showToast }: {
+  notes: Note[]; setNotes: React.Dispatch<React.SetStateAction<Note[]>>
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void
+}) {
+  const [draft, setDraft]             = useState('')
+  const [topic, setTopic]             = useState('')
+  const [sessionDate, setSessionDate] = useState(todayISO())
+  const [saving, setSaving]           = useState(false)
 
-// ── Notes Tab ─────────────────────────────────────────────────────────────────
-function NotesTab({ notes, setNotes }: { notes: Note[]; setNotes: React.Dispatch<React.SetStateAction<Note[]>> }) {
-  const [draft, setDraft]   = useState('')
-  const [saving, setSaving] = useState(false)
-  const [editId, setEditId] = useState<string | null>(null)
-  const [editText, setEditText] = useState('')
+  // Collapsed by default — same as the coach side's Notes explorer; nothing
+  // auto-opens, a click expands a row.
+  const [expandedId, setExpandedId]       = useState<string | null>(null)
+  const [editId, setEditId]               = useState<string | null>(null)
+  const [editText, setEditText]           = useState('')
+  const [editTopic, setEditTopic]         = useState('')
+  const [editSessionDate, setEditSessionDate] = useState('')
+
+  const [searchTopic, setSearchTopic] = useState('')
+  const [searchDate, setSearchDate]   = useState('')
+
+  const hasSearch = !!(searchTopic.trim() || searchDate)
+  const filteredNotes = useMemo(() => {
+    if (!hasSearch) return notes
+    const q = searchTopic.trim().toLowerCase()
+    return notes.filter(n => {
+      if (q && !(n.topic || '').toLowerCase().includes(q)) return false
+      if (searchDate && noteDateKey(n) !== searchDate) return false
+      return true
+    })
+  }, [notes, searchTopic, searchDate, hasSearch])
+
+  useEffect(() => {
+    if (expandedId && !notes.some(n => n.id === expandedId)) setExpandedId(null)
+  }, [notes, expandedId])
 
   async function createNote() {
     if (!draft.trim()) return
     setSaving(true)
     try {
-      const { data } = await api.post('/api/portal/notes/', { text: draft })
-      setNotes(prev => [data, ...prev]); setDraft('')
-    } catch { } finally { setSaving(false) }
+      const { data } = await api.post('/api/portal/notes/', { text: draft, topic, session_date: sessionDate || null })
+      setNotes(prev => [data, ...prev])
+      setDraft(''); setTopic(''); setSessionDate(todayISO())
+      showToast('Note added')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to save note', 'error')
+    } finally { setSaving(false) }
+  }
+
+  function startEdit(n: Note) {
+    setEditId(n.id); setEditText(n.text)
+    setEditTopic(n.topic || ''); setEditSessionDate(n.session_date || '')
+  }
+  function cancelEdit() {
+    setEditId(null); setEditText(''); setEditTopic(''); setEditSessionDate('')
   }
 
   async function updateNote(id: string) {
     if (!editText.trim()) return
     try {
-      const { data } = await api.patch(`/api/portal/notes/${id}/`, { text: editText })
-      setNotes(prev => prev.map(n => n.id === id ? data : n)); setEditId(null)
-    } catch { }
+      const { data } = await api.patch(`/api/portal/notes/${id}/`, {
+        text: editText, topic: editTopic, session_date: editSessionDate || null,
+      })
+      setNotes(prev => prev.map(n => n.id === id ? data : n))
+      cancelEdit()
+      showToast('Note updated')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to update note', 'error')
+    }
   }
 
   async function deleteNote(id: string) {
@@ -618,7 +1038,16 @@ function NotesTab({ notes, setNotes }: { notes: Note[]; setNotes: React.Dispatch
     try {
       await api.delete(`/api/portal/notes/${id}/`)
       setNotes(prev => prev.filter(n => n.id !== id))
-    } catch { }
+      showToast('Note deleted')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to delete note', 'error')
+    }
+  }
+
+  const notePreview = (n: Note) => {
+    const parsed = parseStructured(n.text)
+    if (parsed) return parsed.notes?.trim() || parsed.reflection?.trim() || 'Note'
+    return n.text.slice(0, 80)
   }
 
   return (
@@ -628,20 +1057,25 @@ function NotesTab({ notes, setNotes }: { notes: Note[]; setNotes: React.Dispatch
         <p style={{ fontSize: 13, color: 'var(--muted)', marginTop: 4 }}>Shared between you and your coach only.</p>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '300px 1fr', gap: 24, alignItems: 'start' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '320px 1fr', gap: 24, alignItems: 'start' }}>
 
         {/* Left — new note form */}
         <div className="card" style={{ position: 'sticky', top: 80 }}>
-          <div className="card-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span>NEW NOTE</span>
-          </div>
+          <div className="card-hdr"><span>NEW NOTE</span></div>
           <div className="card-body">
+            <label style={microLabelStyle}>Topic</label>
+            <input type="text" className="finput" value={topic} onChange={e => setTopic(e.target.value)}
+              placeholder="What's this about? (optional)" style={{ marginBottom: 10 }} />
+            <label style={microLabelStyle}>Date</label>
+            <input type="date" className="finput" value={sessionDate} onChange={e => setSessionDate(e.target.value)}
+              style={{ marginBottom: 10 }} />
+            <label style={microLabelStyle}>Notes</label>
             <textarea
               className="finput"
               value={draft}
               onChange={e => setDraft(e.target.value)}
               placeholder="Write your note here…"
-              rows={6}
+              rows={8}
               style={{ resize: 'vertical', marginBottom: 12 }}
               onKeyDown={e => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) createNote() }}
             />
@@ -652,62 +1086,139 @@ function NotesTab({ notes, setNotes }: { notes: Note[]; setNotes: React.Dispatch
           </div>
         </div>
 
-        {/* Right — notes list */}
+        {/* Right — notes explorer: searchable by topic/date, grouped by date,
+            collapsed by default — mirrors the coach side's Notes explorer. */}
         <div>
+          {notes.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ flex: '1 1 auto' }}>
+                  <label style={microLabelStyle}>Search by topic</label>
+                  <input type="text" className="finput" placeholder="e.g. Weekly check-in" value={searchTopic}
+                    onChange={e => setSearchTopic(e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div style={{ flexShrink: 0, width: 160 }}>
+                  <label style={microLabelStyle}>Search by date</label>
+                  <input type="date" className="finput" value={searchDate}
+                    onChange={e => setSearchDate(e.target.value)} style={{ width: '100%' }} />
+                </div>
+              </div>
+              {hasSearch && (
+                <button className="btn btn-outline btn-sm" style={{ marginTop: 6 }}
+                  onClick={() => { setSearchTopic(''); setSearchDate('') }}>
+                  Clear search
+                </button>
+              )}
+            </div>
+          )}
           {notes.length === 0 ? (
             <div className="empty" style={{ paddingTop: 40 }}>
               <div className="empty-icon">📝</div>
               <h3>No notes yet</h3>
               <p>Write your first note on the left.</p>
             </div>
+          ) : filteredNotes.length === 0 ? (
+            <div className="empty" style={{ paddingTop: 40 }}>
+              <div className="empty-icon">📝</div>
+              <h3>No matching notes</h3>
+              <p>Try a different topic or date.</p>
+            </div>
           ) : (
             <>
               <div style={{ fontSize: 18, fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, color: 'var(--ink)', marginBottom: 16 }}>
-                Session Notes <span style={{ color: 'var(--muted)', fontSize: 14 }}>{notes.length}</span>
+                Session Notes <span style={{ color: 'var(--muted)', fontSize: 14 }}>{filteredNotes.length}</span>
               </div>
-              {notes.map(note => {
-                const structured = parseStructured(note.text)
-                const typeLabel  = NOTE_TYPE_LABEL[note.note_type] || note.note_type
-                const typePill   = NOTE_TYPE_PILL[note.note_type]  || 'pill-grey'
-
-                return (
-                  <div key={note.id} className="card" style={{ marginBottom: 12, overflow: 'hidden' }}>
-                    {/* Note header */}
-                    <div style={{ padding: '10px 16px', background: 'var(--paper)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                        <span className={`pill ${typePill}`} style={{ fontSize: 10 }}>{typeLabel}</span>
-                        <span style={{ fontSize: 12, color: 'var(--muted)' }}>{fmtRelative(note.created_at)}</span>
-                        {note.created_by_name && (
-                          <span style={{ fontSize: 12, color: 'var(--muted)' }}>by {note.created_by_name}</span>
-                        )}
-                      </div>
-                      {note.client_owned && editId !== note.id && (
-                        <div style={{ display: 'flex', gap: 12 }}>
-                          <button className="btn btn-ghost btn-sm" onClick={() => { setEditId(note.id); setEditText(note.text) }}>Edit</button>
-                          <button className="btn btn-ghost btn-sm" style={{ color: 'var(--muted)' }} onClick={() => deleteNote(note.id)}>✕</button>
-                        </div>
-                      )}
+              <div style={{ border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--white)' }}>
+                {groupNotesByDate(filteredNotes).map(group => (
+                  <div key={group.label}>
+                    <div style={{
+                      padding: '6px 16px', fontSize: 10, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase',
+                      color: 'var(--muted)', background: 'var(--paper)', borderTop: '1px solid var(--border)', borderBottom: '1px solid var(--border)',
+                    }}>
+                      {group.label}
                     </div>
+                    {group.notes.map(note => {
+                      const isExpanded = expandedId === note.id
+                      const isEditing  = editId === note.id
+                      const structured = parseStructured(note.text)
 
-                    {/* Note body */}
-                    <div className="card-body">
-                      {editId === note.id ? (
-                        <>
-                          <textarea className="finput" value={editText} onChange={e => setEditText(e.target.value)} rows={4} autoFocus style={{ resize: 'vertical', marginBottom: 12 }} />
-                          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
-                            <button className="btn btn-outline btn-sm" onClick={() => setEditId(null)}>Cancel</button>
-                            <button className="btn btn-dark btn-sm" onClick={() => updateNote(note.id)} disabled={!editText.trim()}>Save</button>
+                      return (
+                        <div key={note.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                          {/* Row header — click to expand/collapse */}
+                          <div onClick={() => setExpandedId(isExpanded ? null : note.id)}
+                            style={{ padding: '12px 16px', cursor: 'pointer', display: 'flex', gap: 8, background: isExpanded ? 'var(--paper)' : 'transparent' }}>
+                            <span style={{
+                              fontSize: 9, color: 'var(--muted)', marginTop: 3, flexShrink: 0,
+                              display: 'inline-block', transform: isExpanded ? 'rotate(90deg)' : 'none', transition: 'transform .15s',
+                            }}>▸</span>
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
+                                <span style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {note.topic || notePreview(note)}
+                                </span>
+                                <span style={{ fontSize: 11.5, color: 'var(--muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtTime(note.created_at)}</span>
+                              </div>
+                              {!isExpanded && note.topic && (
+                                <div style={{ fontSize: 13, color: 'var(--ink)', lineHeight: 1.4, marginTop: 4, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                  {notePreview(note)}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </>
-                      ) : structured ? (
-                        <StructuredDisplay data={structured} />
-                      ) : (
-                        <p style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.8, whiteSpace: 'pre-wrap', margin: 0 }}>{note.text}</p>
-                      )}
-                    </div>
+
+                          {/* Expanded preview / edit */}
+                          {isExpanded && (
+                            <div style={{ padding: '0 16px 16px 32px' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                  {note.session_date && <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>Session: {fmtDayKey(note.session_date)}</span>}
+                                  <span style={{ fontSize: 11.5, color: 'var(--muted)' }}>{note.created_by_name ? `by ${note.created_by_name}` : 'By you'}</span>
+                                </div>
+                                {note.client_owned && !isEditing && (
+                                  <div style={{ display: 'flex', gap: 2 }}>
+                                    <button onClick={() => startEdit(note)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--muted)', padding: '3px 8px', fontSize: 12 }}>
+                                      Edit
+                                    </button>
+                                    <button onClick={() => deleteNote(note.id)}
+                                      style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '3px 6px', color: 'var(--muted)', fontSize: 17, lineHeight: 1 }}>
+                                      ×
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+
+                              {isEditing ? (
+                                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px' }}>
+                                  <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                                    <input type="text" className="finput" placeholder="Topic" value={editTopic}
+                                      onChange={e => setEditTopic(e.target.value)} style={{ flex: '1 1 auto', fontSize: 12.5 }} />
+                                    <input type="date" className="finput" value={editSessionDate}
+                                      onChange={e => setEditSessionDate(e.target.value)} style={{ flexShrink: 0, width: 150, fontSize: 12.5 }} />
+                                  </div>
+                                  <textarea className="finput" value={editText} onChange={e => setEditText(e.target.value)}
+                                    rows={5} autoFocus style={{ resize: 'vertical' }} />
+                                  <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 10 }}>
+                                    <button className="btn btn-outline btn-sm" onClick={cancelEdit}>Cancel</button>
+                                    <button className="btn btn-dark btn-sm" onClick={() => updateNote(note.id)} disabled={!editText.trim()}>Save</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', maxHeight: 320, overflowY: 'auto' }}>
+                                  {structured
+                                    ? <StructuredDisplay data={structured} />
+                                    : <p style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.8, whiteSpace: 'pre-wrap', margin: 0 }}>{note.text}</p>
+                                  }
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
-                )
-              })}
+                ))}
+              </div>
             </>
           )}
         </div>
@@ -1085,12 +1596,13 @@ export default function ClientPortal() {
   const [invoices, setInvoices]       = useState<Invoice[]>([])
   const [notes, setNotes]             = useState<Note[]>([])
   const [showIdleWarning, setShowIdleWarning] = useState(false)
+  const { show: showToast, el: toastEl } = useToast()
 
   useEffect(() => { axios.get(`${BASE}/api/settings/public-branding/`).then(r => setBranding(r.data)).catch(() => {}) }, [])
 
   useEffect(() => {
-    const token = sessionStorage.getItem('portal_token')
-    if (token) setSession({ token, client_name: sessionStorage.getItem('portal_client_name') || '', workspace_name: sessionStorage.getItem('portal_workspace_name') || '', coach_name: sessionStorage.getItem('portal_coach_name') || '' })
+    const token = localStorage.getItem('portal_token')
+    if (token) setSession({ token, client_name: localStorage.getItem('portal_client_name') || '', workspace_name: localStorage.getItem('portal_workspace_name') || '', coach_name: localStorage.getItem('portal_coach_name') || '' })
   }, [])
 
   const loadData = useCallback(async () => {
@@ -1124,19 +1636,28 @@ export default function ClientPortal() {
   useEffect(() => { if (session) loadData() }, [session, loadData])
 
   function logout() {
-    ['portal_token', 'portal_client_name', 'portal_workspace_name', 'portal_coach_name'].forEach(k => sessionStorage.removeItem(k))
+    ['portal_token', 'portal_client_name', 'portal_workspace_name', 'portal_coach_name'].forEach(k => localStorage.removeItem(k))
     setSession(null); setMe(null); setGoals([]); setCommitments([])
     setActivities([]); setMaterials([]); setInvoices([]); setNotes([]); setActiveTab('Overview')
   }
 
   const handleIdleLogout = useCallback(() => { setShowIdleWarning(false); logout() }, []) // eslint-disable-line
 
-  // Same 15 min warn / 30 min logout as the coach app (useInactivityTimer defaults) —
-  // kept uniform across every role, including this separate portal_client auth scope.
+  // The portal session token is valid for PORTAL_SESSION_LIFETIME_HOURS (24h, see
+  // PortalLoginView) specifically so a client doesn't have to re-request/re-enter their
+  // login code every time they come back the same day — but the coach app's 15/30 min
+  // idle thresholds are too aggressive for that same reason (would log an open-but-idle
+  // tab out long before the 24h ceiling). Widened to warn at 2h45m / log out at 3h: long
+  // enough that normal same-session use never hits it, short enough that a session left
+  // open on a shared/public device doesn't sit logged in for the full 24h unattended.
+  const IDLE_WARN_MS   = 165 * 60 * 1000  // 2h45m
+  const IDLE_LOGOUT_MS = 180 * 60 * 1000  // 3h
   const { stayActive } = useInactivityTimer({
     enabled:  !!session,
     onWarn:   () => setShowIdleWarning(true),
     onLogout: handleIdleLogout,
+    warnMs:   IDLE_WARN_MS,
+    logoutMs: IDLE_LOGOUT_MS,
   })
 
   if (!session) return <LoginScreen branding={branding} onLogin={d => setSession(d)} />
@@ -1145,10 +1666,13 @@ export default function ClientPortal() {
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--paper)', display: 'flex' }}>
+      {toastEl}
       {showIdleWarning && (
         <InactivityWarningModal
           onStay={() => { setShowIdleWarning(false); stayActive() }}
           onLogout={handleIdleLogout}
+          warnMinutes={IDLE_WARN_MS / 60000}
+          logoutMinutes={IDLE_LOGOUT_MS / 60000}
         />
       )}
 
@@ -1189,9 +1713,9 @@ export default function ClientPortal() {
           ) : (
             <>
               {activeTab === 'Overview'    && <OverviewTab me={me} goals={goals} activities={activities} invoices={invoices} />}
-              {activeTab === 'Goals'       && <GoalsTab goals={goals} commitments={commitments} onProgressSaved={(goalId, entry) => setGoals(prev => prev.map(g => g.id === goalId ? { ...g, progress_entries: [entry, ...g.progress_entries], progress_count: g.progress_count + 1 } : g))} />}
+              {activeTab === 'Goals'       && <GoalsTab goals={goals} setGoals={setGoals} commitments={commitments} showToast={showToast} onProgressSaved={(goalId, entry) => setGoals(prev => prev.map(g => g.id === goalId ? { ...g, progress_entries: [entry, ...g.progress_entries], progress_count: g.progress_count + 1 } : g))} />}
               {activeTab === 'Activities'  && <ActivitiesTab activities={activities} onUpdate={(id, p) => setActivities(prev => prev.map(a => a.id === id ? { ...a, ...p } : a))} onRefresh={refetchActivities} />}
-              {activeTab === 'Notes'       && <NotesTab notes={notes} setNotes={setNotes} />}
+              {activeTab === 'Notes'       && <NotesTab notes={notes} setNotes={setNotes} showToast={showToast} />}
               {activeTab === 'Files'       && <FilesTab materials={materials} />}
               {activeTab === 'Invoices'    && <InvoicesTab invoices={invoices} />}
             </>

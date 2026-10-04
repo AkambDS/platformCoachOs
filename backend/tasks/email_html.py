@@ -69,7 +69,7 @@ def is_light_color(hex_color: str) -> bool:
 
 def _email_shell(workspace_name: str, logo_url: str, body_html: str,
                  owner_email: str = "", owner_name: str = "",
-                 header_bg: str = "#1a2f4e",
+                 header_bg: str = "#ffffff",
                  accent_color: str = "#b8922e",
                  header_tagline: str = "",
                  body_font: str = "'Helvetica Neue',Helvetica,Arial,sans-serif",
@@ -81,12 +81,18 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
     brand_text_color = "#1a2f4e" if header_is_light else "#f5f0e8"
     # A white logo card needs a visible edge against a white/light header — on a dark
     # header the two never touch in a way that needs one.
-    logo_card_border = "border:1px solid #e5e0d8;" if header_is_light else ""
-
-    if logo_url:
+    if logo_url and header_is_light:
+        # White/light header (the default now, matching the invoice email): the logo sits
+        # directly on the header — no white "card" around it, which on a white header
+        # only reads as a stray box.
+        brand = (
+            f'<img src="{logo_url}" alt="{workspace_name}" '
+            f'style="max-height:44px;max-width:180px;object-fit:contain;display:block;" />'
+        )
+    elif logo_url:
         brand = (
             f'<table role="presentation" cellpadding="0" cellspacing="0">'
-            f'<tr><td style="background:#ffffff;padding:8px 14px;border-radius:5px;{logo_card_border}">'
+            f'<tr><td style="background:#ffffff;padding:8px 14px;border-radius:5px;">'
             f'<img src="{logo_url}" alt="{workspace_name}" '
             f'style="max-height:40px;max-width:160px;object-fit:contain;display:block;" />'
             f'</td></tr></table>'
@@ -130,6 +136,14 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
         if header_tagline else ''
     )
 
+    # Dark header: thin accent bar beneath it (the original branded look). Light header:
+    # just a hairline so the white header and white body still read as two areas — same
+    # clean "logo on white" look as the invoice email, no colored band.
+    accent_row = (
+        '<tr><td style="height:1px;background:#ede9e1;"></td></tr>' if header_is_light
+        else f'<tr><td style="height:3px;background:{accent_color};"></td></tr>'
+    )
+
     header_rows = f"""
     <!-- ── Header ── -->
     <tr>
@@ -143,10 +157,7 @@ def _email_shell(workspace_name: str, logo_url: str, body_html: str,
       </td>
     </tr>
 
-    <!-- ── Accent bar ── -->
-    <tr>
-      <td style="height:3px;background:{accent_color};"></td>
-    </tr>""" if show_header else ""
+    {accent_row}""" if show_header else ""
 
     body_radius = "0 0 8px 8px" if show_header else "8px"
 
@@ -347,6 +358,176 @@ def _action_buttons(confirm_url: str = "", cancel_url: str = "", reschedule_url:
     </table>"""
 
 
+# ── Shared, fully-editable body ──────────────────────────────────────────────────
+# Every session-style email (confirmation, reschedule, reminder, cancellation) and every
+# simple notice (coach copies, client-action notices, goal/note shared, …) is the same
+# stack: eyebrow + heading, message, details card, action buttons, closing, sign-off.
+# compose_body renders that stack with every piece overridable from the template's
+# `style` dict (Settings → Generic Templates), so a coach can rewrite or hide any part of
+# any email — not just the opening/closing paragraphs the builders used to expose:
+#   heading_text / eyebrow_text / signoff_text   — replace the built-in wording
+#   show_heading / show_details / show_actions / show_calendar / show_signature — hide a block
+# heading/eyebrow/signoff text accepts the same {placeholders} as the message.
+
+_LEGACY_HTML_RE = re.compile(r"<\s*/?\s*(br|strong|b|em|i|u|span|div|p|ul|ol|li|table|img|h[1-6])\b", re.IGNORECASE)
+
+
+def has_legacy_html(text: str) -> bool:
+    """Older saved templates (and some built-in samples) carry hand-written HTML like
+    <br>/<strong> — those keep rendering as HTML, as they always did. Plain text (every
+    new template) is escaped and split into real paragraphs instead."""
+    return bool(_LEGACY_HTML_RE.search(text or ""))
+
+
+def rich_text_html(text: str, p_style: str) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if has_legacy_html(text):
+        return f'<p style="{p_style}">{text.replace(chr(10), "<br>")}</p>'
+    return _paragraphs_html(text, p_style)
+
+
+class _KeepMissing(dict):
+    def __missing__(self, key):
+        return "{" + key + "}"
+
+
+def fill_placeholders(text: str, values: dict) -> str:
+    if not text:
+        return ""
+    try:
+        return text.format_map(_KeepMissing(values or {}))
+    except (KeyError, ValueError, IndexError):
+        return text
+
+
+def _flag(style: dict, key: str, default: bool = True) -> bool:
+    v = (style or {}).get(key, default)
+    if isinstance(v, str):
+        return v not in ("0", "false", "False", "")
+    return bool(v)
+
+
+def compose_body(style: dict, *, eyebrow: str, heading: str, intro: str,
+                 workspace_name: str, details_rows=None, actions_html: str = "",
+                 calendar_html: str = "", closing: str = "", eyebrow_color: str = "#b8922e",
+                 details_accent: str = "#1a2f4e", values: dict = None,
+                 default_signoff: str = "") -> str:
+    """See the block comment above. `intro`/`closing` are plain or legacy-HTML text with
+    placeholders already substituted; `details_rows` is [(label, value_html), ...]."""
+    s = style or {}
+    values = values or {}
+    heading_font = s.get("heading_font") or "Georgia,'Times New Roman',serif"
+    body_font    = s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif"
+    parts = []
+
+    if _flag(s, "show_heading"):
+        eyebrow_txt = _html.escape(fill_placeholders(s.get("eyebrow_text") or eyebrow, values))
+        heading_txt = _html.escape(fill_placeholders(s.get("heading_text") or heading, values))
+        if eyebrow_txt.strip():
+            parts.append(
+                f'<p style="margin:0 0 4px;font-family:{body_font};font-size:11px;letter-spacing:.16em;'
+                f'text-transform:uppercase;color:{eyebrow_color};font-weight:600;">{eyebrow_txt}</p>'
+            )
+        if heading_txt.strip():
+            parts.append(
+                f'<h1 style="margin:0 0 12px;font-family:{heading_font};font-size:30px;font-weight:400;'
+                f'color:#16130f;letter-spacing:-.01em;line-height:1.2;">{heading_txt}</h1>'
+            )
+
+    parts.append(rich_text_html(intro, f"margin:0 0 20px;font-size:15px;color:#5a524b;line-height:1.7;font-family:{body_font};"))
+
+    if details_rows and _flag(s, "show_details"):
+        rows = f"\n{_divider()}\n".join(_detail_row(label, value) for label, value in details_rows)
+        parts.append(
+            f'<table role="presentation" cellpadding="0" cellspacing="0" width="100%" '
+            f'style="margin:12px 0 0;border-top:2px solid {details_accent};border-bottom:1px solid #ede9e1;">'
+            f'{rows}</table>'
+        )
+
+    if actions_html and _flag(s, "show_actions"):
+        parts.append(actions_html)
+    if calendar_html and _flag(s, "show_calendar"):
+        parts.append(calendar_html)
+
+    parts.append(rich_text_html(closing, f"margin:24px 0 0;font-size:15px;color:#5a524b;line-height:1.7;font-family:{body_font};"))
+
+    if _flag(s, "show_signature"):
+        signoff = fill_placeholders(s.get("signoff_text") or default_signoff or f"— {workspace_name}", values)
+        if signoff.strip():
+            parts.append(
+                f'<p style="margin:16px 0 0;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;'
+                f'color:#9e9890;">{_html.escape(signoff).replace(chr(10), "<br>")}</p>'
+            )
+    return "\n".join(p for p in parts if p)
+
+
+def shell_from_style(body_html: str, style: dict, *, workspace_name: str, logo_url: str,
+                     owner_email: str = "", owner_name: str = "") -> str:
+    s = style or {}
+    return _email_shell(
+        workspace_name, logo_url, body_html, owner_email, owner_name,
+        header_bg=s.get("header_bg") or "#ffffff",
+        accent_color=s.get("accent_color") or "#b8922e",
+        header_tagline=s.get("header_tagline", ""),
+        body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
+        show_header=_flag(s, "show_header"), show_footer=_flag(s, "show_footer"),
+        footer_text=s.get("footer_text", ""), show_contact_line=_flag(s, "show_contact_line"),
+    )
+
+
+def _session_values(activity, coach_name: str, workspace_name: str, dt_human: str) -> dict:
+    client = getattr(activity, "client", None)
+    return dict(
+        client_name=getattr(client, "full_name", ""), client_first_name=getattr(client, "first_name", ""),
+        coach_name=coach_name, workspace_name=workspace_name,
+        session_title=getattr(activity, "title", ""), session_time=dt_human,
+    )
+
+
+def _session_rows(activity, dt_human: str, coach_display: str, value_color: str = "#1a1714",
+                  when_label: str = "When", struck: bool = False) -> list:
+    title = _html.escape(activity.title or "")
+    if struck:
+        title = f'<span style="text-decoration:line-through;color:#9e9890;">{title}</span>'
+    rows = [("What", title), (when_label, f'<strong style="color:{value_color};">{dt_human}</strong>')]
+    if getattr(activity, "location", ""):
+        rows.append(("Location", _html.escape(activity.location)))
+    rows.append(("Coach", coach_display))
+    return rows
+
+
+def heading_override_html(style: dict, eyebrow: str, heading: str, eyebrow_color: str,
+                          heading_font: str = "Georgia,'Times New Roman',serif",
+                          values: dict = None, size: int = 30) -> str:
+    """Eyebrow + h1 for builders that don't go through compose_body — same
+    heading_text / eyebrow_text / show_heading overrides. Built-in strings may carry
+    HTML entities (&middot;) so they're used as-is; coach-typed overrides are escaped."""
+    s = style or {}
+    if not _flag(s, "show_heading"):
+        return ""
+    eb = _html.escape(fill_placeholders(s["eyebrow_text"], values or {})) if s.get("eyebrow_text") else eyebrow
+    hd = _html.escape(fill_placeholders(s["heading_text"], values or {})) if s.get("heading_text") else heading
+    return (
+        f'<p style="margin:0 0 4px;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;font-size:11px;'
+        f'letter-spacing:.16em;text-transform:uppercase;color:{eyebrow_color};font-weight:600;">{eb}</p>'
+        f'<h1 style="margin:0 0 12px;font-family:{heading_font};font-size:{size}px;font-weight:400;'
+        f'color:#16130f;letter-spacing:-.01em;line-height:1.2;">{hd}</h1>'
+    )
+
+
+def signoff_override_html(style: dict, workspace_name: str, margin: str = "24px", values: dict = None) -> str:
+    s = style or {}
+    if not _flag(s, "show_signature"):
+        return ""
+    text = fill_placeholders(s.get("signoff_text") or f"— {workspace_name}", values or {"workspace_name": workspace_name})
+    return (
+        f'<p style="margin:{margin} 0 0;font-family:Georgia,\'Times New Roman\',serif;font-size:15px;'
+        f'color:#9e9890;">{_html.escape(text).replace(chr(10), "<br>")}</p>'
+    )
+
+
 # ── Confirmation email ───────────────────────────────────────────────────────────
 
 def build_confirmation_email(activity, workspace_name: str, logo_url: str,
@@ -357,85 +538,27 @@ def build_confirmation_email(activity, workspace_name: str, logo_url: str,
                               confirm_url: str = "", cancel_url: str = "",
                               reschedule_url: str = "",
                               style: dict = None) -> str:
-    s              = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    show_header    = s.get("show_header", True)
-    show_footer    = s.get("show_footer", True)
-    show_contact_line = s.get("show_contact_line", True)
-    show_heading   = s.get("show_heading", True)
-    show_signature = s.get("show_signature", True)
-    footer_text    = s.get("footer_text", "")
-    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
-    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
-    value_color    = s.get("value_color")    or "#1a1714"
-
-    location_row = ""
-    if activity.location:
-        location_row = _divider() + _detail_row("Location", activity.location)
-
+    s = style or {}
     coach_display = (
-        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
-        f'{coach_name}</a>'
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">{coach_name}</a>'
         if coach_email else coach_name
     )
-
-    _default_intro   = (f"Hi {activity.client.first_name}, your session with "
-                        f"{coach_name} has been scheduled. We look forward to seeing you.")
-    _default_closing = (f"Need to reschedule or have questions? Contact {coach_name} directly.")
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
-
-    heading_block = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#b8922e;
-              font-weight:600;">
-      Session Confirmed
-    </p>
-    <h1 style="margin:0 0 12px;font-family:{heading_font};
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      Your session is confirmed
-    </h1>""" if show_heading else ""
-
-    signature_block = f"""
-    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {closing_html}
-    </p>
-    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>""" if show_signature else ""
-
-    body = f"""
-    {heading_block}
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {intro_html}
-    </p>
-
-    <!-- Details table -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
-      {_detail_row("What", activity.title)}
-      {_divider()}
-      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
-      {location_row}
-      {_divider()}
-      {_detail_row("Coach", coach_display)}
-    </table>
-
-    {_action_buttons(confirm_url, cancel_url, reschedule_url)}
-    {_calendar_block(google_cal_url)}
-
-    {signature_block}"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
-                        show_contact_line=show_contact_line)
+    body = compose_body(
+        # Response buttons are mandatory — they're how a client confirms, cancels or
+        # reschedules — so a template can't switch them off.
+        {**s, "show_actions": True},
+        eyebrow="Session Confirmed", heading="Your session is confirmed",
+        intro=custom_intro or (f"Hi {activity.client.first_name}, your session with "
+                               f"{coach_name} has been scheduled. We look forward to seeing you."),
+        closing=custom_closing or f"Need to reschedule or have questions? Contact {coach_name} directly.",
+        details_rows=_session_rows(activity, dt_human, coach_display, s.get("value_color") or "#1a1714"),
+        actions_html=_action_buttons(confirm_url, cancel_url, reschedule_url),
+        calendar_html=_calendar_block(google_cal_url),
+        workspace_name=workspace_name,
+        values=_session_values(activity, coach_name, workspace_name, dt_human),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 # ── Reschedule / update email ────────────────────────────────────────────────────
@@ -447,76 +570,28 @@ def build_reschedule_email(activity, workspace_name: str, logo_url: str,
                             custom_intro: str = "", custom_closing: str = "",
                             cancel_url: str = "", reschedule_url: str = "",
                             style: dict = None) -> str:
-    s              = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    show_header    = s.get("show_header", True)
-    show_footer    = s.get("show_footer", True)
-    show_contact_line = s.get("show_contact_line", True)
-    footer_text    = s.get("footer_text", "")
-    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
-    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
-    value_color    = s.get("value_color")    or "#1a1714"
-
-    location_row = ""
-    if activity.location:
-        location_row = _divider() + _detail_row("Location", activity.location)
-
+    s = style or {}
     coach_display = (
-        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
-        f'{coach_name}</a>'
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">{coach_name}</a>'
         if coach_email else coach_name
     )
-
-    _default_intro   = (f"Hi {activity.client.first_name}, your session with "
-                        f"{coach_name} has been updated. Here are your new session details.")
-    _default_closing = (f"Need to reschedule again or have questions? Contact {coach_name} directly.")
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
-              font-weight:600;">
-      Session Updated
-    </p>
-    <h1 style="margin:0 0 12px;font-family:{heading_font};
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      Your session has been updated
-    </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {intro_html}
-    </p>
-
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
-      {_detail_row("What", activity.title)}
-      {_divider()}
-      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
-      {location_row}
-      {_divider()}
-      {_detail_row("Coach", coach_display)}
-    </table>
-
-    {_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url)}
-    {_calendar_block(google_cal_url)}
-
-    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {closing_html}
-    </p>
-    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
-                        show_contact_line=show_contact_line)
+    body = compose_body(
+        # Response buttons are mandatory — they're how a client confirms, cancels or
+        # reschedules — so a template can't switch them off.
+        {**s, "show_actions": True},
+        eyebrow="Session Updated", heading="Your session has been updated",
+        eyebrow_color=s.get("accent_color") or "#b8922e",
+        intro=custom_intro or (f"Hi {activity.client.first_name}, your session with "
+                               f"{coach_name} has been updated. Here are your new session details."),
+        closing=custom_closing or f"Need to reschedule again or have questions? Contact {coach_name} directly.",
+        details_rows=_session_rows(activity, dt_human, coach_display, s.get("value_color") or "#1a1714"),
+        actions_html=_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url),
+        calendar_html=_calendar_block(google_cal_url),
+        workspace_name=workspace_name,
+        values=_session_values(activity, coach_name, workspace_name, dt_human),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 # ── Team invite email ────────────────────────────────────────────────────────────
@@ -526,101 +601,29 @@ def build_invite_email(invited_by_name: str, workspace_name: str, role_display: 
                        owner_email: str = "", owner_name: str = "",
                        custom_intro: str = "", custom_closing: str = "",
                        style: dict = None) -> str:
-    s              = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    show_header    = s.get("show_header", True)
-    show_footer    = s.get("show_footer", True)
-    show_contact_line = s.get("show_contact_line", True)
-    footer_text    = s.get("footer_text", "")
-    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
-
-    role_color = {
-        "Business Owner": "#b8922e",
-        "Coach":          "#2d6a9f",
-        "Assistant":      "#4a7c59",
-    }.get(role_display, "#6e6560")
-
-    _default_intro = (f"<strong style=\"color:#1a1714;\">{invited_by_name}</strong> has invited you to join "
-                      f"<strong style=\"color:#1a1714;\">{workspace_name}</strong> on CoachOS as a team member.")
-    intro_html   = custom_intro   or _default_intro
-    closing_html = (f'<p style="margin:24px 0 0;font-size:13px;color:#9e9890;line-height:1.7;'
-                    f'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">{custom_closing}</p>'
-                    if custom_closing.strip() else "")
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
-              font-weight:600;">
-      Team Invitation
-    </p>
-    <h1 style="margin:0 0 12px;font-family:{heading_font};
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      You've been invited
-    </h1>
-    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {intro_html}
-    </p>
-
-    <!-- Role badge -->
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:32px;">
-      <tr>
-        <td style="padding:7px 20px;border-radius:20px;
-                   background:{role_color}18;border:1px solid {role_color}50;">
-          <span style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-                       font-size:12px;font-weight:700;color:{role_color};
-                       text-transform:uppercase;letter-spacing:.1em;">
-            {role_display}
-          </span>
-        </td>
-      </tr>
-    </table>
-
-    <!-- CTA -->
-    {_cta_button("Accept Invitation &amp; Set Password", accept_url, "#16130f")}
-
-    <p style="margin:20px 0 6px;font-size:12px;color:#b5afa6;text-align:center;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Or copy and paste this link into your browser:
-    </p>
-    <p style="margin:0 0 32px;font-size:11px;word-break:break-all;text-align:center;">
-      <a href="{accept_url}" style="color:#b8922e;text-decoration:none;">{accept_url}</a>
-    </p>
-
-    <!-- Info box -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="border:1px solid #e4dfd6;border-radius:6px;background:#faf8f4;">
-      <tr>
-        <td style="padding:20px 24px;">
-          <p style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
-                    font-size:14px;color:#6e6560;font-weight:400;">Important details</p>
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
-            <tr>
-              <td style="padding:5px 0;font-size:13px;color:#9e9890;
-                         font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.6;">
-                &#9201;&nbsp; Invitation expires in <strong style="color:#6e6560;">48 hours</strong>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:5px 0;font-size:13px;color:#9e9890;
-                         font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;line-height:1.6;">
-                &#128274;&nbsp; You will set your own password on the next screen
-              </td>
-            </tr>
-            {'<tr><td style="padding:5px 0;font-size:13px;color:#9e9890;font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;line-height:1.6;">&#128231;&nbsp; Your login email: <strong style="color:#6e6560;">' + invited_email + '</strong></td></tr>' if invited_email else ''}
-          </table>
-        </td>
-      </tr>
-    </table>
-    {closing_html}"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name or invited_by_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, show_header=show_header,
-                        show_footer=show_footer, footer_text=footer_text, show_contact_line=show_contact_line)
-
+    s = style or {}
+    accept = (
+        f'<div style="margin:28px 0 8px;">{_cta_button("Accept Invitation &amp; Set Password", accept_url, "#16130f")}</div>'
+        f'<p style="margin:12px 0 0;font-size:12px;color:#b5afa6;text-align:center;'
+        f'font-family:\'Helvetica Neue\',Helvetica,Arial,sans-serif;">Or paste this link into your browser:<br>'
+        f'<a href="{accept_url}" style="color:#b8922e;text-decoration:none;word-break:break-all;">{accept_url}</a></p>'
+    )
+    rows = [("Role", _html.escape(role_display)), ("Expires", "In 48 hours")]
+    if invited_email:
+        rows.append(("Login email", _html.escape(invited_email)))
+    body = compose_body(
+        # The accept button is the whole point of this email — always shown.
+        {**s, "show_actions": True},
+        eyebrow="Team Invitation", heading="You've been invited",
+        eyebrow_color=s.get("accent_color") or "#b8922e",
+        intro=custom_intro or (f"{invited_by_name} has invited you to join {workspace_name} "
+                               f"on CoachOS as a team member."),
+        closing=custom_closing, details_rows=rows, actions_html=accept,
+        workspace_name=workspace_name,
+        values=dict(workspace_name=workspace_name, invited_by_name=invited_by_name, role=role_display),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name or invited_by_name)
 
 # ── Reminder email ───────────────────────────────────────────────────────────────
 
@@ -631,144 +634,58 @@ def build_reminder_email(activity, workspace_name: str, logo_url: str,
                          custom_intro: str = "", custom_closing: str = "",
                          cancel_url: str = "", reschedule_url: str = "",
                          style: dict = None) -> str:
-    s              = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    show_header    = s.get("show_header", True)
-    show_footer    = s.get("show_footer", True)
-    show_contact_line = s.get("show_contact_line", True)
-    footer_text    = s.get("footer_text", "")
-    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
-    value_color    = s.get("value_color")    or "#1a1714"
-
-    location_row = ""
-    if activity.location:
-        location_row = _divider() + _detail_row("Location", activity.location)
-
-    is_soon   = "1 hour" in time_label or ("hour" in time_label.lower() and "24" not in time_label)
-    dt_color  = "#c0392b" if is_soon else accent_color
-    label_text = f"Upcoming in {time_label}" if is_soon else f"Reminder \u00b7 {time_label} away"
-
+    s = style or {}
+    accent_color = s.get("accent_color") or "#b8922e"
+    is_soon    = "1 hour" in time_label or ("hour" in time_label.lower() and "24" not in time_label)
+    label_text = f"Upcoming in {time_label}" if is_soon else f"Reminder · {time_label} away"
     coach_display = (
-        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
-        f'{coach_name}</a>'
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">{coach_name}</a>'
         if coach_email else coach_name
     )
-
-    _default_intro   = (f"Hi {activity.client.first_name}, this is a friendly reminder "
-                        f"about your upcoming session with {coach_name}.")
-    _default_closing = f"Need to reschedule? Please contact {coach_name} as soon as possible."
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-              color:{dt_color};font-weight:600;">
-      {label_text}
-    </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      Session reminder
-    </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {intro_html}
-    </p>
-
-    <!-- Details table -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
-      {_detail_row("What", activity.title)}
-      {_divider()}
-      {_detail_row("When", f'<strong style="color:{value_color};">{dt_human}</strong>')}
-      {location_row}
-      {_divider()}
-      {_detail_row("Coach", coach_display)}
-    </table>
-
-    {_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url)}
-
-    <p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {closing_html}
-    </p>
-    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
-                        show_contact_line=show_contact_line)
+    values = _session_values(activity, coach_name, workspace_name, dt_human)
+    values["time_label"] = time_label
+    body = compose_body(
+        # Response buttons are mandatory — they're how a client confirms, cancels or
+        # reschedules — so a template can't switch them off.
+        {**s, "show_actions": True},
+        eyebrow=label_text, heading="Session reminder",
+        eyebrow_color="#c0392b" if is_soon else accent_color,
+        intro=custom_intro or (f"Hi {activity.client.first_name}, this is a friendly reminder "
+                               f"about your upcoming session with {coach_name}."),
+        closing=custom_closing or f"Need to reschedule? Please contact {coach_name} as soon as possible.",
+        details_rows=_session_rows(activity, dt_human, coach_display, s.get("value_color") or "#1a1714"),
+        actions_html=_action_buttons(cancel_url=cancel_url, reschedule_url=reschedule_url),
+        workspace_name=workspace_name, values=values,
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 # ── Cancellation email ───────────────────────────────────────────────────────────
 
 def build_cancellation_email(activity, workspace_name: str, logo_url: str,
                               coach_name: str, coach_email: str, dt_human: str,
-                              owner_email: str = "", owner_name: str = "") -> str:
-    location_row = ""
-    if activity.location:
-        location_row = _divider() + _detail_row("Location", activity.location)
-
+                              owner_email: str = "", owner_name: str = "",
+                              custom_intro: str = "", custom_closing: str = "",
+                              style: dict = None) -> str:
+    s = style or {}
     coach_display = (
-        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">'
-        f'{coach_name}</a>'
+        f'<a href="mailto:{coach_email}" style="color:#b8922e;text-decoration:none;">{coach_name}</a>'
         if coach_email else coach_name
     )
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:#c0392b;
-              font-weight:600;">
-      Session Cancelled
-    </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      Your session has been cancelled
-    </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {activity.client.first_name}, we're writing to let you know that the following session
-      has been cancelled. A calendar update has been attached to this email.
-    </p>
-
-    <!-- Details table -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #c0392b;border-bottom:1px solid #ede9e1;">
-      {_detail_row("What", f'<span style="text-decoration:line-through;color:#9e9890;">{activity.title}</span>')}
-      {_divider()}
-      {_detail_row("Was", dt_human)}
-      {location_row}
-      {_divider()}
-      {_detail_row("Coach", coach_display)}
-    </table>
-
-    <!-- Reschedule note -->
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0"
-           style="margin-top:28px;border:1px solid #e4dfd6;border-radius:6px;background:#faf8f4;">
-      <tr>
-        <td style="padding:18px 24px;">
-          <p style="margin:0;font-size:13px;color:#6e6560;line-height:1.7;
-                    font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-            To reschedule or book a new session, please contact
-            <a href="mailto:{coach_email or owner_email}"
-               style="color:#b8922e;text-decoration:none;font-weight:600;">{coach_name}</a> directly.
-          </p>
-        </td>
-      </tr>
-    </table>
-
-    <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name)
+    body = compose_body(
+        s,
+        eyebrow="Session Cancelled", heading="Your session has been cancelled",
+        eyebrow_color="#c0392b", details_accent="#c0392b",
+        intro=custom_intro or (f"Hi {activity.client.first_name}, we're writing to let you know that the "
+                               f"following session has been cancelled. A calendar update has been attached to this email."),
+        closing=custom_closing or f"To reschedule or book a new session, please contact {coach_name} directly.",
+        details_rows=_session_rows(activity, dt_human, coach_display, when_label="Was", struck=True),
+        workspace_name=workspace_name,
+        values=_session_values(activity, coach_name, workspace_name, dt_human),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 # ── Invoice email ────────────────────────────────────────────────────────────────
@@ -778,7 +695,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
                         custom_intro: str = "", custom_closing: str = "",
                         style: dict = None) -> str:
     s = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
+    header_bg      = s.get("header_bg")      or "#ffffff"
     accent_color   = s.get("accent_color")   or "#b8922e"
     header_tagline = s.get("header_tagline", "")
     body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
@@ -824,7 +741,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
     <!-- Invoice details -->
     <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
+           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
       {_detail_row("Invoice #", invoice.number)}
       {_divider()}
       {_detail_row("Amount", f'<strong style="color:{value_color};font-size:18px;">{amount}</strong>')}
@@ -848,70 +765,31 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 # ── Payment receipt email ──────────────────────────────────────────────────────
 
 def build_payment_receipt_email(invoice, workspace_name: str, logo_url: str,
-                                 amount_paid: str, payment_date: str,
-                                 owner_email: str = "", owner_name: str = "",
-                                 custom_intro: str = "", custom_closing: str = "",
-                                 style: dict = None) -> str:
-    """Sent when an invoice is recorded as fully paid (InvoiceViewSet.record_payment).
-    Deliberately a separate builder from build_invoice_email rather than reusing it with
-    different copy — a receipt should read "Payment Received", not "Invoice", as its
-    heading, and show what was paid/when rather than what's owed."""
+                                amount_paid: str, payment_date: str,
+                                owner_email: str = "", owner_name: str = "",
+                                custom_intro: str = "", custom_closing: str = "",
+                                style: dict = None) -> str:
     s = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
-    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
-    value_color    = s.get("value_color")    or "#1a1714"
-    show_header       = s.get("show_header", True)
-    show_footer       = s.get("show_footer", True)
-    footer_text       = s.get("footer_text", "")
-    show_contact_line = s.get("show_contact_line", True)
-
-    _default_intro   = f"Hi {invoice.client.first_name}, thank you — we've received your payment for invoice #{invoice.number}."
-    _default_closing = (f"Questions about this payment? Contact us at {workspace_name or owner_email}."
-                        if owner_email else "")
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:{body_font};
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:{accent_color};
-              font-weight:600;">
-      Payment Received
-    </p>
-    <h1 style="margin:0 0 12px;font-family:{heading_font};
-               font-size:32px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      ${amount_paid}
-    </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:{body_font};">
-      {intro_html}
-    </p>
-
-    <!-- Receipt details -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid {header_bg};border-bottom:1px solid #ede9e1;">
-      {_detail_row("Invoice #", invoice.number)}
-      {_divider()}
-      {_detail_row("Amount Paid", f'<strong style="color:{value_color};font-size:18px;">${amount_paid}</strong>')}
-      {_divider()}
-      {_detail_row("Paid On", payment_date)}
-    </table>
-
-    {f'<p style="margin:28px 0 0;font-size:13px;color:#9e9890;line-height:1.7;font-family:{body_font};">{closing_html}</p>' if closing_html else ''}
-
-    <p style="margin:{'12px' if closing_html else '28px'} 0 0;font-family:{heading_font};
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer,
-                        footer_text=footer_text, show_contact_line=show_contact_line)
-
+    value_color = s.get("value_color") or "#1a1714"
+    body = compose_body(
+        s,
+        eyebrow="Payment Received", heading=f"${amount_paid}",
+        eyebrow_color=s.get("accent_color") or "#b8922e",
+        intro=custom_intro or (f"Hi {invoice.client.first_name}, thank you — we've received your "
+                               f"payment for invoice #{invoice.number}."),
+        closing=custom_closing or (f"Questions about this payment? Contact us at {workspace_name or owner_email}."
+                                   if owner_email else ""),
+        details_rows=[
+            ("Invoice #", _html.escape(str(invoice.number))),
+            ("Amount Paid", f'<strong style="color:{value_color};font-size:18px;">${amount_paid}</strong>'),
+            ("Paid On", payment_date),
+        ],
+        workspace_name=workspace_name,
+        values=dict(workspace_name=workspace_name, amount=amount_paid, invoice_number=invoice.number,
+                    client_name=invoice.client.full_name, client_first_name=invoice.client.first_name),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 # ── Proper invoice PDF document (with line items) ────────────────────────────────
 
@@ -1100,99 +978,33 @@ def build_pipeline_alert_email(
     custom_closing: str = "",
     style: dict = None,
 ) -> str:
-    s              = style or {}
-    header_bg      = s.get("header_bg")      or "#1a2f4e"
-    accent_color   = s.get("accent_color")   or "#b8922e"
-    header_tagline = s.get("header_tagline", "")
-    show_header    = s.get("show_header", True)
-    show_footer    = s.get("show_footer", True)
-    show_contact_line = s.get("show_contact_line", True)
-    footer_text    = s.get("footer_text", "")
-    body_font      = s.get("body_font")      or "'Helvetica Neue',Helvetica,Arial,sans-serif"
-    heading_font   = s.get("heading_font")   or "Georgia,'Times New Roman',serif"
-
+    s = style or {}
     overdue_days = days_in_stage - follow_up_days
-
-    cta = ""
-    if pipeline_url:
-        cta = f"""
-    <div style="margin:32px 0;text-align:center;">
-      {_cta_button("View Pipeline", pipeline_url, header_bg)}
-    </div>"""
-
-    _default_intro = (
-        f"Hi {owner_name}, this deal has been sitting in "
-        f"<strong style=\"color:#1a1714;\">{stage_label}</strong> for "
-        f"<strong style=\"color:#c0392b;\">{days_in_stage} days</strong> "
-        f"&mdash; {overdue_days} day{'s' if overdue_days != 1 else ''} past your follow-up threshold."
+    cta = (f'<div style="margin:28px 0 4px;">{_cta_button("View Pipeline", pipeline_url, "#1a2f4e")}</div>'
+           if pipeline_url else "")
+    body = compose_body(
+        {**s, "show_actions": True},
+        eyebrow=f"Follow-up required &middot; {overdue_days} day{'s' if overdue_days != 1 else ''} overdue",
+        heading=f"{client_name} needs attention", eyebrow_color="#c0392b",
+        intro=custom_intro or (f"Hi {owner_name}, this deal has been sitting in {stage_label} for "
+                               f"{days_in_stage} days — {overdue_days} day{'s' if overdue_days != 1 else ''} "
+                               f"past your follow-up threshold."),
+        closing=custom_closing or "Once the deal moves to a new stage, this alert resets automatically.",
+        details_rows=[
+            ("Client", f'<strong style="color:#1a1714;">{_html.escape(client_name)}</strong>'),
+            ("Stage", f'<span style="color:{stage_color};font-weight:700;">{_html.escape(stage_label)}</span>'),
+            ("Days in stage", f'<strong style="color:#c0392b;">{days_in_stage} days</strong>'
+                              f'&nbsp;<span style="font-size:12px;color:#9e9890;">(threshold: {follow_up_days} days)</span>'),
+            ("Deal value", _html.escape(str(deal_value))),
+            ("Stage entered", _html.escape(str(stage_entered))),
+        ],
+        actions_html=cta, workspace_name=workspace_name,
+        values=dict(workspace_name=workspace_name, client_name=client_name,
+                    client_first_name=(client_name or "").split(" ")[0], stage_label=stage_label,
+                    days_in_stage=days_in_stage, owner_name=owner_name),
     )
-    _default_closing = "Once the deal moves to a new stage, this alert resets automatically."
-    intro_html   = custom_intro   or _default_intro
-    closing_html = custom_closing or _default_closing
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-              color:#c0392b;font-weight:600;">
-      Follow-up required &middot; {overdue_days} day{'s' if overdue_days != 1 else ''} overdue
-    </p>
-    <h1 style="margin:0 0 12px;font-family:{heading_font};
-               font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      {client_name} needs attention
-    </h1>
-    <p style="margin:0 0 32px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {intro_html}
-    </p>
-
-    <!-- Stage badge -->
-    <table role="presentation" cellpadding="0" cellspacing="0" style="margin-bottom:28px;">
-      <tr>
-        <td style="background:{stage_color};border-radius:20px;padding:6px 16px;">
-          <span style="font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-                       font-size:12px;font-weight:700;color:#fff;
-                       letter-spacing:.08em;text-transform:uppercase;">
-            {stage_label}
-          </span>
-        </td>
-      </tr>
-    </table>
-
-    <!-- Deal details -->
-    <table role="presentation" cellpadding="0" cellspacing="0" width="100%"
-           style="border-top:2px solid #1a2f4e;border-bottom:1px solid #ede9e1;">
-      {_detail_row("Client", f'<strong style="color:#1a1714;">{client_name}</strong>')}
-      {_divider()}
-      {_detail_row("Stage", stage_label)}
-      {_divider()}
-      {_detail_row("Days in stage",
-        f'<strong style="color:#c0392b;">{days_in_stage} days</strong>'
-        f'&nbsp;<span style="font-size:12px;color:#9e9890;">(threshold: {follow_up_days} days)</span>'
-      )}
-      {_divider()}
-      {_detail_row("Deal value",
-        f'<span style="font-family:Georgia,\'Times New Roman\',serif;font-size:18px;">{deal_value}</span>'
-      )}
-      {_divider()}
-      {_detail_row("Stage entered", stage_entered)}
-    </table>
-
-    {cta}
-
-    <p style="margin:{'0' if cta else '28px'} 0 0;font-size:13px;color:#9e9890;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {closing_html}
-    </p>
-    <p style="margin:12px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=header_bg, accent_color=accent_color,
-                        header_tagline=header_tagline, body_font=body_font,
-                        show_header=show_header, show_footer=show_footer, footer_text=footer_text,
-                        show_contact_line=show_contact_line)
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 def build_client_communication_email(
@@ -1345,7 +1157,7 @@ def build_client_communication_email(
     {signature_line_html}"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=s.get("header_bg") or "#1a2f4e",
+                        header_bg=s.get("header_bg") or "#ffffff",
                         accent_color=s.get("accent_color") or "#b8922e",
                         header_tagline=s.get("header_tagline", ""),
                         body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
@@ -1368,60 +1180,20 @@ def build_portal_invite_email(
 ) -> str:
     s = style or {}
     first_name = client_name.split()[0] if client_name else client_name
-
-    intro_html = f"""
-    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {custom_intro}
-    </p>""" if custom_intro else f"""
-    <p style="margin:0 0 28px;font-size:15px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      Hi {first_name}, {workspace_name} has set up a private portal for you where you can
-      view your sessions, goals, and shared resources.
-    </p>"""
-
-    closing_html = f"""
-    <p style="margin:28px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      {custom_closing}
-    </p>""" if custom_closing else f"""
-    <p style="margin:28px 0 0;font-size:14px;color:#6e6560;line-height:1.7;
-              font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;">
-      If you have any questions, reply to this email or contact {workspace_name}.
-    </p>"""
-
-    body = f"""
-    <p style="margin:0 0 4px;font-family:'Helvetica Neue',Helvetica,Arial,sans-serif;
-              font-size:11px;letter-spacing:.16em;text-transform:uppercase;
-              color:#4a7c59;font-weight:600;">
-      Portal Access
-    </p>
-    <h1 style="margin:0 0 12px;font-family:Georgia,'Times New Roman',serif;
-               font-size:30px;font-weight:400;color:#16130f;letter-spacing:-.01em;line-height:1.2;">
-      Your portal is ready
-    </h1>
-
-    {intro_html}
-
-    <div style="margin:32px 0;text-align:center;">
-      {_cta_button("Access Your Portal", portal_url, "#4a7c59")}
-    </div>
-
-    {closing_html}
-
-    <p style="margin:24px 0 0;font-family:Georgia,'Times New Roman',serif;
-              font-size:15px;color:#9e9890;">
-      &mdash; {workspace_name}
-    </p>"""
-
-    return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg=s.get("header_bg") or "#1a2f4e",
-                        accent_color=s.get("accent_color") or "#b8922e",
-                        header_tagline=s.get("header_tagline", ""),
-                        body_font=s.get("body_font") or "'Helvetica Neue',Helvetica,Arial,sans-serif",
-                        show_header=s.get("show_header", True),
-                        show_footer=s.get("show_footer", True), footer_text=s.get("footer_text", ""),
-                        show_contact_line=s.get("show_contact_line", True))
+    body = compose_body(
+        # The portal button is how the client gets in — always shown.
+        {**s, "show_actions": True},
+        eyebrow="Portal Access", heading="Your portal is ready", eyebrow_color="#4a7c59",
+        intro=custom_intro or (f"Hi {first_name}, {workspace_name} has set up a private portal for you "
+                               f"where you can view your sessions, goals, and shared resources."),
+        closing=custom_closing or f"If you have any questions, reply to this email or contact {workspace_name}.",
+        actions_html=f'<div style="margin:28px 0 4px;">{_cta_button("Access Your Portal", portal_url, "#4a7c59")}</div>',
+        workspace_name=workspace_name,
+        values=dict(workspace_name=workspace_name, client_name=client_name,
+                    client_first_name=first_name, coach_name=coach_name),
+    )
+    return shell_from_style(body, s, workspace_name=workspace_name, logo_url=logo_url,
+                            owner_email=owner_email, owner_name=owner_name)
 
 
 def build_portal_login_code_email(
@@ -1475,5 +1247,5 @@ def build_portal_login_code_email(
     </p>"""
 
     return _email_shell(workspace_name, logo_url, body, owner_email, owner_name,
-                        header_bg="#1a2f4e", accent_color="#b8922e",
+                        header_bg="#ffffff", accent_color="#b8922e",
                         body_font="'Helvetica Neue',Helvetica,Arial,sans-serif")

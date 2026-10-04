@@ -35,6 +35,11 @@ class Workspace(models.Model):
     workspace_timezone      = models.CharField(max_length=64, default="America/New_York")
     buffer_minutes     = models.PositiveSmallIntegerField(default=15)
     cancellation_hours = models.PositiveSmallIntegerField(default=48)
+    # A client's pending reschedule proposal (Activity.requested_start_at) auto-clears
+    # if the coach hasn't confirmed/declined it within this many days — calendar.md
+    # §7.2/§9.2 Task 5. Same "blank = never" convention already used for
+    # PipelineStageConfig.alert_stop_after_days, not a special case invented for this.
+    reschedule_request_ttl_days = models.PositiveIntegerField(default=5, null=True, blank=True)
     is_active          = models.BooleanField(default=True)
     pending_activation = models.BooleanField(default=False)
     # Customizable email copy — keys: confirmation, reminder_24h, reminder_1h, invoice, portal_invite

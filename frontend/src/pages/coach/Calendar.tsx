@@ -6,8 +6,9 @@ import interactionPlugin from '@fullcalendar/interaction'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { activitiesApi, clientsApi, settingsApi, authApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { Modal, StatusBadge, useToast } from '../../components/ui'
+import { Modal, StatusBadge, useToast, displayActivityStatus, STATUS_HEX } from '../../components/ui'
 import { EmailEditModal } from '../../components/EmailEditModal'
+import { DeclineRescheduleModal } from '../../components/DeclineRescheduleModal'
 import { useAuthStore } from '../../store/auth'
 
 // ── Type config ───────────────────────────────────────────────────────────────
@@ -24,14 +25,34 @@ function typeConfig(type: string) {
   return TYPE_CONFIG[type] || TYPE_CONFIG.custom
 }
 
+// ── Status config (calendar grid + legend) ───────────────────────────────────
+// Grid blocks are colored by STATUS, not activity type — "what state is this session
+// in" is what a coach scans the week for, and a type legend whose swatches (Settings'
+// per-type colors) didn't match TYPE_CONFIG's block colors was more confusing than
+// useful. Keyed by displayActivityStatus(); `accent` reuses STATUS_HEX so the grid,
+// legend, and the pills elsewhere all agree. The chip label on each block carries the
+// meaning in words, so color is never the only signal.
+const STATUS_STYLE: Record<string, { label: string; hint: string; bg: string; text: string; accent: string; muted?: boolean; struck?: boolean; dashed?: boolean }> = {
+  confirmed:   { label: 'Confirmed',   hint: 'Booked, nothing outstanding',         bg: '#e4efe1', text: '#24452b', accent: STATUS_HEX.confirmed },
+  pending:     { label: 'Pending',     hint: 'Client proposed a new time — review', bg: '#fbf1d6', text: '#5c4510', accent: '#b8862b', dashed: true },
+  rescheduled: { label: 'Rescheduled', hint: 'Needs a new time, none proposed yet', bg: '#dfeaf5', text: '#173f63', accent: STATUS_HEX.rescheduled, dashed: true },
+  late:        { label: 'Late',        hint: 'Client running late',                 bg: '#fbf1d6', text: '#5c4510', accent: STATUS_HEX.late },
+  completed:   { label: 'Completed',   hint: 'Session took place',                  bg: '#efede9', text: '#4a4540', accent: '#8c8279', muted: true },
+  missed:      { label: 'Missed',      hint: 'Client didn’t show',             bg: '#f7e4de', text: '#6e2c17', accent: STATUS_HEX.missed, muted: true },
+  cancelled:   { label: 'Cancelled',   hint: 'Called off — slot is free',           bg: '#f3f1ef', text: '#9e9890', accent: '#c9c3bc', muted: true, struck: true },
+}
+function statusStyle(a: any) {
+  return STATUS_STYLE[displayActivityStatus(a)] || STATUS_STYLE.confirmed
+}
+
 // Client Response — a separate axis from Activity.status (session lifecycle: scheduled/
 // completed/missed/...). This answers "has the client acknowledged the invite," not
-// "did the session happen." status still takes priority for cancelled/rescheduled since
-// there's no meaningful response to show once the session itself has been called off or moved.
-// Shared between the calendar cell and detail modal.
+// "did the session happen." Returns null once status/pending-reschedule already has
+// something to say (cancelled, a pending proposal, or a bare reschedule) — those are
+// shown via the single status pill (displayActivityStatus/STATUS_HEX) instead, so this
+// response badge never duplicates that signal (calendar.md §7.6: one indicator, not two).
 function rsvpStatus(a: any): { label: string; color: string; icon: string; waiting?: boolean } | null {
-  if (a.status === 'cancelled')   return { label: 'Cancelled',   color: '#b91c1c', icon: '✕' }
-  if (a.status === 'rescheduled') return { label: 'Rescheduled', color: '#2d6a9f', icon: '↻' }
+  if (a.status === 'cancelled' || a.requested_start_at || a.status === 'rescheduled') return null
   if (a.client_rsvp_status === 'declined')  return { label: 'Declined',  color: '#b91c1c', icon: '✕' }
   if (a.client_rsvp_status === 'tentative') return { label: 'Tentative', color: '#b8922e', icon: '~' }
   if (a.client_confirmed || a.client_rsvp_status === 'accepted') return { label: 'Confirmed', color: '#2d6a2d', icon: '✓' }
@@ -826,6 +847,43 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
         </div>
       )}
       <div className="fgroup"><label className="flabel">Title</label><input className="finput" value={form.title} onChange={e => set('title', e.target.value)} /></div>
+      {activity.requested_start_at && (
+        <div style={{
+          marginBottom: 14, padding: '12px 14px', borderRadius: 6,
+          background: '#fdf3e0', border: '1px solid #e8c874',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+        }}>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#8a6a1f', marginBottom: 2 }}>
+              CLIENT PROPOSED A NEW TIME
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--ink)' }}>
+              {new Date(activity.requested_start_at).toLocaleString()}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-sm"
+            style={{ background: '#8a6a1f', color: '#fff', border: 'none', whiteSpace: 'nowrap' }}
+            onClick={() => {
+              // Preserve the session's current duration — the proposed slot was already
+              // computed to match it (see apps.activities.availability.compute_available_slots).
+              const durationMs = (date && startTime && endDate && endTime)
+                ? new Date(`${endDate}T${endTime}`).getTime() - new Date(`${date}T${startTime}`).getTime()
+                : 60 * 60 * 1000
+              const newStart = new Date(activity.requested_start_at)
+              const newEnd = new Date(newStart.getTime() + durationMs)
+              const pad = (n: number) => String(n).padStart(2, '0')
+              const toDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+              const toTime = (d: Date) => `${pad(d.getHours())}:${pad(d.getMinutes())}`
+              setDate(toDate(newStart)); setStartTime(toTime(newStart))
+              setEndDate(toDate(newEnd)); setEndTime(toTime(newEnd))
+            }}
+          >
+            Use This Time
+          </button>
+        </div>
+      )}
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10 }}>
         <div className="fgroup" style={{ flex: 1, marginBottom: 0 }}>
           <label className="flabel">Start date</label>
@@ -924,11 +982,13 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
 }
 
 // ── Activity Detail Modal ─────────────────────────────────────────────────────
-function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: any) {
+function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onConfirmReschedule, onDeclineReschedule }: any) {
   const canAct = ['scheduled', 'rescheduled', 'late'].includes(activity.status)
   const cfg = typeConfig(activity.activity_type)
   const rsvp = rsvpStatus(activity)
+  const [showDecline, setShowDecline] = useState(false)
   return (
+    <>
     <Modal title={activity.title} onClose={onClose} footer={
       <div style={{ display: 'flex', gap: 8, width: '100%' }}>
         {canAct && <button className="btn btn-sm btn-outline" onClick={() => onEdit(activity)} style={{ marginRight: 'auto' }}>Edit</button>}
@@ -940,7 +1000,7 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
         <div style={{ width: 10, height: 10, borderRadius: '50%', background: cfg.border, flexShrink: 0 }} />
         <span style={{ fontSize: 12, textTransform: 'capitalize', color: cfg.text, fontWeight: 600 }}>{activity.activity_type}</span>
-        <StatusBadge status={activity.status} />
+        <StatusBadge status={displayActivityStatus(activity)} />
       </div>
       {rsvp && (
         <div className="kv">
@@ -986,12 +1046,41 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit }: 
           {activity.notes}
         </div>
       )}
+      {activity.requested_start_at && (
+        <div style={{ marginTop: 12, padding: '12px 14px', borderRadius: 6, background: '#fdf3e0', border: '1px solid #e8c874' }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: '#8a6a1f', marginBottom: 4 }}>
+            CLIENT REQUESTED A NEW TIME
+          </div>
+          <div style={{ fontSize: 13, color: 'var(--ink)', marginBottom: 10 }}>
+            {new Date(activity.requested_start_at).toLocaleString()}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="btn btn-sm" style={{ background: '#8a6a1f', color: '#fff', border: 'none' }}
+              onClick={() => onConfirmReschedule(activity.id)}>
+              Confirm New Time
+            </button>
+            <button className="btn btn-outline btn-sm" onClick={() => setShowDecline(true)}>
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
       {activity.status === 'scheduled' && (
         <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(201,168,76,.07)', border: '1px solid rgba(201,168,76,.2)', borderRadius: 6, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
           Client will receive automatic reminders <strong style={{ color: 'var(--ink)' }}>24h</strong> and <strong style={{ color: 'var(--ink)' }}>1h</strong> before this session.
         </div>
       )}
     </Modal>
+    {showDecline && (
+      <DeclineRescheduleModal
+        onClose={() => setShowDecline(false)}
+        onDecline={async (message: string, sendEmail: boolean) => {
+          await onDeclineReschedule(activity.id, message, sendEmail)
+          setShowDecline(false)
+        }}
+      />
+    )}
+    </>
   )
 }
 
@@ -1026,12 +1115,6 @@ export default function Calendar() {
     .filter((a: any) => a.activity_type !== 'client_communication'
       && !(a.activity_type === 'custom' && (a.title || '').startsWith('Email: ')))
 
-  const { data: activityTypes = [] } = useQuery({
-    queryKey: ['activity-type-configs'],
-    queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
-    select: (d: any[]) => d.filter(t => t.is_active),
-  })
-
   // Upcoming = future activities sorted by start
   const now = new Date()
   const upcoming = [...activities]
@@ -1040,16 +1123,16 @@ export default function Calendar() {
     .slice(0, 5)
 
   const calEvents = activities.map((a: any) => {
-    const faded = a.status === 'cancelled' || a.status === 'missed'
-    const cfg   = typeConfig(a.activity_type)
+    const st = statusStyle(a)
     return {
       id: a.id,
       title: a.title,
       start: a.start_at,
       end: a.end_at || a.start_at,
-      backgroundColor: faded ? '#f0f0f0' : cfg.bg,
-      borderColor: faded ? '#ccc' : cfg.border,
-      textColor: faded ? '#aaa' : cfg.text,
+      backgroundColor: st.bg,
+      borderColor: st.accent,
+      textColor: st.text,
+      classNames: st.dashed ? ['ev-dashed'] : [],
       extendedProps: a,
     }
   })
@@ -1083,6 +1166,28 @@ export default function Calendar() {
       setSelectedAct(null)
       showToast('Session marked as missed')
     } catch { showToast('Failed', 'error') }
+  }
+
+  const handleConfirmReschedule = async (id: string) => {
+    try {
+      await activitiesApi.confirmReschedule(id)
+      qc.invalidateQueries({ queryKey: ['activities'] })
+      setSelectedAct(null)
+      showToast('New time confirmed — client notified')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to confirm new time', 'error')
+    }
+  }
+
+  const handleDeclineReschedule = async (id: string, message: string, sendEmail: boolean) => {
+    try {
+      await activitiesApi.declineReschedule(id, { message, send_email: sendEmail })
+      qc.invalidateQueries({ queryKey: ['activities'] })
+      setSelectedAct(null)
+      showToast(sendEmail ? 'Declined — client notified' : 'Declined')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Failed to decline', 'error')
+    }
   }
 
   const handleCancel = async () => {
@@ -1199,12 +1304,12 @@ export default function Calendar() {
               .fc .fc-col-header-cell.fc-day-today .fc-day-num  { color: #c9a84c !important; }
 
               /* Event blocks */
+              /* Same full status-colored outline as month view (daygrid) — a thin border on
+                 all sides plus the thicker left edge, so blocks read identically in every view. */
               .fc-timegrid-event {
                 border-radius: 6px !important;
-                border-left-width: 3px !important;
-                border-top: none !important;
-                border-right: none !important;
-                border-bottom: none !important;
+                border-style: solid !important;
+                border-width: 1px 1px 1px 3px !important;
                 box-shadow: 0 1px 4px rgba(0,0,0,.07) !important;
                 margin: 0 2px !important;
               }
@@ -1218,6 +1323,9 @@ export default function Calendar() {
 
               /* Day grid (month view) events */
               .fc-daygrid-event { border-radius: 4px !important; border-left-width: 3px !important; }
+
+              /* Awaiting action (Pending / Rescheduled) — dashed edge reads as "not settled" */
+              .fc-event.ev-dashed { border-left-style: dashed !important; }
 
               /* Hover */
               .fc-timegrid-event:hover { filter: brightness(.97); }
@@ -1275,45 +1383,42 @@ export default function Calendar() {
               }}
               eventTimeFormat={{ hour: 'numeric', minute: '2-digit', meridiem: 'short' }}
               eventContent={(arg: any) => {
-                const a     = arg.event.extendedProps
-                const cfg   = typeConfig(a.activity_type)
-                const faded = a.status === 'cancelled' || a.status === 'missed'
+                const a  = arg.event.extendedProps
+                // Single status indicator per block (calendar.md §7.6) — a worded chip in
+                // the status color rather than an unlabeled dot, so the state is readable
+                // without hovering or cross-referencing the legend. Only Cancelled is
+                // struck through; Pending used to be too, which made it look cancelled.
+                const st = statusStyle(a)
                 const clientFirst = (a.client_name || '').split(' ')[0]
                 const startTime   = new Date(a.start_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
                 const endTime     = a.end_at ? new Date(a.end_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : ''
-                const rsvp = rsvpStatus(a)
+                const timeLine    = `${clientFirst} · ${startTime}${endTime ? `–${endTime}` : ''}`
                 return (
-                  <div style={{
-                    padding: '5px 8px', height: '100%', overflow: 'hidden',
-                    opacity: faded ? .5 : 1, cursor: 'pointer', position: 'relative',
+                  <div title={`${st.label} — ${st.hint}\n${a.title} · ${timeLine}`} style={{
+                    padding: '5px 8px', height: '100%', overflow: 'hidden', cursor: 'pointer',
                   }}>
-                    {/* Client-response indicator — a fixed-size icon badge rather than a
-                        text label, so it stays visible even on short event blocks where a
-                        third line of text would get clipped (e.g. "CONFIRMED" cut off). */}
-                    {rsvp && (
-                      <div title={rsvp.label} style={{
-                        position: 'absolute', top: 4, right: 4,
-                        width: 15, height: 15, borderRadius: '50%',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 9, fontWeight: 700, lineHeight: 1,
-                        color: '#fff', background: faded ? '#bbb' : rsvp.color,
-                        opacity: rsvp.waiting ? .7 : 1,
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <div style={{
+                        flex: 1, minWidth: 0,
+                        fontSize: 12, fontWeight: 700, color: st.text,
+                        overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                        textDecoration: st.struck ? 'line-through' : 'none',
                       }}>
-                        {rsvp.icon}
+                        {a.title}
                       </div>
-                    )}
-                    <div style={{
-                      fontSize: 12, fontWeight: 700, color: faded ? '#aaa' : cfg.text,
-                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                      paddingRight: rsvp ? 18 : 0,
-                    }}>
-                      {a.title}
+                      <span style={{
+                        flexShrink: 0, fontSize: 9, fontWeight: 700, letterSpacing: '.06em',
+                        textTransform: 'uppercase', lineHeight: 1, padding: '3px 5px', borderRadius: 3,
+                        color: st.muted ? st.text : '#fff', background: st.muted ? 'rgba(0,0,0,.06)' : st.accent,
+                      }}>
+                        {st.label}
+                      </span>
                     </div>
                     <div style={{
-                      fontSize: 11, color: faded ? '#bbb' : cfg.text, opacity: .8,
+                      fontSize: 11, color: st.text, opacity: .75,
                       marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }}>
-                      {clientFirst} · {startTime}{endTime ? `–${endTime}` : ''}
+                      {timeLine}
                     </div>
                   </div>
                 )
@@ -1329,14 +1434,23 @@ export default function Calendar() {
               <MiniCalendar currentDate={currentDate} onNavigate={handleMiniNav} />
             </div>
 
-            {/* Activity Types */}
+            {/* Status legend — mirrors exactly what each grid block shows */}
             <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px' }}>
-              <div style={{ fontSize: 10, letterSpacing: '.12em', fontWeight: 700, color: 'var(--muted)', marginBottom: 12 }}>ACTIVITY TYPES</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {(activityTypes as any[]).map((t: any) => (
-                  <div key={t.id} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 10, height: 10, borderRadius: 2, background: t.color, flexShrink: 0 }} />
-                    <span style={{ fontSize: 12, color: 'var(--ink)', textTransform: 'capitalize' }}>{t.name}</span>
+              <div style={{ fontSize: 10, letterSpacing: '.12em', fontWeight: 700, color: 'var(--muted)', marginBottom: 12 }}>SESSION STATUS</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {Object.entries(STATUS_STYLE).map(([key, st]) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                    <div style={{
+                      width: 14, height: 14, marginTop: 1, borderRadius: 3, flexShrink: 0,
+                      background: st.bg, borderLeft: `3px ${st.dashed ? 'dashed' : 'solid'} ${st.accent}`,
+                    }} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{
+                        fontSize: 12, fontWeight: 600, color: 'var(--ink)',
+                        textDecoration: st.struck ? 'line-through' : 'none',
+                      }}>{st.label}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.35 }}>{st.hint}</div>
+                    </div>
                   </div>
                 ))}
               </div>
@@ -1390,6 +1504,8 @@ export default function Calendar() {
           onMissed={handleMarkMissed}
           onEdit={(a: any) => { setEditingAct(a); setSelectedAct(null) }}
           onCancel={(a: any) => { setCancelTarget(a); setSelectedAct(null) }}
+          onConfirmReschedule={handleConfirmReschedule}
+          onDeclineReschedule={handleDeclineReschedule}
         />
       )}
       {editingAct && (

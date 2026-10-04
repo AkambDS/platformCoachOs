@@ -1,6 +1,21 @@
 """CoachOS — clients/serializers.py"""
 from rest_framework import serializers
 from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote, ClientMessageDraft
+from apps.activities.models import CoachAvailabilityRule
+
+
+class CoachAvailabilityRuleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model  = CoachAvailabilityRule
+        fields = ["id", "weekday", "start_time", "end_time"]
+        read_only_fields = ["id"]
+
+    def validate(self, data):
+        start = data.get("start_time", getattr(self.instance, "start_time", None))
+        end   = data.get("end_time",   getattr(self.instance, "end_time", None))
+        if start is not None and end is not None and start >= end:
+            raise serializers.ValidationError("start_time must be before end_time.")
+        return data
 
 
 class ClientNoteSerializer(serializers.ModelSerializer):
@@ -8,7 +23,7 @@ class ClientNoteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model  = ClientNote
-        fields = ["id", "text", "note_type", "visible_to_client", "created_by_name", "created_at", "updated_at"]
+        fields = ["id", "text", "note_type", "topic", "session_date", "visible_to_client", "created_by_name", "created_at", "updated_at"]
         read_only_fields = ["id", "created_at", "updated_at", "created_by_name"]
 
 
@@ -53,12 +68,18 @@ class ClientGoalSerializer(serializers.ModelSerializer):
     # enforced here instead so new creates/full updates can't skip it (PATCH from the
     # goals list's Share toggle stays partial, so this doesn't block that).
     target_date = serializers.DateField(required=True)
+    created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
+    client_owned = serializers.SerializerMethodField()
 
     class Meta:
         model  = ClientGoal
         fields = ["id", "title", "description", "target_date",
-                  "status", "visible_to_client", "created_by", "created_at", "progress_count"]
+                  "status", "visible_to_client", "created_by", "created_by_name",
+                  "client_owned", "created_at", "progress_count"]
         read_only_fields = ["id", "created_at", "created_by"]
+
+    def get_client_owned(self, obj):
+        return obj.created_by_id is None
 
 
 class CommitmentSerializer(serializers.ModelSerializer):

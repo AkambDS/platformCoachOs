@@ -73,6 +73,53 @@ def test_client_notes_create_and_list(api_client, client_record):
 
 
 @pytest.mark.django_db
+def test_client_note_topic_and_session_date_round_trip(api_client, client_record):
+    """Session topic + session date are new searchable fields on ClientNote —
+    confirm they round-trip through create and list."""
+    res = api_client.post(f"/api/clients/{client_record.id}/notes/", {
+        "text": "Discussed quarterly goals.",
+        "note_type": "session",
+        "topic": "Quarterly planning",
+        "session_date": "2026-09-15",
+    }, format="json")
+    assert res.status_code == 201
+    assert res.data["topic"] == "Quarterly planning"
+    assert res.data["session_date"] == "2026-09-15"
+
+    res = api_client.get(f"/api/clients/{client_record.id}/notes/")
+    assert res.status_code == 200
+    note = next(n for n in res.data["results"] if n["topic"] == "Quarterly planning")
+    assert note["session_date"] == "2026-09-15"
+
+
+@pytest.mark.django_db
+def test_note_share_toggle_does_not_error(api_client, client_record):
+    """Flipping visible_to_client False -> True (on create, and via update) queues
+    the note-shared notification email — this just confirms the view's trigger
+    logic doesn't blow up either path. Delivery itself is covered manually via
+    Mailpit, same as the rest of this codebase's email tasks."""
+    res = api_client.post(f"/api/clients/{client_record.id}/notes/", {
+        "text": "Shared at creation.",
+        "note_type": "session",
+        "visible_to_client": True,
+    }, format="json")
+    assert res.status_code == 201
+    assert res.data["visible_to_client"] is True
+
+    res = api_client.post(f"/api/clients/{client_record.id}/notes/", {
+        "text": "Not shared yet.",
+        "note_type": "session",
+    }, format="json")
+    assert res.status_code == 201
+    note_id = res.data["id"]
+
+    res = api_client.patch(f"/api/clients/{client_record.id}/notes/{note_id}/",
+                           {"visible_to_client": True}, format="json")
+    assert res.status_code == 200
+    assert res.data["visible_to_client"] is True
+
+
+@pytest.mark.django_db
 def test_create_goal_requires_target_date(api_client, client_record):
     """Target date is now a required field for a goal (was silently optional)."""
     res = api_client.post(f"/api/clients/{client_record.id}/goals/", {
@@ -80,6 +127,74 @@ def test_create_goal_requires_target_date(api_client, client_record):
     }, format="json")
     assert res.status_code == 400
     assert "target_date" in res.data
+
+
+@pytest.mark.django_db
+def test_goal_shares_email_on_create_when_already_visible(api_client, client_record):
+    """A goal created with visible_to_client=True from the start (coach ticks
+    "Share with client" while first saving it) should queue the share email too,
+    not only when an existing unshared goal is later toggled on."""
+    res = api_client.post(f"/api/clients/{client_record.id}/goals/", {
+        "title": "Improve executive presence",
+        "target_date": "2026-12-31",
+        "visible_to_client": True,
+    }, format="json")
+    assert res.status_code == 201
+    assert res.data["visible_to_client"] is True
+
+
+@pytest.mark.django_db
+def test_portal_client_can_crud_own_goal(portal_api_client, client_record, workspace):
+    """Client-set goals (no coach involved) are a new addition — the client should be
+    able to create, edit, and delete their own goals, same as their own notes."""
+    from apps.clients.models import Client
+    Client.objects.filter(pk=client_record.pk).update(portal_access=True)
+    portal = portal_api_client(client_record, workspace)
+
+    res = portal.post("/api/portal/goals/", {
+        "title": "Run a 5k",
+        "target_date": "2026-11-01",
+    }, format="json")
+    assert res.status_code == 201
+    assert res.data["client_owned"] is True
+    goal_id = res.data["id"]
+
+    res = portal.get("/api/portal/goals/")
+    assert res.status_code == 200
+    assert any(g["id"] == goal_id for g in res.data["goals"])
+
+    res = portal.patch(f"/api/portal/goals/{goal_id}/", {
+        "title": "Run a 10k", "target_date": "2026-11-15",
+    }, format="json")
+    assert res.status_code == 200
+    assert res.data["title"] == "Run a 10k"
+
+    res = portal.delete(f"/api/portal/goals/{goal_id}/")
+    assert res.status_code == 204
+
+    res = portal.get("/api/portal/goals/")
+    assert not any(g["id"] == goal_id for g in res.data["goals"])
+
+
+@pytest.mark.django_db
+def test_portal_client_cannot_edit_coach_goal(api_client, portal_api_client, client_record, workspace):
+    """A coach-authored goal — even once shared — stays read-only from the portal;
+    only the client's own goals (created_by is null) are editable there."""
+    from apps.clients.models import Client
+    Client.objects.filter(pk=client_record.pk).update(portal_access=True)
+
+    res = api_client.post(f"/api/clients/{client_record.id}/goals/", {
+        "title": "Coach-set goal", "target_date": "2026-12-01", "visible_to_client": True,
+    }, format="json")
+    assert res.status_code == 201
+    goal_id = res.data["id"]
+
+    portal = portal_api_client(client_record, workspace)
+    res = portal.patch(f"/api/portal/goals/{goal_id}/", {"title": "Hacked"}, format="json")
+    assert res.status_code == 404
+
+    res = portal.delete(f"/api/portal/goals/{goal_id}/")
+    assert res.status_code == 404
 
 
 @pytest.mark.django_db

@@ -151,6 +151,9 @@ export const clientsApi = {
     api.post(`/api/clients/${id}/messages/${mid}/attach-existing/`, { assessment_id: assessmentId }),
   removeMessageAttachment: (id: string, mid: string, s3_key: string) =>
     api.post(`/api/clients/${id}/messages/${mid}/remove-attachment/`, { s3_key }),
+  listAvailability:  (id: string)            => api.get(`/api/clients/${id}/availability/`),
+  createAvailability: (id: string, d: any)   => api.post(`/api/clients/${id}/availability/`, d),
+  deleteAvailability: (id: string, rid: string) => api.delete(`/api/clients/${id}/availability/${rid}/`),
 }
 export const activitiesApi = {
   list:         (p?: any)            => api.get('/api/activities/', { params: p }),
@@ -164,6 +167,9 @@ export const activitiesApi = {
   markRescheduled: (id: string) => api.patch(`/api/activities/${id}/`, { status: 'rescheduled' }),
   cancel: (id: string, scope: 'this' | 'future' | 'all' = 'this') =>
     api.post(`/api/activities/${id}/cancel/`, { scope }),
+  confirmReschedule: (id: string) => api.post(`/api/activities/${id}/confirm-reschedule/`),
+  declineReschedule: (id: string, data: { message: string; send_email: boolean }) =>
+    api.post(`/api/activities/${id}/decline-reschedule/`, data),
   emailPreview: (id: string, type: string) =>
     api.get(`/api/activities/${id}/email-preview/`, { params: { type } }),
 }

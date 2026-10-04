@@ -90,6 +90,13 @@ class Command(BaseCommand):
                 primary_colour="#1B3A6B",
             ),
         )
+        if not ws_created and not workspace.is_active:
+            # get_or_create's defaults only apply on creation — if this workspace was
+            # ever deactivated after that (a superadmin suspend action, manual DB edit,
+            # etc.), re-running this "safe to re-run" command silently left it broken.
+            # Mirrors the owner block's own self-healing re-assertion right below.
+            workspace.is_active = True
+            workspace.save(update_fields=["is_active"])
 
         owner, user_created = User.objects.get_or_create(
             email=DEMO_EMAIL,

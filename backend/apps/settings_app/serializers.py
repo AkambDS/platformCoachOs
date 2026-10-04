@@ -14,7 +14,8 @@ class BrandingSerializer(serializers.ModelSerializer):
 class SchedulingSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Workspace
-        fields = ["workspace_timezone", "buffer_minutes", "cancellation_hours"]
+        fields = ["workspace_timezone", "buffer_minutes", "cancellation_hours",
+                  "reschedule_request_ttl_days"]
 
 
 SYNCABLE_USE_CASES = {"confirmation", "reschedule", "reminder_24h", "reminder_1h", "invoice", "payment_receipt", "portal_invite", "team_invite", "pipeline"}
@@ -27,7 +28,7 @@ class WorkspaceSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Workspace
         fields = ["id", "name", "timezone", "workspace_timezone",
-                  "buffer_minutes", "cancellation_hours",
+                  "buffer_minutes", "cancellation_hours", "reschedule_request_ttl_days",
                   "primary_colour", "logo_s3_key", "logo_data", "email_templates",
                   "generic_templates", "template_use_case_map",
                   "address", "city", "state", "zip_code", "phone"]
@@ -70,7 +71,8 @@ class PipelineStageConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model        = PipelineStageConfig
         fields       = ["id", "slug", "label", "color", "order", "follow_up_days",
-                        "alert_stop_after_days", "notify_owner", "notify_client",
+                        "alert_stop_after_days", "notify_owner", "owner_frequency",
+                        "notify_coach", "coach_frequency", "notify_client", "client_frequency", "alert_schedule",
                         "client_alert_max_count", "is_builtin"]
         read_only_fields = ["id", "is_builtin"]
 

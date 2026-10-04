@@ -35,6 +35,11 @@ class Deal(WorkspaceModel):
     # even while the coach keeps getting alerted per the stage's day-based stop window.
     # Reset alongside stage_changed_at/pipeline_alert_sent_at in advance_stage() below.
     client_alert_count     = models.PositiveIntegerField(default=0)
+    # Last follow-up email to the assigned coach / the client for the current stage visit
+    # — each recipient repeats on its own frequency (PipelineStageConfig.*_frequency), so
+    # each needs its own "last sent". The owner's is pipeline_alert_sent_at above.
+    coach_alert_sent_at    = models.DateTimeField(null=True, blank=True)
+    client_alert_sent_at   = models.DateTimeField(null=True, blank=True)
     class DealType(models.TextChoices):
         COACHING_1_1    = "1_1_coaching",       "1:1 Coaching"
         GROUP_PROGRAM   = "group_program",       "Group Program"
@@ -65,6 +70,8 @@ class Deal(WorkspaceModel):
         self.stage                  = new_stage
         self.stage_changed_at       = timezone.now()
         self.pipeline_alert_sent_at = None
+        self.coach_alert_sent_at    = None
+        self.client_alert_sent_at   = None
         self.client_alert_count     = 0
         if new_stage == self.Stage.CLOSED_LOST:
             self.closed_at = timezone.now()
@@ -78,11 +85,30 @@ class PipelineStageConfig(WorkspaceModel):
     color          = models.CharField(max_length=7, default="#1e3a5f")
     order          = models.PositiveIntegerField(default=0)
     follow_up_days = models.PositiveIntegerField(null=True, blank=True)
-    # Alerts repeat once daily starting at follow_up_days; stop once a deal has spent
-    # this many days in the stage. Blank = keep alerting until the deal moves stage.
+    # Alerts start at follow_up_days and repeat per recipient frequency below; they stop
+    # once a deal has spent this many days in the stage. Blank = until the deal moves.
     alert_stop_after_days = models.PositiveIntegerField(null=True, blank=True)
-    notify_owner   = models.BooleanField(default=True)
-    notify_client  = models.BooleanField(default=False)
+    class Frequency(models.TextChoices):
+        DAILY   = "daily",   "Daily"
+        WEEKLY  = "weekly",  "Weekly"
+        MONTHLY = "monthly", "Monthly"
+
+    # Who gets follow-up emails once a deal passes follow_up_days, and how often each
+    # one repeats (tasks.pipeline.dispatch_pipeline_alerts) until alert_stop_after_days.
+    notify_owner     = models.BooleanField(default=True)
+    owner_frequency  = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.DAILY)
+    notify_coach     = models.BooleanField(default=False)
+    coach_frequency  = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.DAILY)
+    notify_client    = models.BooleanField(default=False)
+    client_frequency = models.CharField(max_length=10, choices=Frequency.choices, default=Frequency.WEEKLY)
+    # Which day a weekly / monthly follow-up goes out, per recipient:
+    #   {"owner": {"weekday": 0,                       # weekly: 0=Mon … 6=Sun
+    #              "month_mode": "day" | "nth",        # monthly: a date, or "Nth <weekday>"
+    #              "month_day": 15,                    #   "day": 1–31 (clamped to month end)
+    #              "month_week": 1,                    #   "nth": 1–4, or -1 = last
+    #              "month_weekday": 0}, "coach": {…}, "client": {…}}
+    # Missing keys fall back to Monday / the 1st (tasks.pipeline._scheduled_today).
+    alert_schedule   = models.JSONField(default=dict, blank=True)
     # Independent cap on CLIENT reminders specifically — once a deal has received this
     # many client-facing alerts, stop notifying the client, even though the coach (via
     # notify_owner) keeps getting alerted per alert_stop_after_days as before. Blank =

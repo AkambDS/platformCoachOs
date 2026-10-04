@@ -71,6 +71,21 @@ def _shell(workspace_name: str, body: str) -> str:
               font-family:inherit;background:#faf9f7;margin-bottom:16px}}
     textarea:focus{{outline:none;border-color:{_GOLD}}}
     footer{{padding:16px;text-align:center;font-size:11px;color:{_MUTED}}}
+    .slot-picker{{max-height:260px;overflow-y:auto;border:1px solid {_BORDER};
+                  border-radius:6px;padding:12px;margin-bottom:16px;text-align:left;
+                  background:#faf9f7}}
+    .slot-day{{margin-bottom:10px}}
+    .slot-day:last-child{{margin-bottom:0}}
+    .slot-day-label{{font-size:11px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:.04em;color:{_MUTED};margin-bottom:6px}}
+    .slot-times{{display:flex;flex-wrap:wrap;gap:6px}}
+    .slot-times label{{display:inline-block}}
+    .slot-times input[type=radio]{{position:absolute;opacity:0;width:0;height:0}}
+    .slot-times input[type=radio]:checked + span{{background:{_NAVY};color:#fff;
+                                                    border-color:{_NAVY}}}
+    .slot-time-pill{{display:inline-block;padding:6px 12px;border-radius:16px;
+                     border:1px solid {_BORDER};font-size:12px;cursor:pointer;
+                     background:#fff;color:#1a1714}}
   </style>
 </head>
 <body>
@@ -97,6 +112,45 @@ def _detail_box(activity) -> str:
         for l, v in rows
     )
     return f'<div class="detail-box">{rows_html}</div>'
+
+
+def _slot_picker_html(activity) -> str:
+    """Radio-button picker grouped by day, built from the coach's availability for
+    this specific client (apps.activities.availability.compute_available_slots).
+    Returns "" if the coach hasn't set up any availability for this client yet —
+    callers fall back to the plain free-text box in that case."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+    from .availability import compute_available_slots
+
+    slots = compute_available_slots(activity)
+    if not slots:
+        return ""
+
+    tz_name = getattr(activity.workspace, "workspace_timezone", "") or "UTC"
+    try:
+        tz = ZoneInfo(tz_name)
+    except (ZoneInfoNotFoundError, Exception):
+        tz = ZoneInfo("UTC")
+
+    days: dict[str, list[tuple[str, str]]] = {}
+    for start, _end in slots:
+        local = start.astimezone(tz)
+        day_label = local.strftime("%A, %B %d").replace(" 0", " ")
+        time_label = local.strftime("%I:%M %p").lstrip("0")
+        days.setdefault(day_label, []).append((start.isoformat(), time_label))
+
+    day_blocks = []
+    for day_label, times in days.items():
+        pills = "".join(
+            f'<label><input type="radio" name="slot" value="{escape(iso)}" required>'
+            f'<span class="slot-time-pill">{escape(label)}</span></label>'
+            for iso, label in times
+        )
+        day_blocks.append(
+            f'<div class="slot-day"><div class="slot-day-label">{escape(day_label)}</div>'
+            f'<div class="slot-times">{pills}</div></div>'
+        )
+    return f'<div class="slot-picker">{"".join(day_blocks)}</div>'
 
 
 def _get_activity(activity_id: str):
@@ -263,17 +317,25 @@ class SessionRescheduleView(View):
         client_name = escape(activity.client.first_name or activity.client.full_name)
         coach_name  = escape(activity.coach.full_name if activity.coach else ws.name)
 
+        slot_picker = _slot_picker_html(activity)
+        if slot_picker:
+            intro = f"pick a time below that works for you and {coach_name} will confirm it."
+            message_field = '<textarea name="message" rows="2" placeholder="Add a note (optional)"></textarea>'
+        else:
+            intro = f"let {coach_name} know your availability and they will confirm a new time."
+            message_field = ('<textarea name="message" rows="4" '
+                              'placeholder="e.g. I\'m available Monday–Wednesday after 3pm, or anytime Friday." '
+                              'required></textarea>')
+
         body = f"""
           <div class="card">
             <div class="icon">🔄</div>
             <h1>Request to reschedule</h1>
-            <p class="sub">Hi {client_name}, let {coach_name} know your availability
-              and they will confirm a new time.</p>
+            <p class="sub">Hi {client_name}, {intro}</p>
             {_detail_box(activity)}
             <form method="POST" action="">
-              <textarea name="message" rows="4"
-                placeholder="e.g. I'm available Monday–Wednesday after 3pm, or anytime Friday."
-                required></textarea>
+              {slot_picker}
+              {message_field}
               <button type="submit" class="btn btn-primary" style="width:100%;">
                 Send Reschedule Request
               </button>
@@ -289,16 +351,43 @@ class SessionRescheduleView(View):
 
         message = (request.POST.get("message") or "").strip()[:1000]
 
+        # If a slot was picked, re-validate it's still actually open server-side
+        # (never trust the posted value — it could be stale or tampered with) and
+        # store it as a proposal, not an applied change. Nothing about the real
+        # schedule (Google Calendar, reminders, the activity's own start_at/end_at)
+        # moves until the coach/owner confirms it — see ActivityViewSet.confirm_reschedule.
+        slot_raw = (request.POST.get("slot") or "").strip()
+        requested_dt = None
+        if slot_raw:
+            from datetime import datetime
+            from .availability import compute_available_slots
+            try:
+                candidate = datetime.fromisoformat(slot_raw)
+            except ValueError:
+                candidate = None
+            if candidate is not None:
+                valid_starts = {s.isoformat() for s, _e in compute_available_slots(activity)}
+                if candidate.isoformat() in valid_starts:
+                    requested_dt = candidate
+
         # Mark activity as rescheduled so it shows in the Activities list
+        update_fields = []
         if activity.status not in ("cancelled", "completed"):
             activity.status = "rescheduled"
-            activity.save(update_fields=["status"])
+            update_fields.append("status")
+        if requested_dt is not None:
+            from django.utils import timezone
+            activity.requested_start_at = requested_dt
+            activity.requested_at = timezone.now()
+            update_fields.append("requested_start_at")
+            update_fields.append("requested_at")
+        if update_fields:
+            activity.save(update_fields=update_fields)
 
         # Send reschedule request to coach
         try:
-            import threading
             from tasks.email import send_client_reschedule_request
-            threading.Thread(target=send_client_reschedule_request, args=(str(activity.id), message), daemon=True).start()
+            send_client_reschedule_request.delay(str(activity.id), message)
         except Exception as e:
             logger.error(f"Coach reschedule notice failed: {e}")
 

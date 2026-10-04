@@ -100,7 +100,8 @@ def run_pipeline_alerts(request):
     import threading
     from tasks.pipeline import dispatch_pipeline_alerts
 
-    threading.Thread(target=dispatch_pipeline_alerts, daemon=True).start()
+    # Manual trigger: send now, not only during the 8 AM local window.
+    threading.Thread(target=dispatch_pipeline_alerts, kwargs={"respect_send_hour": False}, daemon=True).start()
     return Response({"detail": "ok"})
 
 

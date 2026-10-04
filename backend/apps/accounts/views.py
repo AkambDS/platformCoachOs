@@ -152,8 +152,6 @@ def logout_view(request):
     return response
 
 
-@api_view(["POST"])
-@permission_classes([AllowAny])
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def token_info(request):

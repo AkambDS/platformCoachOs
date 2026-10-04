@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, activitiesApi, invoicesApi, settingsApi, pipelineApi, authApi, libraryApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
-import { Modal, StatusBadge, useToast, EmptyState } from '../../components/ui'
+import { Modal, StatusBadge, useToast, EmptyState, displayActivityStatus, STATUS_HEX } from '../../components/ui'
 import { EmailEditModal } from '../../components/EmailEditModal'
 import { InvoiceTables, parseDate as parseInvoiceDate } from '../../components/InvoiceTables'
 import { EDITABLE_OFFICE_EXTS, OfficeEditorModal, InlineOfficeViewer } from '../../components/OfficeEditor'
@@ -493,33 +493,51 @@ function wasEdited(created: string, updated: string): boolean {
   return Math.abs(new Date(updated).getTime() - new Date(created).getTime()) > 60_000
 }
 
-function fmtNoteDateShort(iso: string, tz?: string): string {
-  if (!iso) return '—'
-  return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', ...(tz ? { timeZone: tz } : {}) })
-}
-
 function fmtTimeOnly(iso: string, tz?: string): string {
   if (!iso) return '—'
   return new Date(iso).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', ...(tz ? { timeZone: tz } : {}) })
 }
 
-// "Today" / "Yesterday" / the short date — used as the explorer's date-group headers.
-function dateGroupLabel(iso: string, tz?: string): string {
-  const d = new Date(iso)
-  const now = new Date()
-  const startOfDay = (x: Date) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y }
-  const diffDays = Math.round((startOfDay(now).getTime() - startOfDay(d).getTime()) / 86_400_000)
-  if (diffDays === 0) return 'Today'
-  if (diffDays === 1) return 'Yesterday'
-  return fmtNoteDateShort(iso, tz)
+// The calendar day a note is grouped/sorted under — the session date the coach
+// picked, falling back to the date it was typed. Plain 'YYYY-MM-DD', so string
+// equality is enough for "is this today/yesterday" — no timezone math needed.
+function effectiveDateKey(n: any): string {
+  return (n.session_date || n.created_at || '').slice(0, 10)
 }
 
-// Groups an already newest-first note list into { label, notes }[] — insertion order
-// on a Map matches the list's order, so no re-sorting is needed.
-function groupNotesByDate(notes: any[], tz?: string): { label: string; notes: any[] }[] {
+// 'YYYY-MM-DD' -> a Date pinned to local noon, so formatting it never rolls
+// back a day in negative-UTC-offset timezones the way `new Date('2026-09-26')`
+// (parsed as UTC midnight) would.
+function dayKeyToDate(key: string): Date {
+  return new Date(`${key}T12:00:00`)
+}
+
+function fmtDayKey(key: string): string {
+  if (!key) return '—'
+  return dayKeyToDate(key).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// "Today" / "Yesterday" / the short date — used as the explorer's date-group headers.
+function dateGroupLabel(key: string): string {
+  if (key === todayISO()) return 'Today'
+  const y = new Date(); y.setDate(y.getDate() - 1)
+  const pad = (n: number) => String(n).padStart(2, '0')
+  if (key === `${y.getFullYear()}-${pad(y.getMonth() + 1)}-${pad(y.getDate())}`) return 'Yesterday'
+  return fmtDayKey(key)
+}
+
+// Groups notes into { label, notes }[], sorted newest-day-first (by each note's
+// effective date — session date if set, else when it was typed). Ties within the
+// same day keep the list's incoming order (stable sort), which is already
+// newest-created-first from the API.
+function groupNotesByDate(notes: any[], _tz?: string): { label: string; notes: any[] }[] {
+  const sorted = [...notes].sort((a, b) => {
+    const ka = effectiveDateKey(a), kb = effectiveDateKey(b)
+    return ka === kb ? 0 : ka < kb ? 1 : -1
+  })
   const map = new Map<string, any[]>()
-  for (const n of notes) {
-    const label = dateGroupLabel(n.created_at, tz)
+  for (const n of sorted) {
+    const label = dateGroupLabel(effectiveDateKey(n))
     if (!map.has(label)) map.set(label, [])
     map.get(label)!.push(n)
   }
@@ -528,6 +546,17 @@ function groupNotesByDate(notes: any[], tz?: string): { label: string; notes: an
 
 const STRUCTURED_PREFIX = '##STRUCTURED##'
 const emptyStruct = () => ({ notes: '', reflection: '', commitment: '' })
+
+// Generic starter skeleton for a blank session note — inserted on request via
+// "Insert template", never auto-applied, and never overwrites existing text.
+const DEFAULT_SESSION_TEMPLATE =
+  'What we discussed:\n\n\nKey takeaways:\n\n\nAction items / next steps:\n'
+
+function todayISO(): string {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
 
 function parseStructured(text: string): { notes: string; reflection: string; commitment: string } | null {
   if (!text.startsWith(STRUCTURED_PREFIX)) return null
@@ -606,7 +635,18 @@ function StructuredForm({ value, onChange, clientId }: {
           <label style={{ fontSize: 11, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)' }}>
             Session Notes
           </label>
-          {clientId && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {!value.notes.trim() && (
+              <button type="button" onClick={() => s('notes', DEFAULT_SESSION_TEMPLATE)}
+                title="Insert a generic session-note skeleton to fill in"
+                style={{
+                  fontSize: 12, fontWeight: 500, background: 'none', border: 'none', padding: '2px 0',
+                  color: 'var(--muted)', cursor: 'pointer', textDecoration: 'underline', textUnderlineOffset: 3,
+                }}>
+                Insert template
+              </button>
+            )}
+            {clientId && (
             <button type="button" onClick={requestSuggestions} disabled={!value.notes.trim() || aiLoading}
               title="Tighten these notes, and draft Coach Reflection and Commitment, with AI"
               style={{
@@ -618,9 +658,10 @@ function StructuredForm({ value, onChange, clientId }: {
               }}>
               ✨ {aiLoading ? 'Thinking…' : 'Suggest with AI'}
             </button>
-          )}
+            )}
+          </div>
         </div>
-        <AutoGrowTextarea minHeight={260} style={{ fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
+        <AutoGrowTextarea minHeight={420} style={{ fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
           value={value.notes} placeholder="What happened in this session…"
           onChange={e => s('notes', e.target.value)} />
         {showNotesSuggestion && (
@@ -732,11 +773,22 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
   const [noteText, setNoteText]     = useState('')
   const [struct, setStruct]         = useState(emptyStruct())
   const [noteVisible, setNoteVisible] = useState(false)
+  const [topic, setTopic]           = useState('')
+  const [sessionDate, setSessionDate] = useState(todayISO())
+  const [topicError, setTopicError] = useState(false)
 
   const [formKey, setFormKey]             = useState(0)
   const [expandedId, setExpandedId]       = useState<string | null>(null)
   const [editingId, setEditingId]         = useState<string | null>(null)
   const [editType, setEditType]           = useState('session')
+  const [editTopic, setEditTopic]         = useState('')
+  const [editSessionDate, setEditSessionDate] = useState('')
+  const [editTopicError, setEditTopicError] = useState(false)
+  const [searchTopic, setSearchTopic]     = useState('')
+  const [searchDate, setSearchDate]       = useState('')
+  // Hidden by default during active writing isn't the default — but a coach can tuck the
+  // explorer away to give the notepad the full width, closer to a plain word-processor page.
+  const [showExplorer, setShowExplorer]   = useState(true)
   const [editText, setEditText]           = useState('')
   const [editStruct, setEditStruct]       = useState(emptyStruct())
   const [editVisible, setEditVisible]     = useState(false)
@@ -745,36 +797,45 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; preview: string } | null>(null)
   const [deleting, setDeleting]         = useState(false)
 
-  // Keep a note expanded in the explorer — falls back to the newest note whenever the
-  // current selection disappears (deleted) or nothing is expanded yet (first load, or
-  // right after adding a note, which explicitly clears expandedId to jump to it).
+  // Explorer starts fully collapsed — only clear the expanded row if the note it
+  // pointed to was deleted (or the list emptied out). Nothing auto-opens on load
+  // or after adding a note; the coach expands a row explicitly by clicking it.
   useEffect(() => {
-    if (noteList.length === 0) { setExpandedId(null); return }
-    if (!expandedId || !noteList.some(n => n.id === expandedId)) setExpandedId(noteList[0].id)
+    if (expandedId && !noteList.some(n => n.id === expandedId)) setExpandedId(null)
   }, [noteList, expandedId])
 
   const startEdit = (n: any) => {
     setEditingId(n.id); setEditType(n.note_type); setEditVisible(!!n.visible_to_client)
+    setEditTopic(n.topic || ''); setEditSessionDate(n.session_date || ''); setEditTopicError(false)
     const parsed = parseStructured(n.text)
     if (parsed) { setEditStruct(parsed); setEditText('') }
     else { setEditText(n.text); setEditStruct(emptyStruct()) }
   }
-  const cancelEdit = () => { setEditingId(null); setEditText(''); setEditType('session'); setEditStruct(emptyStruct()); setEditVisible(false) }
+  const cancelEdit = () => {
+    setEditingId(null); setEditText(''); setEditType('session'); setEditStruct(emptyStruct())
+    setEditVisible(false); setEditTopic(''); setEditSessionDate(''); setEditTopicError(false)
+  }
 
   const buildText = (type: string, text: string, s: typeof struct) =>
     type === 'session' ? STRUCTURED_PREFIX + JSON.stringify(s) : text
 
   const handleAdd = async () => {
     const text = buildText(noteType, noteText, struct)
+    if (noteType === 'session' && !topic.trim()) { setTopicError(true); return }
     if (noteType === 'session' && !struct.notes.trim() && !struct.reflection.trim() && !struct.commitment.trim()) return
     if (noteType !== 'session' && !noteText.trim()) return
     setSaving(true)
     try {
-      await clientsApi.createNote(clientId, { text, note_type: noteType, visible_to_client: noteVisible })
+      await clientsApi.createNote(clientId, {
+        text, note_type: noteType, visible_to_client: noteVisible,
+        topic: noteType === 'session' ? topic : '',
+        session_date: noteType === 'session' ? (sessionDate || null) : null,
+      })
       await refetch()
       setNoteText(''); setStruct(emptyStruct()); setNoteType('session'); setNoteVisible(false)
+      setTopic(''); setSessionDate(todayISO()); setTopicError(false)
       setFormKey(k => k + 1)
-      setExpandedId(null) // jump the explorer to the newly created note (newest-first list)
+      setExpandedId(null) // keep the explorer collapsed after saving, same as on load
       showToast('Note added')
     } catch { showToast('Failed to save note', 'error') }
     finally { setSaving(false) }
@@ -782,9 +843,14 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
 
   const handleSaveEdit = async (nid: string) => {
     const text = buildText(editType, editText, editStruct)
+    if (editType === 'session' && !editTopic.trim()) { setEditTopicError(true); return }
     setEditSaving(true)
     try {
-      await clientsApi.updateNote(clientId, nid, { text, note_type: editType, visible_to_client: editVisible })
+      await clientsApi.updateNote(clientId, nid, {
+        text, note_type: editType, visible_to_client: editVisible,
+        topic: editType === 'session' ? editTopic : '',
+        session_date: editType === 'session' ? (editSessionDate || null) : null,
+      })
       await refetch(); cancelEdit()
       showToast('Note updated')
     } catch { showToast('Failed to update', 'error') }
@@ -815,13 +881,21 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
     finally { setExporting(false) }
   }
 
-  const typePill  = (t: string) => t === 'session' ? 'pill-blue' : t === 'observation' ? 'pill-gold' : t === 'commitment' ? 'pill-green' : 'pill-grey'
-  const typeLabel = (t: string) => NOTE_TYPES.find(n => n.value === t)?.label || t
   const notePreview = (n: any) => {
     const parsed = parseStructured(n.text)
     if (parsed) return parsed.notes?.trim() || parsed.reflection?.trim() || 'Session note'
     return n.text.slice(0, 60)
   }
+  const hasSearch = !!(searchTopic.trim() || searchDate)
+  const filteredNotes = useMemo(() => {
+    if (!hasSearch) return noteList
+    const q = searchTopic.trim().toLowerCase()
+    return noteList.filter((n: any) => {
+      if (q && !(n.topic || '').toLowerCase().includes(q)) return false
+      if (searchDate && effectiveDateKey(n) !== searchDate) return false
+      return true
+    })
+  }, [noteList, searchTopic, searchDate, hasSearch])
 
   return (
     <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start', maxWidth: 1400, margin: '0 auto' }}>
@@ -829,13 +903,40 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
       {/* ── LEFT: Notepad — the primary compose area, sized for live use during a session ── */}
       <div style={{ flex: '1 1 auto', minWidth: 0 }}>
         <div className="card" style={{ border: '1.5px solid var(--gold)' }}>
+          {noteType === 'session' && (
+            <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)', background: 'var(--paper)' }}>
+              <div style={{ display: 'flex', gap: 12 }}>
+                <div style={{ flex: '1 1 auto' }}>
+                  <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: topicError ? '#b91c1c' : 'var(--muted)', display: 'block', marginBottom: 5 }}>
+                    Session Topic <span style={{ color: '#b91c1c' }}>*</span>
+                  </label>
+                  <input type="text" className="finput" value={topic}
+                    onChange={e => { setTopic(e.target.value); if (topicError) setTopicError(false) }}
+                    placeholder="What is this session about? e.g. Weekly check-in"
+                    style={{ width: '100%', ...(topicError ? { borderColor: '#b91c1c' } : {}) }} />
+                </div>
+                <div style={{ flexShrink: 0, width: 170 }}>
+                  <label style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 5 }}>
+                    Session Date
+                  </label>
+                  <input type="date" className="finput" value={sessionDate} onChange={e => setSessionDate(e.target.value)}
+                    style={{ width: '100%' }} />
+                </div>
+              </div>
+              {topicError && (
+                <p style={{ fontSize: 11.5, color: '#b91c1c', margin: '6px 0 0' }}>
+                  Add a topic for this session before saving — it's how you and the client will find it later.
+                </p>
+              )}
+            </div>
+          )}
           <div style={{ padding: '13px 18px', borderBottom: '1px solid var(--border)' }}>
             <NoteTypeSelector value={noteType} onChange={setNoteType} />
           </div>
           <div style={{ padding: '20px 22px' }}>
             {noteType === 'session'
               ? <StructuredForm key={formKey} value={struct} onChange={setStruct} clientId={clientId} />
-              : <AutoGrowTextarea minHeight={260} style={{ marginTop: 4, fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
+              : <AutoGrowTextarea minHeight={420} style={{ marginTop: 4, fontSize: 15.5, lineHeight: 1.9, padding: '18px 20px' }}
                   value={noteText} onChange={e => setNoteText(e.target.value)} placeholder="Write your note here…" />
             }
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 16, marginBottom: 4 }}>
@@ -852,26 +953,70 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
             </button>
           </div>
         </div>
+
+        {!showExplorer && noteList.length > 0 && (
+          <button className="btn btn-outline btn-sm" onClick={() => setShowExplorer(true)} style={{ marginTop: 14 }}>
+            ☰ Show Past Notes ({noteList.length})
+          </button>
+        )}
       </div>
 
-      {/* ── RIGHT: Explorer — grouped by date; click a note to preview it in place ── */}
+      {/* ── RIGHT: Explorer — grouped by date; click a note to preview it in place.
+          Collapsible — tucking it away hands the notepad the full width, closer to a
+          plain word-processor page, for a coach who just wants to write. ── */}
+      {showExplorer && (
       <div style={{ width: 420, flexShrink: 0 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
           <span style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 18, fontWeight: 400 }}>
             Past Notes{noteList.length > 0 && <span style={{ fontSize: 12, fontFamily: 'sans-serif', fontWeight: 400, color: 'var(--muted)', marginLeft: 8 }}>{noteList.length}</span>}
           </span>
-          {noteList.length > 0 && (
-            <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting} style={{ fontSize: 11 }}>
-              {exporting ? 'Exporting…' : '↓ Export'}
+          <div style={{ display: 'flex', gap: 6 }}>
+            {noteList.length > 0 && (
+              <button className="btn btn-outline btn-sm" onClick={handleExport} disabled={exporting} style={{ fontSize: 11 }}>
+                {exporting ? 'Exporting…' : '↓ Export'}
+              </button>
+            )}
+            <button className="btn btn-outline btn-sm" onClick={() => setShowExplorer(false)} style={{ fontSize: 11 }}
+              title="Hide the past-notes panel to give the notepad more room">
+              Hide ✕
             </button>
-          )}
+          </div>
         </div>
+
+        {noteList.length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ flex: '1 1 auto' }}>
+                <label style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 3 }}>
+                  Search by topic
+                </label>
+                <input type="text" className="finput" placeholder="e.g. Weekly check-in" value={searchTopic}
+                  onChange={e => setSearchTopic(e.target.value)} style={{ width: '100%', fontSize: 12.5 }} />
+              </div>
+              <div style={{ flexShrink: 0, width: 150 }}>
+                <label style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 3 }}>
+                  Search by date
+                </label>
+                <input type="date" className="finput" value={searchDate}
+                  onChange={e => setSearchDate(e.target.value)} style={{ width: '100%', fontSize: 12.5 }} />
+              </div>
+            </div>
+            {hasSearch && (
+              <button className="btn btn-outline btn-sm" style={{ fontSize: 11, marginTop: 6 }}
+                onClick={() => { setSearchTopic(''); setSearchDate('') }}>
+                Clear search
+              </button>
+            )}
+          </div>
+        )}
 
         {noteList.length === 0 ? (
           <EmptyState icon="✎" title="No notes yet" message="Use the notepad to add your first note." />
+        ) : filteredNotes.length === 0 ? (
+          <EmptyState icon="✎" title="No matching notes" message="Try a different topic or date." />
         ) : (
           <div style={{ border: '1px solid var(--border)', borderRadius: 8, maxHeight: 760, overflowY: 'auto', background: 'var(--white)' }}>
-            {groupNotesByDate(noteList, tz).map(group => (
+            {groupNotesByDate(filteredNotes, tz).map(group => (
               <div key={group.label}>
                 <div style={{
                   position: 'sticky', top: 0, zIndex: 1, padding: '6px 14px',
@@ -896,12 +1041,15 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
                         }}>▸</span>
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
-                            <span className={`pill ${typePill(n.note_type)}`} style={{ fontSize: 9 }}>
-                              {typeLabel(n.note_type)}
+                            <span style={{
+                              fontSize: 12.5, fontWeight: 600, color: 'var(--ink)',
+                              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>
+                              {n.topic || notePreview(n)}
                             </span>
-                            <span style={{ fontSize: 10.5, color: 'var(--muted)', whiteSpace: 'nowrap' }}>{fmtTimeOnly(n.created_at, tz)}</span>
+                            <span style={{ fontSize: 10.5, color: 'var(--muted)', whiteSpace: 'nowrap', flexShrink: 0 }}>{fmtTimeOnly(n.created_at, tz)}</span>
                           </div>
-                          {!isExpanded && (
+                          {!isExpanded && n.topic && (
                             <div style={{
                               fontSize: 12.5, color: 'var(--ink)', lineHeight: 1.4, marginTop: 4,
                               overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
@@ -918,6 +1066,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, flexWrap: 'wrap', marginBottom: 8 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                               {n.visible_to_client && <span className="pill pill-green" style={{ fontSize: 9 }}>Shared with client</span>}
+                              {n.session_date && <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>Session: {fmtDayKey(n.session_date)}</span>}
                               {n.created_by_name && <span style={{ fontSize: 10.5, color: 'var(--muted)' }}>by {n.created_by_name}</span>}
                               {wasEdited(n.created_at, n.updated_at) && (
                                 <span style={{ fontSize: 9.5, color: 'var(--muted)', fontStyle: 'italic' }}>edited {fmtTimeOnly(n.updated_at, tz)}</span>
@@ -938,6 +1087,14 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
 
                           {isEditing ? (
                             <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px' }}>
+                              {editType === 'session' && (
+                                <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                                  <input type="text" className="finput" placeholder="Session topic" value={editTopic}
+                                    onChange={e => setEditTopic(e.target.value)} style={{ flex: '1 1 auto', fontSize: 12.5 }} />
+                                  <input type="date" className="finput" value={editSessionDate}
+                                    onChange={e => setEditSessionDate(e.target.value)} style={{ flexShrink: 0, width: 150, fontSize: 12.5 }} />
+                                </div>
+                              )}
                               <NoteTypeSelector value={editType} onChange={setEditType} />
                               {editType === 'session'
                                 ? <StructuredForm value={editStruct} onChange={setEditStruct} clientId={clientId} />
@@ -977,6 +1134,7 @@ function NoteLog({ clientId, clientName, noteList, refetch, showToast, tz }: { c
           </div>
         )}
       </div>
+      )}
 
       {/* ── Delete confirmation modal ── */}
       {deleteTarget && (
@@ -1542,7 +1700,8 @@ function SaveClientPdfModal({ defaultType, converting, onClose, onConvert }: {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices', 'Client Communication']
+const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices', 'Client Communication', 'Coach Availability']
+const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 const NOTE_TYPES = [
   { value: 'session', label: 'Session Note' },
@@ -1557,6 +1716,109 @@ const FILE_TYPES = [
   { value: 'other',      label: 'Other' },
 ]
 
+
+// ── Coach Availability ────────────────────────────────────────────────────────
+// Weekly open-hours blocks the assigned coach offers THIS specific client — scoped
+// per (coach, client), not shared across the coach's whole caseload: a coach can offer
+// different hours to different clients. Projects forward on its own (no monthly
+// re-entry) — see backend/apps/activities/availability.py. Clients pick a time from
+// this against the public email "Reschedule" link, not from inside the portal (that
+// stays a free-text request for now).
+function CoachAvailabilityPanel({ clientId }: { clientId: string }) {
+  const { show } = useToast()
+  const qc = useQueryClient()
+  const [weekday, setWeekday] = useState(0)
+  const [startTime, setStartTime] = useState('09:00')
+  const [endTime, setEndTime] = useState('17:00')
+  const [saving, setSaving] = useState(false)
+
+  const { data: rulesData } = useQuery({
+    queryKey: ['client-availability', clientId],
+    queryFn: () => clientsApi.listAvailability(clientId).then(r => r.data),
+  })
+  // DRF wraps list responses as {count, next, previous, results} — same unwrap
+  // pattern as goalList below, since this endpoint is paginated like every other
+  // ModelViewSet here even though a coach's weekly rule count never approaches a page.
+  const rules: any[] = rulesData?.results || rulesData || []
+
+  async function addRule() {
+    if (startTime >= endTime) { show('Start time must be before end time', 'error'); return }
+    setSaving(true)
+    try {
+      await clientsApi.createAvailability(clientId, { weekday, start_time: startTime, end_time: endTime })
+      qc.invalidateQueries({ queryKey: ['client-availability', clientId] })
+      show('Availability added', 'success')
+    } catch (err: any) {
+      show(err?.response?.data?.detail || err?.response?.data?.non_field_errors?.[0] || 'Failed to add', 'error')
+    } finally { setSaving(false) }
+  }
+
+  async function removeRule(id: string) {
+    await clientsApi.deleteAvailability(clientId, id)
+    qc.invalidateQueries({ queryKey: ['client-availability', clientId] })
+  }
+
+  const byDay: Record<number, any[]> = {}
+  for (const r of rules) (byDay[r.weekday] ||= []).push(r)
+
+  return (
+    <div style={{ maxWidth: 640 }}>
+      <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300, marginBottom: 6 }}>Coach Availability</div>
+      <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
+        Weekly hours you're open to meet with this client, projected forward on a rolling 30-day window.
+        When this client requests a reschedule, they'll pick from these open times instead of a free-text note.
+      </p>
+
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-hdr">Add a weekly block</div>
+        <div className="card-body" style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+          <div className="fgroup" style={{ marginBottom: 0 }}>
+            <label className="flabel">Day</label>
+            <select className="finput" value={weekday} onChange={e => setWeekday(Number(e.target.value))}>
+              {WEEKDAY_LABELS.map((d, i) => <option key={i} value={i}>{d}</option>)}
+            </select>
+          </div>
+          <div className="fgroup" style={{ marginBottom: 0 }}>
+            <label className="flabel">Start</label>
+            <input className="finput" type="time" value={startTime} onChange={e => setStartTime(e.target.value)} />
+          </div>
+          <div className="fgroup" style={{ marginBottom: 0 }}>
+            <label className="flabel">End</label>
+            <input className="finput" type="time" value={endTime} onChange={e => setEndTime(e.target.value)} />
+          </div>
+          <button className="btn btn-dark btn-sm" onClick={addRule} disabled={saving}>
+            {saving ? 'Adding…' : '+ Add'}
+          </button>
+        </div>
+      </div>
+
+      {rules.length === 0 ? (
+        <EmptyState icon="📅" title="No availability set" message="Add a weekly block above so this client can pick a time when they request a reschedule." />
+      ) : (
+        <div className="card">
+          <div className="card-hdr">Weekly schedule</div>
+          <div className="card-body" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {WEEKDAY_LABELS.map((label, i) => (
+              byDay[i]?.length ? (
+                <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                  <div style={{ width: 90, fontSize: 13, fontWeight: 600, color: 'var(--ink)', paddingTop: 4 }}>{label}</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, flex: 1 }}>
+                    {byDay[i].map((r: any) => (
+                      <span key={r.id} className="pill pill-blue" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        {r.start_time.slice(0, 5)}–{r.end_time.slice(0, 5)}
+                        <button onClick={() => removeRule(r.id)} title="Remove" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'inherit', fontSize: 13, padding: 0, lineHeight: 1 }}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ) : null
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Client Communication ─────────────────────────────────────────────────────
 // Draft/preview only — no send pipeline yet. Compose using a generic template
@@ -2151,6 +2413,8 @@ export default function ClientDetail() {
   const [showActivity, setShowActivity] = useState(false)
   const [showGoal, setShowGoal]       = useState(false)
   const [editingGoal, setEditingGoal] = useState<any>(null)
+  const [searchGoalTitle, setSearchGoalTitle] = useState('')
+  const [searchGoalDate, setSearchGoalDate]   = useState('')
   const [editMode, setEditMode] = useState(false)
   const [editForm, setEditForm] = useState<Client | null>(null)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -2358,6 +2622,16 @@ export default function ClientDetail() {
   const actList: any[]  = activities?.results || activities || []
   const goalList: any[] = goals?.results || goals || []
   const invList: any[]  = invoices?.results || invoices || []
+  const hasGoalSearch = !!(searchGoalTitle.trim() || searchGoalDate)
+  const filteredGoalList = useMemo(() => {
+    if (!hasGoalSearch) return goalList
+    const q = searchGoalTitle.trim().toLowerCase()
+    return goalList.filter((g: any) => {
+      if (q && !(g.title || '').toLowerCase().includes(q)) return false
+      if (searchGoalDate && g.target_date !== searchGoalDate) return false
+      return true
+    })
+  }, [goalList, searchGoalTitle, searchGoalDate, hasGoalSearch])
   // Overview widget is a compact summary card, not the full ledger — show only the
   // 5 most recently created invoices (mixed statuses), with a link to the full list.
   const top5Invoices: any[] = [...invList]
@@ -2366,12 +2640,6 @@ export default function ClientDetail() {
   const noteList: any[] = notesData?.results || notesData || []
   const fileList: any[] = filesData?.results || filesData || []
   const deal: any = dealData?.results?.[0] || dealData?.[0] || null
-
-  const actDotColor = (status: string) => {
-    if (status === 'completed') return '#4a9e6b'
-    if (status === 'missed' || status === 'cancelled') return '#c0392b'
-    return 'var(--gold)'
-  }
 
   // useMemo must be called before any conditional returns (Rules of Hooks)
   const timeline = useMemo(() => {
@@ -2899,13 +3167,17 @@ export default function ClientDetail() {
                       </button>
                     </div>
                   ) : timeline.map((item: any, idx: number) => {
-                    const dotColor = item._type === 'invoice' ? '#3a6ea8' : actDotColor(item.status)
-                    const statusLabel = item.status || ''
-                    const statusColor: Record<string, string> = {
-                      completed: '#2d6a4a', scheduled: '#b8922e', missed: '#c0392b',
-                      cancelled: '#8c8279', paid: '#2d6a4a', sent: '#2d6a9f', overdue: '#c0392b', draft: '#8c8279',
+                    // Activities: one color, one label, both sourced from
+                    // displayActivityStatus (calendar.md §7.6) — no second,
+                    // independently-computed status color for the same row.
+                    // Invoices: separate domain, own status vocabulary, unaffected.
+                    const invoiceStatusColor: Record<string, string> = {
+                      paid: '#2d6a4a', sent: '#2d6a9f', overdue: '#c0392b', draft: '#8c8279',
                     }
-                    const sc = statusColor[statusLabel] || '#8c8279'
+                    const statusLabel = item._type === 'activity' ? displayActivityStatus(item) : (item.status || '')
+                    const sc = item._type === 'activity'
+                      ? (STATUS_HEX[statusLabel] || '#8c8279')
+                      : (invoiceStatusColor[statusLabel] || '#8c8279')
                     const label = item._type === 'activity'
                       ? (item.activity_type || 'session').replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase())
                       : `Invoice ${item.number}`
@@ -2918,7 +3190,7 @@ export default function ClientDetail() {
                         padding: '9px 20px',
                         borderBottom: idx < timeline.length - 1 ? '1px solid #f3f0eb' : 'none',
                       }}>
-                        <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: dotColor }} />
+                        <div style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: sc }} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6 }}>
                             <span style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
@@ -2983,7 +3255,7 @@ export default function ClientDetail() {
                         <td style={{ fontWeight: 500 }}>{a.title}</td>
                         <td style={{ textTransform: 'capitalize' }}>{a.activity_type}</td>
                         <td>{fmtDatetime(a.start_at)}</td>
-                        <td><StatusBadge status={a.status} /></td>
+                        <td><StatusBadge status={displayActivityStatus(a)} /></td>
                         <td>
                           {a.status === 'scheduled' && (
                             <button className="btn btn-ghost btn-sm" style={{ color: 'var(--rust)' }}
@@ -3006,17 +3278,53 @@ export default function ClientDetail() {
               <div style={{ fontFamily: 'Cormorant Garamond, serif', fontSize: 20, fontWeight: 300 }}>Goals</div>
               <button className="btn btn-dark btn-sm" onClick={() => setShowGoal(true)}>+ Add Goal</button>
             </div>
+
+            {goalList.length > 0 && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                <div style={{ flex: '1 1 auto' }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+                    Search by title
+                  </label>
+                  <input type="text" className="finput" placeholder="e.g. Executive presence" value={searchGoalTitle}
+                    onChange={e => setSearchGoalTitle(e.target.value)} style={{ width: '100%' }} />
+                </div>
+                <div style={{ flexShrink: 0, width: 170 }}>
+                  <label style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.06em', textTransform: 'uppercase', color: 'var(--muted)', display: 'block', marginBottom: 4 }}>
+                    Search by target date
+                  </label>
+                  <input type="date" className="finput" value={searchGoalDate}
+                    onChange={e => setSearchGoalDate(e.target.value)} style={{ width: '100%' }} />
+                </div>
+                {hasGoalSearch && (
+                  <button className="btn btn-outline btn-sm" style={{ alignSelf: 'flex-end', fontSize: 11 }}
+                    onClick={() => { setSearchGoalTitle(''); setSearchGoalDate('') }}>
+                    Clear
+                  </button>
+                )}
+              </div>
+            )}
+
             {goalList.length === 0
               ? <EmptyState icon="◎" title="No goals set" message="Set your client's first coaching goal" />
-              : goalList.map((g: any) => (
+              : filteredGoalList.length === 0
+              ? <EmptyState icon="◎" title="No matching goals" message="Try a different title or date." />
+              : filteredGoalList.map((g: any) => (
                 <div key={g.id} className="card" style={{ marginBottom: 12, padding: '16px 18px' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontWeight: 500, fontSize: 14, marginBottom: 4 }}>{g.title}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                        <div style={{ fontWeight: 500, fontSize: 14 }}>{g.title}</div>
+                        {g.client_owned && (
+                          <span className="pill" style={{ fontSize: 9 }} title="Added by the client in their portal">
+                            Client-added
+                          </span>
+                        )}
+                      </div>
                       {g.description && <div style={{ fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>{g.description}</div>}
-                      {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Target: {fmtDate(g.target_date)}</div>}
+                      {g.target_date && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 6 }}>Target: {fmtDayKey(g.target_date)}</div>}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {!g.client_owned && (
                       <button
                         className={`pill ${g.visible_to_client ? 'pill-green' : ''}`}
                         style={{
@@ -3030,6 +3338,7 @@ export default function ClientDetail() {
                           showToast(g.visible_to_client ? 'Goal unshared' : 'Goal shared with client')
                         }}
                       >{g.visible_to_client ? 'Shared' : 'Share with client'}</button>
+                      )}
                       <StatusBadge status={g.status} />
                       <button
                         className="btn btn-ghost btn-sm"
@@ -3096,6 +3405,10 @@ export default function ClientDetail() {
             clientEmail={client.email || ''}
             clientAddress={formatClientAddress((client as any).primary_address)}
           />
+        )}
+
+        {tab === 'Coach Availability' && (
+          <CoachAvailabilityPanel clientId={id!} />
         )}
       </div>
 

@@ -146,6 +146,8 @@ class ClientNote(WorkspaceModel):
     client            = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="client_notes")
     text              = models.TextField()
     note_type         = models.CharField(max_length=20, choices=NoteType.choices, default=NoteType.GENERAL)
+    topic             = models.CharField(max_length=200, blank=True, default="", help_text="Short session topic, e.g. 'Weekly check-in' — searchable")
+    session_date      = models.DateField(null=True, blank=True, help_text="Date the session took place — defaults to the note's creation date if left blank")
     created_by        = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name="+")
     visible_to_client = models.BooleanField(default=False, help_text="Share this note with the client in their portal")
     created_at        = models.DateTimeField(auto_now_add=True)
@@ -293,6 +295,7 @@ class EmailLog(WorkspaceModel):
         CLIENT_MESSAGE        = "client_message",         "Client Message"
         PORTAL_INVITE         = "portal_invite",           "Portal Invite"
         GOAL_SHARED           = "goal_shared",             "Goal Shared"
+        NOTE_SHARED           = "note_shared",             "Note Shared"
 
     id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client          = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name="email_logs")

@@ -1,8 +1,18 @@
 """CoachOS — activities/models.py (FR-ACT-*)"""
 import uuid
+from django.contrib.postgres.constraints import ExclusionConstraint
+from django.contrib.postgres.fields import DateTimeRangeField, RangeOperators
 from django.db import models
+from django.db.models import F, Func, Q
 from apps.accounts.models import WorkspaceModel, User
 from apps.clients.models import Client
+
+
+class _TsTzRange(Func):
+    """SQL tstzrange(start_at, end_at) — used only to build the exclusion constraint
+    below; start_at/end_at stay plain DateTimeFields, no new column or data migration."""
+    function = "tstzrange"
+    output_field = DateTimeRangeField()
 
 
 class Activity(WorkspaceModel):
@@ -79,12 +89,48 @@ class Activity(WorkspaceModel):
     reminder_1h_sent  = models.BooleanField(default=False)
     reminder_24h_sent_at  = models.DateTimeField(null=True, blank=True)
     reminder_1h_sent_at   = models.DateTimeField(null=True, blank=True)
+    # Set when a client picks a slot from the coach's availability on the public
+    # reschedule page (apps.activities.public_views.SessionRescheduleView) — a proposed
+    # new time awaiting the coach/owner's confirmation, not yet applied to start_at/
+    # end_at. Confirming (apps.activities.views.confirm_reschedule) moves start_at/
+    # end_at here, clears this field, and re-syncs everything downstream (Google
+    # Calendar, reminder flags, confirmation email).
+    requested_start_at = models.DateTimeField(null=True, blank=True)
+    # When requested_start_at was (most recently) set — deliberately separate from
+    # updated_at, which bumps on ANY save (editing notes, title, etc.) and would
+    # otherwise make a stale pending request look "fresh" every time something
+    # unrelated changes. Used by tasks.reminders.expire_stale_reschedule_requests
+    # (calendar.md §7.2/§9.2 Task 5) to measure true age against the workspace's
+    # configured TTL. Always set/cleared in lockstep with requested_start_at.
+    requested_at   = models.DateTimeField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 
     class Meta:
         db_table = "activities_activity"
         ordering = ["-start_at"]
+        constraints = [
+            # Hard backstop under every application-level check above (calendar.md §7.5,
+            # §9.2 Task 1) — Postgres itself refuses to INSERT/UPDATE a row whose
+            # [start_at, end_at) overlaps another active row for the same coach, as a
+            # single atomic operation. This is what actually closes the race condition
+            # application-level "check then write" can't: two concurrent requests can't
+            # both pass a Python-side check before either has saved, but they can't both
+            # get past this, no matter which of the several write paths (direct edit,
+            # confirm_reschedule, portal respond, public token views) either one uses.
+            # NULL coach rows never conflict with each other or anything else (Postgres
+            # treats NULL as distinct in exclusion constraints, same as unique
+            # constraints) — fine, since an activity with no coach assigned isn't really
+            # "booked" against anyone's calendar yet.
+            ExclusionConstraint(
+                name="activity_no_overlapping_coach_bookings",
+                expressions=[
+                    (_TsTzRange(F("start_at"), F("end_at")), RangeOperators.OVERLAPS),
+                    ("coach", RangeOperators.EQUAL),
+                ],
+                condition=Q(status__in=["scheduled", "rescheduled"]),
+            ),
+        ]
 
     def __str__(self):
         return f"{self.activity_type}: {self.title} ({self.start_at.date()})"
@@ -124,6 +170,34 @@ class GoogleCalendarWatch(models.Model):
 
     def __str__(self):
         return f"watch({self.coach_id}) exp={self.expiration}"
+
+
+class CoachAvailabilityRule(WorkspaceModel):
+    """A recurring weekly open-hours block a coach has set for one specific client.
+
+    Scoped per (coach, client) pair, not per coach — a coach can offer different hours
+    to different clients (confirmed design choice, not an oversight). Projected forward
+    live over a rolling window rather than stored per-date, so nothing needs refilling
+    month to month — see apps.activities.availability.compute_available_slots.
+
+    Availability itself is per-client, but booking a slot removes it from every other
+    client's options for that same coach too — conflict-checking against the coach's
+    other Activities is always coach-wide, never scoped to just this client, since the
+    coach obviously can't be in two sessions at once regardless of whose rule it is.
+    """
+    coach      = models.ForeignKey(User, on_delete=models.CASCADE, related_name="availability_rules")
+    client     = models.ForeignKey(Client, on_delete=models.CASCADE, related_name="coach_availability_rules")
+    weekday    = models.PositiveSmallIntegerField(help_text="0=Monday .. 6=Sunday")
+    start_time = models.TimeField()
+    end_time   = models.TimeField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "activities_coach_availability_rule"
+        ordering = ["weekday", "start_time"]
+
+    def __str__(self):
+        return f"{self.coach_id} x {self.client_id}: weekday {self.weekday} {self.start_time}-{self.end_time}"
 
 
 BUILTIN_TYPES = ["appointment", "task", "call", "session", "training", "travel", "custom", "client_communication"]

@@ -116,13 +116,15 @@ class ActivitySerializer(serializers.ModelSerializer):
                   "reminder_24h_sent", "reminder_24h_sent_at",
                   "reminder_1h_sent",  "reminder_1h_sent_at",
                   "client_confirmed",  "client_confirmed_at",
-                  "client_rsvp_status", "client_rsvp_synced_at"]
+                  "client_rsvp_status", "client_rsvp_synced_at",
+                  "requested_start_at"]
         read_only_fields = ["id", "google_cal_uid", "caldav_uid", "edit_history", "created_at",
                             "confirmation_sent_at", "cancellation_sent_at",
                             "reminder_24h_sent", "reminder_24h_sent_at",
                             "reminder_1h_sent",  "reminder_1h_sent_at",
                             "client_confirmed",  "client_confirmed_at",
-                            "client_rsvp_status", "client_rsvp_synced_at"]
+                            "client_rsvp_status", "client_rsvp_synced_at",
+                            "requested_start_at"]
 
     def create(self, validated_data):
         request = self.context["request"]
@@ -169,8 +171,15 @@ class ActivitySerializer(serializers.ModelSerializer):
 
         # Detect cancellation before saving
         new_status = validated_data.get("status")
-        was_scheduled = instance.status == Activity.Status.SCHEDULED
-        being_cancelled = new_status == Activity.Status.CANCELLED and was_scheduled
+        # Includes RESCHEDULED (not just SCHEDULED) — a session awaiting a pending
+        # client-proposed time is still an active booking. Previously this only matched
+        # SCHEDULED, so directly editing a pending-reschedule session's time here (as
+        # opposed to using the dedicated confirm-reschedule action) silently sent no
+        # email to anyone — being_cancelled and the reschedule-email branch below both
+        # fell through, since neither condition ever saw a RESCHEDULED session as "was
+        # previously active."
+        was_active = instance.status in (Activity.Status.SCHEDULED, Activity.Status.RESCHEDULED)
+        being_cancelled = new_status == Activity.Status.CANCELLED and was_active
 
         # Detect scheduling changes that warrant a reschedule email.
         # Use try/except because comparing tz-aware (DB) vs tz-naive (submitted) datetimes
@@ -186,6 +195,20 @@ class ActivitySerializer(serializers.ModelSerializer):
                     break
             except TypeError:
                 scheduling_changed = True
+                break
+
+        # Narrower than scheduling_changed (which also counts title/location) — only
+        # the actual time moving invalidates the reminder-sent flags below.
+        time_changed = False
+        for k in ("start_at", "end_at"):
+            if k not in validated_data:
+                continue
+            try:
+                if getattr(instance, k) != validated_data[k]:
+                    time_changed = True
+                    break
+            except TypeError:
+                time_changed = True
                 break
 
         # Record edit history — values must be JSON-safe (datetimes/UUIDs → strings)
@@ -211,6 +234,17 @@ class ActivitySerializer(serializers.ModelSerializer):
             instance._append_edit(request.user, diff)
 
         activity = super().update(instance, validated_data)
+
+        if time_changed:
+            # Stale reminder flags from the old time would either never fire again (if
+            # already sent) or fire with the wrong "in 24 hours"/"in 1 hour" framing
+            # relative to a time that's no longer real — same correctness issue fixed
+            # for the dedicated confirm-reschedule action, applying here too since a
+            # coach can move a session's time through this normal edit path as well.
+            Activity.objects.filter(pk=activity.pk).update(
+                reminder_24h_sent=False, reminder_24h_sent_at=None,
+                reminder_1h_sent=False, reminder_1h_sent_at=None,
+            )
 
         # ── Series handling ───────────────────────────────────────────────────
         series_root_id = activity.recurrence_id
@@ -257,9 +291,15 @@ class ActivitySerializer(serializers.ModelSerializer):
         if being_cancelled and activity.client.email:
             from tasks.email import send_activity_cancellation_email
             _fire(send_activity_cancellation_email, str(activity.id))
-        # Reschedule/update notification email
-        elif send_update and scheduling_changed and was_scheduled and activity.client.email:
+        # Reschedule/update notification email — also covers a coach directly editing a
+        # session that still had a pending client-proposed time (requested_start_at was
+        # already cleared above, in the view's perform_update, once start_at/end_at
+        # changed here); send_activity_reschedule_email already includes a "coach copy"
+        # block, so this one call covers both recipients. .delay() (not the bare-thread
+        # _fire helper used elsewhere) so this can't silently drop on a worker recycle —
+        # same reliability fix already applied to the dedicated confirm-reschedule path.
+        elif send_update and scheduling_changed and was_active and activity.client.email:
             from tasks.email import send_activity_reschedule_email
-            _fire(send_activity_reschedule_email, str(activity.id))
+            send_activity_reschedule_email.delay(str(activity.id))
 
         return activity
