@@ -178,8 +178,8 @@ def test_portal_client_can_crud_own_goal(portal_api_client, client_record, works
 
 @pytest.mark.django_db
 def test_portal_client_cannot_edit_coach_goal(api_client, portal_api_client, client_record, workspace):
-    """A coach-authored goal — even once shared — stays read-only from the portal;
-    only the client's own goals (created_by is null) are editable there."""
+    """A coach-authored goal can't be edited or deleted from the portal — the client may
+    only mark it complete / reopen it (and log progress). Unshared goals stay invisible."""
     from apps.clients.models import Client
     Client.objects.filter(pk=client_record.pk).update(portal_access=True)
 
@@ -191,9 +191,26 @@ def test_portal_client_cannot_edit_coach_goal(api_client, portal_api_client, cli
 
     portal = portal_api_client(client_record, workspace)
     res = portal.patch(f"/api/portal/goals/{goal_id}/", {"title": "Hacked"}, format="json")
-    assert res.status_code == 404
+    assert res.status_code == 400
+    from apps.clients.models import ClientGoal
+    assert ClientGoal.objects.get(pk=goal_id).title == "Coach-set goal"
 
     res = portal.delete(f"/api/portal/goals/{goal_id}/")
+    assert res.status_code == 404
+
+    # Mark complete → stays visible in the portal; reopen works too.
+    res = portal.patch(f"/api/portal/goals/{goal_id}/", {"status": "completed"}, format="json")
+    assert res.status_code == 200 and res.data["status"] == "completed"
+    listed = {g["id"]: g for g in portal.get("/api/portal/goals/").data["goals"]}
+    assert listed[goal_id]["status"] == "completed"
+    res = portal.patch(f"/api/portal/goals/{goal_id}/", {"status": "active"}, format="json")
+    assert res.status_code == 200 and res.data["status"] == "active"
+
+    # An unshared coach goal can't be touched at all.
+    res = api_client.post(f"/api/clients/{client_record.id}/goals/", {
+        "title": "Private coach goal", "target_date": "2026-12-01",
+    }, format="json")
+    res = portal.patch(f"/api/portal/goals/{res.data['id']}/", {"status": "completed"}, format="json")
     assert res.status_code == 404
 
 

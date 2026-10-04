@@ -575,6 +575,24 @@ function GoalsTab({ goals, setGoals, commitments, showToast, onProgressSaved }: 
     } finally { setEditSaving(false) }
   }
 
+  // Mark complete / reopen — works on every goal. For a goal the coach set, status is the
+  // only thing the client may change (backend PortalGoalDetailView enforces it).
+  const [statusSavingId, setStatusSavingId] = useState<string | null>(null)
+  async function toggleComplete(g: Goal) {
+    const status = g.status === 'completed' ? 'active' : 'completed'
+    setStatusSavingId(g.id)
+    try {
+      const payload = g.client_owned
+        ? { title: g.title, description: g.description, ...(g.target_date ? { target_date: g.target_date } : {}), status }
+        : { status }
+      const { data } = await api.patch(`/api/portal/goals/${g.id}/`, payload)
+      setGoals(prev => prev.map(x => x.id === g.id ? { ...x, ...data } : x))
+      showToast(status === 'completed' ? 'Goal marked complete 🎉' : 'Goal reopened')
+    } catch (err: any) {
+      showToast(err?.response?.data?.status || err?.response?.data?.detail || 'Failed to update goal', 'error')
+    } finally { setStatusSavingId(null) }
+  }
+
   async function deleteGoal(goalId: string) {
     if (!confirm('Delete this goal?')) return
     try {
@@ -731,11 +749,24 @@ function GoalsTab({ goals, setGoals, commitments, showToast, onProgressSaved }: 
                                 g.description && <p style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 12 }}>{g.description}</p>
                               )}
 
-                              <button className={`btn btn-sm ${isLoggingProgress ? 'btn-outline' : 'btn-dark'}`}
-                                onClick={() => { setOpenProgressId(isLoggingProgress ? null : g.id); setText('') }}
-                                style={{ marginBottom: 12 }}>
-                                {isLoggingProgress ? 'Cancel' : '+ Progress'}
-                              </button>
+                              {!g.client_owned && (
+                                <div style={{ fontSize: 11.5, color: 'var(--muted)', marginBottom: 10 }}>
+                                  Set by {g.created_by_name || 'your coach'} — you can log progress and mark it complete.
+                                  To change the goal itself, ask your coach.
+                                </div>
+                              )}
+                              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+                                <button className={`btn btn-sm ${isLoggingProgress ? 'btn-outline' : 'btn-dark'}`}
+                                  onClick={() => { setOpenProgressId(isLoggingProgress ? null : g.id); setText('') }}>
+                                  {isLoggingProgress ? 'Cancel' : '+ Progress'}
+                                </button>
+                                {!isEditing && (
+                                  <button className="btn btn-sm btn-outline" onClick={() => toggleComplete(g)}
+                                    disabled={statusSavingId === g.id}>
+                                    {statusSavingId === g.id ? 'Saving…' : g.status === 'completed' ? 'Reopen' : '✓ Mark complete'}
+                                  </button>
+                                )}
+                              </div>
 
                               {isLoggingProgress && (
                                 <div style={{ background: 'var(--paper)', border: '1px solid var(--border)', borderRadius: 6, padding: '12px 14px', marginBottom: 12 }}>

@@ -287,7 +287,9 @@ class PortalGoalsView(APIView):
             client_id=client_id, workspace_id=workspace_id,
         ).filter(
             Q(created_by__isnull=True) |                     # client's own — always show
-            Q(visible_to_client=True, status="active")        # coach's — only if shared + active
+            # coach's — shared, and active or completed (a client can mark a coach goal
+            # complete, so it must stay visible afterwards); paused stays hidden
+            Q(visible_to_client=True, status__in=["active", "completed"])
         ).order_by("-created_at"))
         commitments = Commitment.objects.filter(
             client_id=client_id, workspace_id=workspace_id
@@ -327,24 +329,43 @@ class PortalGoalsView(APIView):
 
 
 class PortalGoalDetailView(APIView):
-    """PATCH/DELETE /api/portal/goals/{goal_id}/ — a client's own goals only; a
-    coach-authored goal stays read-only here even when shared (progress is still
-    logged through PortalProgressView)."""
+    """PATCH/DELETE /api/portal/goals/{goal_id}/.
+    - The client's own goals: full edit + delete.
+    - A goal the coach set (and shared): the client may only mark it complete or
+      reopen it ({"status": "completed" | "active"}); title, description, target date
+      and delete stay coach-only. Progress is still logged via PortalProgressView."""
     authentication_classes = [PortalJWTAuthentication]
     permission_classes     = [IsAuthenticated]
 
-    def _get_goal(self, goal_id, client_id, workspace_id):
-        try:
-            return ClientGoal.objects.get(
-                pk=goal_id, client_id=client_id, workspace_id=workspace_id,
-                created_by__isnull=True,
-            )
-        except ClientGoal.DoesNotExist:
+    def _get_goal(self, goal_id, client_id, workspace_id, own_only=True):
+        from django.db.models import Q
+        qs = ClientGoal.objects.filter(pk=goal_id, client_id=client_id, workspace_id=workspace_id)
+        qs = qs.filter(created_by__isnull=True) if own_only else qs.filter(
+            Q(created_by__isnull=True) | Q(visible_to_client=True))
+        goal = qs.first()
+        if not goal:
             raise NotFound()
+        return goal
+
+    def _respond(self, goal):
+        data = ClientGoalSerializer(goal).data
+        progress = GoalProgress.objects.filter(goal=goal).order_by("-created_at")
+        data["progress_entries"] = GoalProgressSerializer(progress, many=True).data
+        return Response(data)
 
     def patch(self, request, goal_id):
         client_id, workspace_id = _get_portal_claims(request)
-        goal = self._get_goal(goal_id, client_id, workspace_id)
+        goal = self._get_goal(goal_id, client_id, workspace_id, own_only=False)
+
+        if goal.created_by_id is not None:
+            # Coach-set goal: completion status only.
+            status_value = request.data.get("status")
+            if status_value not in ("completed", "active"):
+                raise ValidationError({"status": "You can mark this goal complete or reopen it; "
+                                                 "only your coach can change its details."})
+            goal.status = status_value
+            goal.save(update_fields=["status", "updated_at"])
+            return self._respond(goal)
 
         title = (request.data.get("title") or "").strip()
         if not title:
@@ -363,10 +384,7 @@ class PortalGoalDetailView(APIView):
             goal.status = status_value
 
         goal.save(update_fields=["title", "description", "target_date", "status", "updated_at"])
-        data = ClientGoalSerializer(goal).data
-        progress = GoalProgress.objects.filter(goal=goal).order_by("-created_at")
-        data["progress_entries"] = GoalProgressSerializer(progress, many=True).data
-        return Response(data)
+        return self._respond(goal)
 
     def delete(self, request, goal_id):
         client_id, workspace_id = _get_portal_claims(request)

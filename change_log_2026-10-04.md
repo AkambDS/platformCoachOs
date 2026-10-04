@@ -553,3 +553,44 @@ chosen day (e.g. every Monday, the 15th / first Monday), sent at 8 AM Eastern.
 - Open suggestions: weekdays-only daily follow-ups, "same schedule for everyone"
   per stage, "Next follow-up" date on each deal, Settings tab-bar overflow,
   replacing the email popup with a link to Settings → Emails.
+
+---
+
+## 13. Client portal — clients can mark a coach-set goal complete
+
+Request: "not able to edit the goals in client portal" — on a goal shown as
+"From Arti Kamboj".
+
+**Investigation:** not a bug. Goals the coach created were deliberately read-only
+in the portal (only the client's own goals had Edit/Delete; see
+`change_log_2026-10-03.md`), but the screen didn't say so, so it looked broken.
+Decision (user): let the client **mark a coach goal complete / reopen it** and log
+progress; title, description, target date and delete stay coach-only.
+
+**Backend — `backend/apps/portal/views.py`**
+- `PortalGoalDetailView.patch`: now also finds shared coach goals. For those, the
+  only accepted change is `{"status": "completed" | "active"}`; anything else →
+  400 *"You can mark this goal complete or reopen it; only your coach can change
+  its details."* The client's own goals keep full edit. Delete still only works
+  on the client's own goals (404 otherwise). Unshared coach goals → 404.
+- `PortalGoalsView.get`: coach goals are listed when shared and **active or
+  completed** (was active only — a goal the client completed would otherwise
+  disappear from their portal). Paused stays hidden.
+- Small refactor: `_get_goal(..., own_only)` and `_respond()` helpers.
+
+**Frontend — `frontend/src/pages/portal/ClientPortal.tsx` (`GoalsTab`)**
+- Expanded coach goal shows: *"Set by {coach} — you can log progress and mark it
+  complete. To change the goal itself, ask your coach."*
+- New **✓ Mark complete / Reopen** button next to **+ Progress** on every goal
+  (`toggleComplete`), with success/error toasts.
+
+**Tests — `backend/apps/clients/tests.py`**
+- `test_portal_client_cannot_edit_coach_goal` updated: title edit → 400 and
+  unchanged; delete → 404; mark complete → 200 and still listed as completed;
+  reopen → 200; unshared coach goal → 404.
+
+**Verified:** `pytest` 27 passed (Celery eager); `tsc --noEmit` clean; `pyflakes`
+clean. Not clicked through in the portal UI in a browser.
+
+**Suggested follow-up:** email the coach when a client completes one of their
+goals (new "Client Completed a Goal" template in Settings → Emails).
