@@ -22,9 +22,11 @@ Postgres row-level security (RLS) policies exist (`apps/accounts/apps.py`,
 three must be fixed together, fixing one alone either changes nothing or
 blanks every coach screen:
 
-1. **Master DB account.** Django connects as `coachos`, the `POSTGRES_USER`
-   the postgres image creates → `SUPERUSER` + `BYPASSRLS`. Superusers skip RLS
-   entirely, even with `FORCE ROW LEVEL SECURITY`.
+1. **App connects as a role RLS doesn't apply to.** Locally Django connects as
+   `coachos`, the `POSTGRES_USER` the postgres image creates → `SUPERUSER` +
+   `BYPASSRLS`, which skips RLS even with `FORCE`. In prod (RDS) it connects as
+   `coachos_admin` — not superuser, no `BYPASSRLS` — but that role **owns** the
+   tables and none are `FORCE`d, so Postgres exempts it all the same (§1a, DB-3).
 2. **Workspace never set for coach requests.** `WorkspaceTenantMiddleware`
    (`config/middleware.py`) only reads `Authorization: Bearer …`, but the coach
    SPA authenticates via the httpOnly `access_token` cookie
@@ -117,6 +119,7 @@ settings are workspace-filtered.
 | DB-8 | Library `shared_client_ids` / `shared_user_ids` keep only valid ids of this workspace's clients/users (foreign, stale, or malformed ids are dropped, not rejected). | `apps/library/serializers.py` |
 | DB-9 | `remove_attachment`'s "is this S3 file still referenced?" check is scoped to the workspace. | `apps/clients/views.py` |
 | DB-11 | Library item `s3_key` must start with `library/<own workspace id>/`. | `apps/library/serializers.py` |
+| Hardening | Per-IP throttles took the client IP from the whole `X-Forwarded-For` header, which the client controls — a forged header dodged every per-IP limit (login, portal code, demo lead…). DRF now uses only the hop nginx appended (`NUM_PROXIES = 1`). Demo-lead capture also rejects first names over 100 chars. | `config/settings/base.py`, `apps/superadmin/views.py` |
 | Tests | `test_tenant_isolation.py`: cross-workspace detail/list reads (owner + coach), update/delete, cross-linking on create and reassign, library share lists, coach-vs-coach inside a workspace, portal client-vs-client and cross-workspace, workspace-less login refused, normal login + normal create still work, guard over all serializers. | `backend/test_tenant_isolation.py` (new) |
 
 **Behaviour change to know:** a coach/assistant can now only pick **their own clients** when creating an invoice, deal, or session (matches what they could already see in lists). Owners are unaffected. If a coach legitimately needs to act on another coach's client, the owner reassigns the client or does it themselves.

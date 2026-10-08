@@ -167,16 +167,17 @@ def d_request_path():
     for i in range(5):
         f.arrow([(xs[i] + 108, 70), (xs[i + 1] - 2, 70)])
     f.text(1, 22, "request →", "tg", "start")
-    f.box(250, 170, 210, 52, "RLS policies · 12 tables", ["defined, but not enforced:", "app DB role bypasses RLS"], kind="r")
+    f.box(250, 170, 210, 52, "RLS policies · 12 tables", ["defined, but not enforced:", "app DB role is exempt"], kind="r")
     f.box(500, 170, 218, 52, "PostgreSQL", ["isolation actually comes from", "the queryset filter"])
     f.arrow([(299, 100), (320, 168)], "sets session var", (316, 136), kind="r", dashed=True, anchor="start")
     f.arrow([(665, 100), (640, 168)], "SQL", (660, 138), anchor="start")
     f.line([(460, 196), (498, 196)], kind="r")
     return figure(f, "One API request, left to right. Every step can reject the request. Tenant isolation is enforced "
                      "by the last step: each viewset filters its queryset by the caller's workspace. The middleware also "
-                     "sets a Postgres session variable for row-level-security policies, but the app connects as a "
-                     "superuser role, so Postgres skips those policies (verified locally: <code>rolbypassrls = true</code>, "
-                     "<code>relforcerowsecurity = false</code>). The portal scope also sets <code>app.client_id</code>.")
+                     "sets a Postgres session variable for row-level-security policies, but Postgres skips them: locally "
+                     "the app connects as a superuser, and on RDS as <code>coachos_admin</code>, which owns the tables "
+                     "while none of them use <code>FORCE ROW LEVEL SECURITY</code> (verified 2026-10-08). The portal scope "
+                     "also sets <code>app.client_id</code>.")
 
 
 def d_identity():
@@ -623,7 +624,7 @@ infrastructure.</p>
     ["nginx", "TLS termination, path routing, static files", "Config bind-mounted from <code>nginx/nginx.conf</code>; <code>^~ /static/</code> must win over the SPA's <code>*.css|*.js</code> rule"],
     ["backend", "Django 5 + DRF on gunicorn (2 workers)", "Entrypoint runs migrations and <code>collectstatic</code> before serving"],
     ["celery · celery-beat", "Async tasks; <code>DatabaseScheduler</code>", "Schedule defined in <code>CELERY_BEAT_SCHEDULE</code>, live copy in Django admin → Periodic tasks"],
-    ["db · redis", "PostgreSQL; Celery broker and Django cache", "Task results stored in Postgres (<code>django-db</code>)"],
+    ["db · redis", "PostgreSQL (local only); Celery broker and Django cache", "Production data lives on <b>AWS RDS</b>; the compose <code>db</code> container there is unused. Task results stored in Postgres (<code>django-db</code>)"],
     ["onlyoffice", "Document Server for in-browser Word/Excel/PPT", "Separate server block on :8443"],
     ["frontend", "Builds the React 18 + Vite SPA into a shared volume", "Zustand auth store, React Query, Tailwind, FullCalendar, Recharts, driver.js"],
 ])}</section>""")
@@ -633,11 +634,21 @@ infrastructure.</p>
 model inherits <code>WorkspaceModel</code> and carries a <code>workspace</code> foreign key.</p>
 {d_request_path()}
 <div class="callout"><b>Design risk: only one isolation layer.</b> The RLS policies (<code>tenant_isolation</code>, plus
-<code>portal_isolation</code> on goals) look like a second line of defence, but they don't run: the application connects
-as the table owner with <code>BYPASSRLS</code>, and the tables don't use <code>FORCE ROW LEVEL SECURITY</code>. A single
-viewset that forgets its workspace filter would leak across tenants. Fix: connect as a non-owner role without
-<code>BYPASSRLS</code> (or add <code>FORCE</code>), then cover the remaining workspace tables. Test with two workspaces
-before rollout, because Celery tasks and management commands run without the request middleware.</div>
+<code>portal_isolation</code> on goals) look like a second line of defence, but they don't run: in production the
+application connects as <code>coachos_admin</code>, which owns the tables, and the tables don't use <code>FORCE ROW LEVEL
+SECURITY</code>, so Postgres exempts the owner. Only 12 of 34 workspace tables have policies at all. A single viewset that
+forgets its workspace filter would leak across tenants. Fix (planned in <code>PHASE2.md</code>, P2-2/P2-3): a non-owner
+runtime role, <code>FORCE</code> + <code>WITH CHECK</code> on every workspace table, and an explicit tenant context for
+Celery tasks and webhooks, which run without the request middleware.</div>
+<p><b>Writes are scoped too (since 2026-10-08).</b> Reads were always filtered by workspace, but writable foreign keys
+(<code>client</code>, <code>coach</code>, <code>deal</code>, …) used DRF's default lookup over every workspace's rows, so
+workspace B could create an invoice, deal or session against workspace A's client. Every serializer with a writable FK
+now mixes in <code>WorkspaceScopedSerializerMixin</code> (<code>apps/accounts/tenancy.py</code>): the FK resolves only
+within the caller's workspace and, for non-owners, only to rows they can already read (a coach can pick only their own
+clients). It fails closed with no request in context. Login also refuses a non-admin user with no workspace instead of
+attaching them to the oldest one. <code>backend/test_tenant_isolation.py</code> covers cross-workspace and coach-vs-coach
+reads and writes, portal client-vs-client, and includes a guard test that fails if a future serializer adds an unscoped
+writable FK.</p>
 <p>The <code>DemoWorkspaceReadOnlyMiddleware</code> sits right after the tenant middleware. It is real Django
 middleware, not a DRF default permission, because most viewsets declare their own <code>permission_classes</code>, which
 would silently replace a global default. Login, logout, refresh, demo-lead capture and the portal demo-login are
@@ -646,7 +657,7 @@ exempt.</p></section>""")
     S.append(f"""<section><h2><span class="n">4</span>Identity and access</h2>
 {d_identity()}
 {table(["Control", "Setting"], [
-    ["Throttles", "anon 200/h · user 2000/h · login 10/min · password reset 5/min · register 5/h · portal code 5/min · demo lead 30/h · portal demo-login 20/min"],
+    ["Throttles", "anon 200/h · user 2000/h · login 10/min · password reset 5/min · register 5/h · portal code 5/min · demo lead 30/h · portal demo-login 20/min. Client IP comes from the last <code>X-Forwarded-For</code> hop nginx adds (<code>NUM_PROXIES = 1</code>), so a forged header can't dodge per-IP limits"],
     ["Idle logout", "Staff: warn at 15 min, log out at 30 min (all roles). Portal: warn at 2 h 45 m, log out at 3 h"],
     ["Signup", "Invite-only workspace creation through one-time <code>WorkspaceRegistrationToken</code> links issued by a platform admin; team members join through <code>WorkspaceInvitation</code> (failed invite emails retried every 5 min)"],
     ["Audit", "<code>AccessLog</code> records view/create/update/delete on clients, notes, goals, files and team, plus password changes and AI-draft requests"],
@@ -722,7 +733,15 @@ AWS SES over SMTP in production and Mailpit locally. In production, <code>DemoSa
     ["Invoices", "View, download and pay through Stripe Checkout"],
 ])}
 <p>Out of scope by design: assessments, messaging and contracts (contracts use their own signed link). Branding shows
-the workspace's logo and name.</p></section>""")
+the workspace's logo and name.</p>
+<p><b>Sign-in screens.</b> Both logins share one layout: an editorial left column, a gold-topped card on the right, and an
+ombré background (warm paper to soft blue, <code>.auth-ombre</code>). A decorative canvas animation sits behind them, laid
+out from the real page elements (marked <code>data-flow-*</code>) so it never crosses text or the form, and the card title
+carries a gold North Star (<code>FlowStar</code>) that pulses as chains of dots arrive. The coach login
+(<code>NorthStarFlow</code>) fans lines in from the bottom-left corner to each feature bullet, then on to the card. The
+client portal (<code>GoldenThreadFlow</code>, modelled on LangSmith's sign-in page) fans curves in from the left edge into
+a straight gold line along the rule under the intro text, which rises into the card. Both hide on the stacked mobile
+layout and render one still frame under <code>prefers-reduced-motion</code>.</p></section>""")
 
     S.append(f"""<section><h2><span class="n">12</span>Library, documents and contracts</h2>{d_onlyoffice()}
 <p><b>Contracts and client messages.</b> A <code>ClientMessageDraft</code> is emailed with optional attachments from S3.
@@ -794,8 +813,10 @@ migrations, which the backend entrypoint applies on start.</p></section>""")
     ['<span class="pill r">high</span>', "RLS policies not enforced (§3)", "Tenant isolation depends on every queryset filter being right", "Non-owner DB role or <code>FORCE RLS</code>; extend to all workspace tables"],
     ['<span class="pill r">high</span>', "Google OAuth app in Testing status", "Every coach's calendar connection silently dies weekly", "Complete Google verification for the Calendar scope"],
     ['<span class="pill a">med</span>', "Zoom on shared S2S account", "All workspaces' meetings under one Zoom identity", "Resolve the OAuth redirect issue with Zoom; retire <code>ZOOM_OAUTH_ENABLED</code>"],
-    ['<span class="pill a">med</span>', "No automated, off-host backups", "Single host + single DB = single point of loss", "Scheduled <code>pg_dump</code> to S3 with retention"],
-    ['<span class="pill a">med</span>', "Single EC2 host", "No failover; deploys restart services", "Document RTO/RPO; consider managed Postgres first"],
+    ['<span class="pill r">high</span>', "Superadmin and Django admin see client data", "Platform staff can read client names, emails, invoice amounts and notes, beyond troubleshooting needs", "Redact superadmin responses to ids/status/counts; unregister client models from Django admin (PHASE2 DB-4/5)"],
+    ['<span class="pill a">med</span>', "OnlyOffice file endpoints not bound to a workspace", "With <code>ONLYOFFICE_JWT_SECRET</code> unset, a document UUID is enough to read or overwrite it", "Require the secret in prod and match the token to the document (PHASE2 DB-6)"],
+    ['<span class="pill a">med</span>', "RDS backups kept only 1 day", "A problem noticed after a day can't be rolled back; <code>make backup</code> dumps the unused container", "Raise retention to 7–14 days, deletion protection, snapshot before deploys (PHASE2 P2-1)"],
+    ['<span class="pill a">med</span>', "Single EC2 host", "No app-tier failover; deploys restart services", "Staging + rollback pipeline (PHASE2 P2-4)"],
     ['<span class="pill a">med</span>', "Tests use the live broker", "Smoke test sends Celery tasks to the dev worker", "<code>CELERY_TASK_ALWAYS_EAGER</code> in a test settings module"],
     ['<span class="pill">low</span>', "<code>/portal</code> route is a dead stub", "Confusing next to <code>/client-portal</code>", "Redirect or delete"],
     ['<span class="pill">low</span>', "<code>Assessment.visible_to_client</code> unused", "Field implies a portal feature that doesn't exist", "Build the endpoint or drop the field"],
@@ -803,7 +824,8 @@ migrations, which the backend entrypoint applies on start.</p></section>""")
     ['<span class="pill">low</span>', "<code>dj-stripe</code> unused", "Dead dependency and webhook route", "Remove until platform billing is automated"],
     ['<span class="pill">low</span>', "Errors outside DRF not in ErrorLog", "Public page failures invisible in superadmin", "Django-level exception middleware"],
 ])}
-<div class="callout note">Docs out of date: <code>CLAUDE.md</code> §6–7 still say "5 scheduled jobs" and "no AI/LLM
+<div class="callout note">The full multi-workspace readiness plan, with status per item, is in <code>PHASE2.md</code>.
+Docs out of date: <code>CLAUDE.md</code> §6–7 still say "5 scheduled jobs" and "no AI/LLM
 integration". There are 8 jobs, and Anthropic powers session-note drafts. <code>system_design.md</code> predates the OTP
 portal login, email logging, the reschedule workflow and the Zoom changes. This document reflects the code as of
 {AS_OF}.</div></section>""")
