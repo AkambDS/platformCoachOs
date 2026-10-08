@@ -575,6 +575,20 @@ body {
   flex-shrink: 0;
   opacity: .9;
 }
+/* Login-only: white panels, with an animated background (NorthStarFlow) filling the
+   brand panel behind its content. */
+.auth-flow-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.auth-brand--light > :not(.auth-flow-canvas) { position: relative; z-index: 1; }
+.auth-form-area.auth-form-area--light { background: #ffffff; }
+.auth-brand--light { background: #ffffff; border-right: 1px solid var(--border); }
+.auth-brand--light::before,
+.auth-brand--light::after { display: none; }
+.auth-brand--light .auth-brand-logo,
+.auth-brand--light .auth-brand-headline { color: var(--navy); }
+.auth-brand--light .auth-brand-logo-sub,
+.auth-brand--light .auth-brand-headline em { color: var(--gold); }
+.auth-brand--light .auth-brand-sub { color: var(--muted); }
+.auth-brand--light .auth-brand-features li { color: var(--ink-soft); }
 .auth-form-area {
   background: var(--paper);
   display: flex;
