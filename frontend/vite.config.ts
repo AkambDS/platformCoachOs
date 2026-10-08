@@ -41,7 +41,18 @@ export default defineConfig({
         target: PROXY_TARGET,
         changeOrigin: true,
         configure: pinHostHeader,
-      }
+      },
+      // Django admin + its CSS/JS (served by runserver under DEBUG) — without these,
+      // :5173/django-admin/ gets the SPA shell or renders unstyled.
+      '/django-admin': {
+        target: PROXY_TARGET,
+        changeOrigin: true,
+        configure: pinHostHeader,
+      },
+      '/static': {
+        target: PROXY_TARGET,
+        changeOrigin: true,
+      },
     }
   }
 })

@@ -22,6 +22,11 @@ def send_session_reminder(activity_id: str):
         if not client.phone:
             return
 
+        from config.middleware import DEMO_WORKSPACE_SLUG
+        if activity.workspace.slug == DEMO_WORKSPACE_SLUG:
+            logger.info(f"Skipped demo-workspace SMS reminder for activity {activity_id}")
+            return
+
         message = (f"Reminder: You have a {activity.activity_type} with "
                    f"{activity.coach.full_name} on "
                    f"{activity.start_at.strftime('%A %b %d at %I:%M %p')}.")

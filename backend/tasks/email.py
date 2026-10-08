@@ -8,6 +8,7 @@ from celery import shared_task
 from django.core.mail import EmailMultiAlternatives, EmailMessage
 from django.conf import settings
 from datetime import timezone as dt_timezone
+from tasks.email_log import send_logged
 
 logger = logging.getLogger(__name__)
 
@@ -630,7 +631,7 @@ def send_invite_email(invitation_id: str):
             to=[invite.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="team_invite", related_id=invitation_id)
         logger.info(f"Invite email sent to {invite.email}")
     except Exception as e:
         logger.error(f"send_invite_email failed: {e}")
@@ -767,12 +768,8 @@ def send_activity_confirmation_email(activity_id: str):
         )
         msg.attach_alternative(html, "text/html")
         msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="confirmation", client=client, related_id=activity_id)
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_CONFIRMATION,
-                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
-                     body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
@@ -784,7 +781,7 @@ def send_activity_confirmation_email(activity_id: str):
                 rows=_session_notice_rows(activity, dt),
                 cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
                 attachments=[("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")],
-            )
+             client=client, related_id=activity_id)
             logger.info(f"Coach copy sent to {coach_email} for activity {activity_id}")
 
         from django.utils import timezone
@@ -900,13 +897,9 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case=tmpl_key, client=client, related_id=activity_id)
         logger.info(f"Reminder email ({hours_before}h) sent to {client.email} for activity {activity_id}")
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_REMINDER,
-                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
-                     body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
@@ -918,7 +911,7 @@ def send_activity_reminder_email(activity_id: str, hours_before: int = 24):
                 workspace, "coach_session_reminder", [coach_email], values,
                 rows=_session_notice_rows(activity, dt),
                 cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
-            )
+             client=client, related_id=activity_id)
             logger.info(f"Coach reminder copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reminder_email failed: {e}")
@@ -1018,13 +1011,9 @@ def send_activity_reschedule_email(activity_id: str):
         )
         msg.attach_alternative(html, "text/html")
         msg.attach("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="reschedule", client=client, related_id=activity_id)
         logger.info(f"Reschedule email sent to {client.email} for activity {activity_id}")
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_RESCHEDULE,
-                     client=client, subject=subject, recipient_email=client.email, related_id=activity_id,
-                     body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         if coach_email:
@@ -1036,7 +1025,7 @@ def send_activity_reschedule_email(activity_id: str):
                 rows=_session_notice_rows(activity, dt),
                 cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
                 attachments=[("invite.ics", ics_bytes, "text/calendar; method=PUBLISH")],
-            )
+             client=client, related_id=activity_id)
             logger.info(f"Coach reschedule copy sent to {coach_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_activity_reschedule_email failed: {e}")
@@ -1091,12 +1080,8 @@ def send_activity_cancellation_email(activity_id: str):
         )
         msg.attach_alternative(html, "text/html")
         msg.attach("cancel.ics", ics_bytes, "text/calendar")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="cancellation", client=client, related_id=activity_id)
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.ACTIVITY_CANCELLATION,
-                     client=client, subject=subject, recipient_email=client.email,
-                     related_id=activity_id, body_html=html)
 
         # ── Coach copy ──────────────────────────────────────────────────────────
         notify_email = coach_email or owner_email
@@ -1109,7 +1094,7 @@ def send_activity_cancellation_email(activity_id: str):
                 rows=_session_notice_rows(activity, dt, when_label="Was"),
                 cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
                 attachments=[("cancel.ics", ics_bytes, "text/calendar")],
-            )
+             client=client, related_id=activity_id)
             logger.info(f"Coach cancellation copy sent to {notify_email} for activity {activity_id}")
 
         from django.utils import timezone
@@ -1278,13 +1263,9 @@ def send_invoice_email(invoice_id: str):
             pdf_filename=f"{invoice.number}.pdf",
             extra_attachments=extra_attachments,
         )
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="invoice", client=invoice.client, related_id=invoice_id)
         logger.info(f"Invoice email sent for {invoice.number}")
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.INVOICE,
-                     client=invoice.client, subject=subject, recipient_email=invoice.client.email,
-                     related_id=invoice_id, body_html=html)
     except Exception as e:
         logger.error(f"send_invoice_email failed: {e}")
         # Re-raise (unlike the other email tasks in this file) — this one has callers
@@ -1350,13 +1331,9 @@ def send_payment_receipt_email(invoice_id: str):
             msg.attach(f"{invoice.number}-receipt.pdf", pdf_bytes, "application/pdf")
         except Exception as pdf_err:
             logger.warning(f"PDF generation failed for {invoice.number}: {pdf_err}")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="payment_receipt", client=invoice.client, related_id=invoice_id)
         logger.info(f"Receipt email sent for {invoice.number}")
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.PAYMENT_RECEIPT,
-                     client=invoice.client, subject=subject, recipient_email=invoice.client.email,
-                     related_id=invoice_id, body_html=html)
     except Exception as e:
         logger.error(f"send_payment_receipt_email failed: {e}")
 
@@ -1378,6 +1355,7 @@ def send_payment_failed_email(invoice_id: str):
                  invoice_number=invoice.number, amount=str(invoice.total)),
             rows=[("Invoice", f"#{invoice.number}"), ("Amount", f"${invoice.total}"), ("Client", client.full_name)],
             cta=("Open invoice", app_url(f"/invoices/{invoice.id}")),
+            client=client, related_id=invoice_id,
         )
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
@@ -1631,7 +1609,7 @@ def send_pipeline_alert(deal_id: str, recipient: str = "owner") -> bool:
             to=[to_email],
         )
         msg.attach_alternative(html_body, "text/html")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="pipeline", client=client, related_id=deal_id, audience="coach")
         logger.info(f"Pipeline alert sent to {recipient} for deal {deal_id} ({stage_label})")
         return True
     except Exception as e:
@@ -1657,6 +1635,7 @@ def send_pipeline_client_checkin(deal_id: str) -> bool:
             dict(client_name=client.full_name, client_first_name=client.first_name,
                  coach_name=coach.full_name if coach else (owner_name or workspace.name)),
             reply_to=[(coach.email if coach else "") or owner_email],
+            client=client, related_id=deal_id,
         )
         logger.info(f"Pipeline client check-in sent for deal {deal_id}")
         return True
@@ -1683,7 +1662,7 @@ def _coach_notice(activity_id: str, key: str, task_name: str, extra_values: dict
         values.update(extra_values or {})
         send_notice(workspace, key, [coach.email], values,
                     rows=_session_notice_rows(activity, dt, include_client=False),
-                    cta=("Open in CoachOS", app_url(f"/clients/{activity.client_id}")))
+                    cta=("Open in CoachOS", app_url(f"/clients/{activity.client_id}")), client=activity.client, related_id=activity_id)
         logger.info(f"{key} sent to coach {coach.email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"{task_name} failed: {e}")
@@ -1742,7 +1721,7 @@ def send_client_reschedule_request(activity_id: str, message: str = ""):
                  + [("Proposed", requested_dt), ("Message", message)],
             cta=("Review in CoachOS", app_url(f"/clients/{activity.client_id}")),
             reply_to=[client_email],
-        )
+            client=activity.client, related_id=activity_id)
         logger.info(f"Reschedule request sent to {recipient_email} for activity {activity_id}")
 
         # ── Acknowledge to client ───────────────────────────────────────────────
@@ -1751,7 +1730,7 @@ def send_client_reschedule_request(activity_id: str, message: str = ""):
                 workspace, "reschedule_ack", [client_email], values,
                 rows=[("What", activity.title), ("Current", dt), ("Proposed", requested_dt)],
                 reply_to=[recipient_email],
-            )
+             client=activity.client, related_id=activity_id)
             logger.info(f"Reschedule acknowledgement sent to {client_email} for activity {activity_id}")
     except Exception as e:
         logger.error(f"send_client_reschedule_request failed: {e}")
@@ -1766,7 +1745,6 @@ def send_decline_reschedule_email(activity_id: str, message: str):
     or without that opt-in. The coach's text fills {message} in the "decline_reschedule"
     template, so the wrapper around it (greeting, sign-off, branding) is editable too."""
     from apps.activities.models import Activity
-    from apps.clients.models import EmailLog
     from tasks.email_notices import send_notice
     try:
         activity = Activity.objects.select_related("client", "coach", "workspace").get(id=activity_id)
@@ -1781,7 +1759,7 @@ def send_decline_reschedule_email(activity_id: str, message: str):
         send_notice(
             workspace, "decline_reschedule", [client.email], values,
             reply_to=[activity.coach.email] if activity.coach and activity.coach.email else [],
-            log=dict(category=EmailLog.Category.CLIENT_MESSAGE, client=client, related_id=activity_id),
+            client=client, related_id=activity_id,
         )
         logger.info(f"Decline message sent to {client.email} for activity {activity_id}")
     except Exception as e:
@@ -1878,13 +1856,9 @@ def send_portal_invite_email(client_id: str):
             to=[client.email],
         )
         msg.attach_alternative(html, "text/html")
-        msg.send()
+        send_logged(msg, workspace=workspace, use_case="portal_invite", client=client, related_id=client_id)
         logger.info(f"Portal invite sent to {client.email} for client {client_id}")
 
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=EmailLog.Category.PORTAL_INVITE,
-                     client=client, subject=subject, recipient_email=client.email, related_id=client_id,
-                     body_html=html)
     except Exception as e:
         logger.error(f"send_portal_invite_email failed: {e}")
 
@@ -1991,7 +1965,7 @@ def send_client_communication_email(draft_id: str):
         except Exception as e:
             logger.warning(f"Could not attach {s3_key} to client communication {draft_id}: {e}")
 
-    msg.send()
+    send_logged(msg, workspace=workspace, use_case="client_communication", client=client, related_id=draft_id)
 
     if draft.status != "signed":
         draft.status = "sent"
@@ -1999,10 +1973,6 @@ def send_client_communication_email(draft_id: str):
     draft.save(update_fields=["status", "sent_at", "updated_at"])
     logger.info(f"Client communication sent to {client.email} (draft {draft_id})")
 
-    from apps.clients.models import EmailLog
-    EmailLog.log(workspace=workspace, category=EmailLog.Category.CLIENT_MESSAGE,
-                 client=client, subject=subject, recipient_email=client.email, related_id=draft_id,
-                 body_html=html)
 
 
 @shared_task(name="tasks.email.send_contract_signed_notice")
@@ -2034,7 +2004,7 @@ def send_contract_signed_notice(draft_id: str):
                  document_title=title, signed_at=signed_str),
             rows=[("Document", title), ("Client", client.full_name), ("Signed", signed_str)],
             cta=("Open client", app_url(f"/clients/{client.id}")),
-        )
+            client=client, related_id=draft_id)
         logger.info(f"Contract-signed notice sent for draft {draft_id}")
     except Exception as e:
         logger.error(f"send_contract_signed_notice failed: {e}")
@@ -2046,7 +2016,7 @@ def send_goal_shared_email(goal_id: str):
     ClientGoalViewSet.perform_update the moment visible_to_client flips False -> True.
     Sharing itself only ever set that flag with no other side effect; nothing told the
     client it happened until they next logged into their portal on their own."""
-    from apps.clients.models import ClientGoal, EmailLog
+    from apps.clients.models import ClientGoal
     from tasks.email_notices import send_notice, app_url
     try:
         goal = ClientGoal.objects.select_related("client", "client__workspace", "client__coach").get(id=goal_id)
@@ -2065,7 +2035,7 @@ def send_goal_shared_email(goal_id: str):
                  portal_url=portal_url),
             rows=[("Goal", goal.title), ("Details", goal.description or ""), ("Target date", target_date_str)],
             cta=("View in your portal", portal_url),
-            log=dict(category=EmailLog.Category.GOAL_SHARED, client=client, related_id=goal_id),
+            client=client, related_id=goal_id,
         )
         logger.info(f"Goal-shared email sent to {client.email} for goal {goal_id}")
     except Exception as e:
@@ -2097,7 +2067,7 @@ def send_note_shared_email(note_id: str):
     """Notifies the client that their coach shared a note — triggered from
     ClientNoteViewSet the moment visible_to_client flips False -> True, on
     either create or update. Mirrors send_goal_shared_email above."""
-    from apps.clients.models import ClientNote, EmailLog
+    from apps.clients.models import ClientNote
     from tasks.email_notices import send_notice, app_url
     try:
         note = ClientNote.objects.select_related("client", "client__workspace", "client__coach").get(id=note_id)
@@ -2117,7 +2087,7 @@ def send_note_shared_email(note_id: str):
                  portal_url=portal_url),
             rows=[("Topic", topic), ("Note", _note_preview_text(note.text)), ("Session date", session_date_str)],
             cta=("View in your portal", portal_url),
-            log=dict(category=EmailLog.Category.NOTE_SHARED, client=client, related_id=note_id),
+            client=client, related_id=note_id,
         )
         logger.info(f"Note-shared email sent to {client.email} for note {note_id}")
     except Exception as e:

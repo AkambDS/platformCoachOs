@@ -1192,10 +1192,33 @@ from rest_framework.decorators import api_view, permission_classes as _pc
 from datetime import timedelta
 
 
+def _email_log_row(e):
+    from tasks.email_log import type_info
+    label = type_info(e.use_case)[0] if e.use_case else e.get_category_display()
+    return {
+        "id": str(e.id),
+        "use_case": e.use_case or e.category,
+        "category": e.category,
+        "category_label": label,
+        "label": label,
+        "audience": e.audience,
+        "status": e.status,
+        "error": e.error,
+        "subject": e.subject,
+        "recipient_email": e.recipient_email,
+        "client_id": str(e.client_id) if e.client_id else None,
+        "client_name": e.client.full_name if e.client_id else "",
+        "sent_at": e.sent_at.isoformat(),
+        "related_id": e.related_id,
+    }
+
+
 @api_view(["GET"])
 @_pc([IsBusinessOwner])
 def email_log_sent(request):
-    """GET /api/clients/email-log/?days=30&client=&category= — emails actually sent."""
+    """GET /api/clients/email-log/?days=30&client=&audience=&status=&use_case= — every
+    workspace email sent (or failed) in the last N days, to clients, coaches and team.
+    audience: client | coach | team; status: sent | failed."""
     try:
         days = int(request.query_params.get("days", 30))
     except ValueError:
@@ -1204,120 +1227,50 @@ def email_log_sent(request):
     qs = (EmailLog.objects
           .filter(workspace=request.user.workspace, sent_at__gte=since)
           .select_related("client"))
-    client_id = request.query_params.get("client")
-    if client_id:
-        qs = qs.filter(client_id=client_id)
-    category = request.query_params.get("category")
-    if category:
-        qs = qs.filter(category=category)
-
-    data = [{
-        "id": str(e.id),
-        "category": e.category,
-        "category_label": e.get_category_display(),
-        "subject": e.subject,
-        "recipient_email": e.recipient_email,
-        "client_id": str(e.client_id) if e.client_id else None,
-        "client_name": e.client.full_name if e.client_id else "",
-        "sent_at": e.sent_at.isoformat(),
-        "related_id": e.related_id,
-    } for e in qs[:500]]
-    return Response(data)
+    for param, field in (("client", "client_id"), ("category", "category"), ("audience", "audience"),
+                         ("status", "status"), ("use_case", "use_case")):
+        value = request.query_params.get(param)
+        if value:
+            qs = qs.filter(**{field: value})
+    return Response([_email_log_row(e) for e in qs[:1000]])
 
 
 @api_view(["GET"])
 @_pc([IsBusinessOwner])
 def email_log_detail(request, pk):
     """GET /api/clients/email-log/<id>/ — full detail for one sent email, including the
-    body_html snapshot captured at send time (what the client actually saw, not a live
-    re-render — templates/branding may have changed since)."""
+    body_html snapshot captured at send time (what the recipient actually saw, not a
+    live re-render — templates/branding may have changed since)."""
     try:
         e = EmailLog.objects.select_related("client").get(pk=pk, workspace=request.user.workspace)
     except EmailLog.DoesNotExist:
         return Response({"detail": "Not found."}, status=404)
-    return Response({
-        "id": str(e.id),
-        "category": e.category,
-        "category_label": e.get_category_display(),
-        "subject": e.subject,
-        "recipient_email": e.recipient_email,
-        "client_id": str(e.client_id) if e.client_id else None,
-        "client_name": e.client.full_name if e.client_id else "",
-        "sent_at": e.sent_at.isoformat(),
-        "related_id": e.related_id,
-        "body_html": e.body_html,
-    })
+    return Response({**_email_log_row(e), "body_html": e.body_html})
 
 
 @api_view(["GET"])
 @_pc([IsBusinessOwner])
 def email_log_scheduled(request):
-    """GET /api/clients/email-log/scheduled/?days=30 — emails expected to go out in the
-    next N days: upcoming subscription invoice emails (Invoice.next_invoice_date) and
-    pending session reminders (Activity.reminder_24h_sent / reminder_1h_sent)."""
+    """GET /api/clients/email-log/scheduled/?days=30 — every email the scheduled jobs will
+    send in the next N days (session reminders + coach copies, recurring invoices,
+    pipeline follow-ups to owner / coach / client), computed live by
+    tasks.email_forecast.scheduled_items from the same rules the senders use."""
     try:
-        days = int(request.query_params.get("days", 30))
+        days = min(int(request.query_params.get("days", 30)), 90)
     except ValueError:
         days = 30
-    now = timezone.now()
-    horizon_date = now.date() + timedelta(days=days)
-    horizon_dt   = now + timedelta(days=days)
-    workspace = request.user.workspace
-    items = []
+    from tasks.email_forecast import scheduled_items
+    return Response(scheduled_items(request.user.workspace, days))
 
-    from apps.invoicing.models import Invoice
-    inv_qs = Invoice.objects.filter(
-        workspace=workspace, invoice_type=Invoice.InvoiceType.SUBSCRIPTION,
-        subscription_auto_send=True, next_invoice_date__isnull=False,
-        next_invoice_date__lte=horizon_date,
-    ).select_related("client")
-    for inv in inv_qs:
-        items.append({
-            "id": f"invoice-{inv.id}",
-            "category": "invoice",
-            "category_label": "Invoice",
-            "subject": f"Invoice #{inv.number}",
-            "client_id": str(inv.client_id),
-            "client_name": inv.client.full_name,
-            "scheduled_for": inv.next_invoice_date.isoformat(),
-            "related_id": str(inv.id),
-            # next_invoice_date has no lower bound in the filter above (it's <=
-            # horizon_date, not a range) — if a daily run gets missed, the date stays
-            # in the past until the job catches up, so surface that distinctly rather
-            # than implying it's still comfortably upcoming.
-            "status": "overdue" if inv.next_invoice_date < now.date() else "scheduled",
-        })
 
-    from apps.activities.models import Activity
-    act_qs = Activity.objects.filter(
-        workspace=workspace, status="scheduled",
-        start_at__gte=now, start_at__lte=horizon_dt,
-    ).select_related("client")
-    for act in act_qs:
-        if not act.client or not act.client.email:
-            continue
-        if not act.reminder_24h_sent:
-            reminder_at = act.start_at - timedelta(hours=24)
-        elif not act.reminder_1h_sent:
-            reminder_at = act.start_at - timedelta(hours=1)
-        else:
-            continue
-        if reminder_at > horizon_dt:
-            continue
-        items.append({
-            "id": f"activity-{act.id}",
-            "category": "activity_reminder",
-            "category_label": "Session Reminder",
-            "subject": f"Reminder: {act.title}",
-            "client_id": str(act.client_id),
-            "client_name": act.client.full_name,
-            "scheduled_for": reminder_at.date().isoformat(),
-            "related_id": str(act.id),
-            # dispatch_activity_reminders runs every 15 min — a reminder_at more than
-            # that in the past and still unsent means a run got missed, not that it's
-            # merely "coming up".
-            "status": "overdue" if reminder_at < now else "scheduled",
-        })
-
-    items.sort(key=lambda x: x["scheduled_for"])
-    return Response(items)
+@api_view(["GET"])
+@_pc([IsBusinessOwner])
+def email_log_scheduled_preview(request):
+    """GET /api/clients/email-log/scheduled/preview/?kind=reminder|invoice|pipeline&… —
+    the upcoming email rendered with real data (the item's `preview` params from the
+    scheduled list). Nothing is sent, logged or saved."""
+    from tasks.email_forecast import preview
+    data = preview(request.user.workspace, request.query_params)
+    if not data:
+        return Response({"detail": "This email can't be previewed right now."}, status=404)
+    return Response(data)

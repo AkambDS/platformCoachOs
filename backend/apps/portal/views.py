@@ -247,6 +247,74 @@ class PortalLoginView(APIView):
         })
 
 
+class PortalDemoLoginThrottle(AnonRateThrottle):
+    rate = "20/minute"
+
+
+class PortalDemoLoginView(APIView):
+    """
+    POST /api/portal/demo-login/ — issues a portal session for the public product
+    tour's "Preview the Client Portal" step, with no email/code required.
+
+    Deliberately accepts no input at all and is hardcoded to one specific client
+    (config.middleware.DEMO_PORTAL_CLIENT_EMAIL, in the coachos-demo workspace) —
+    this can never be repurposed to skip the OTP step for a real client, because
+    there is no parameter through which a caller could name a different one.
+
+    The resulting token carries that client's real workspace_id (the demo
+    workspace's), so every subsequent mutating /api/portal/... call it makes is
+    already blocked by DemoWorkspaceReadOnlyMiddleware — no separate read-only
+    flag needed here, see that middleware's docstring.
+    """
+    permission_classes = [AllowAny]
+    throttle_classes   = [PortalDemoLoginThrottle]
+
+    def post(self, request):
+        from datetime import timedelta
+        from django.core.cache import cache
+        from rest_framework_simplejwt.tokens import AccessToken
+        from config.middleware import DEMO_PORTAL_CLIENT_EMAIL
+
+        cache_key = "demo_portal_client_id_v1"
+        client_id = cache.get(cache_key)
+        if client_id:
+            client = Client.objects.select_related("workspace", "coach").filter(id=client_id).first()
+        else:
+            client = None
+
+        if not client:
+            client = (
+                Client.objects
+                .select_related("workspace", "coach")
+                .filter(email__iexact=DEMO_PORTAL_CLIENT_EMAIL, workspace__slug="coachos-demo")
+                .first()
+            )
+            if client:
+                cache.set(cache_key, str(client.id), 300)
+
+        if not client or not client.workspace.is_active:
+            return Response(
+                {"detail": "The demo client portal is temporarily unavailable — please try again shortly."},
+                status=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        token = AccessToken()
+        token["client_id"]    = str(client.id)
+        token["workspace_id"] = str(client.workspace_id)
+        token["role"]         = "portal_client"
+        token["email"]        = client.email
+        token.set_exp(lifetime=timedelta(hours=PORTAL_SESSION_LIFETIME_HOURS))
+
+        coach_name = client.coach.full_name if client.coach else client.workspace.name
+
+        return Response({
+            "token":          str(token),
+            "client_name":    client.full_name,
+            "workspace_name": client.workspace.name,
+            "coach_name":     coach_name,
+        })
+
+
 # ── Portal views (all require valid portal_client token) ──────────────────────
 
 class PortalMeView(APIView):

@@ -18,9 +18,10 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from apps.accounts.models import User, Workspace
-from apps.activities.models import Activity
-from config.middleware import invalidate_demo_workspace_cache
-from apps.clients.models import Client, ClientGoal, Commitment, GoalProgress
+from apps.activities.models import Activity, CoachAvailabilityRule
+from config.email_backends import invalidate_demo_recipient_cache
+from config.middleware import DEMO_PORTAL_CLIENT_EMAIL, invalidate_demo_workspace_cache
+from apps.clients.models import Client, ClientGoal, Commitment, EmailLog, GoalProgress
 from apps.invoicing.models import Invoice, InvoiceItem, Payment
 from apps.library.models import KnowledgeFolder, KnowledgeItem
 from apps.pipeline.models import Deal
@@ -35,6 +36,15 @@ DEMO_SLUG = "coachos-demo"
 DEMO_EMAIL = "demo@coachos.rass-consulting.com"
 DEMO_PASSWORD = "CoachOSDemo!2026"
 DEMO_WORKSPACE_NAME = "CoachOS Demo"
+
+# A second, non-owner seat so the Team Management tour step has something to show
+# besides a solo owner. Not used for any login flow — no demo entry point reaches it.
+DEMO_COACH_EMAIL = "jamie.park@coachos.rass-consulting.com"
+DEMO_COACH_NAME = "Jamie Park"
+
+# Must match config.middleware.DEMO_PORTAL_CLIENT_EMAIL — that's the client
+# PortalDemoLoginView hardcodes for the tour's "Preview the Client Portal" step.
+assert DEMO_PORTAL_CLIENT_EMAIL == "maria.chen@example.com"
 
 CLIENTS = [
     dict(first_name="Maria", last_name="Chen", company="Chen Strategy Group", job_title="CEO",
@@ -115,6 +125,21 @@ class Command(BaseCommand):
             owner.set_password(DEMO_PASSWORD)
             owner.is_active = True
             owner.save()
+
+        # A second team member, so Team Management has more than a solo owner to show.
+        # No credentials are ever handed out for this account — nothing logs into it.
+        coach, coach_created = User.objects.get_or_create(
+            email=DEMO_COACH_EMAIL,
+            defaults=dict(
+                workspace=workspace, full_name=DEMO_COACH_NAME,
+                role=User.Role.COACH, password=make_password(uuid.uuid4().hex),
+            ),
+        )
+        if not coach_created:
+            coach.workspace = workspace
+            coach.role = User.Role.COACH
+            coach.is_active = True
+            coach.save()
 
         # Reuse the exact same builtin-default logic the app applies to every real new
         # workspace on first visit to Settings (apps/settings_app/views.py) — avoids
@@ -212,12 +237,45 @@ class Command(BaseCommand):
 
         # Invoices: one paid, one sent/outstanding, one overdue — Reports and the
         # Invoices list both have something real to show.
-        self._seed_invoice(workspace, owner, client_list[0], "DEMO-1001",
+        inv1 = self._seed_invoice(workspace, owner, client_list[0], "DEMO-1001",
                             Invoice.Status.PAID, Decimal("1500.00"), now - timedelta(days=20), paid=True)
-        self._seed_invoice(workspace, owner, client_list[1], "DEMO-1002",
+        inv2 = self._seed_invoice(workspace, owner, client_list[1], "DEMO-1002",
                             Invoice.Status.SENT, Decimal("1200.00"), now + timedelta(days=10), paid=False)
-        self._seed_invoice(workspace, owner, client_list[2], "DEMO-1003",
+        inv3 = self._seed_invoice(workspace, owner, client_list[2], "DEMO-1003",
                             Invoice.Status.OVERDUE, Decimal("900.00"), now - timedelta(days=5), paid=False)
+
+        # Coach Availability — one weekly block on the flagship client, so that tab
+        # (inside Clients -> a client -> "Coach Availability") isn't an empty state.
+        CoachAvailabilityRule.objects.get_or_create(
+            workspace=workspace, coach=owner, client=client_list[0], weekday=1,  # Tuesday
+            defaults=dict(start_time="09:00", end_time="12:00"),
+        )
+
+        # Email Communication — a few representative sent-email records so that tab
+        # has real history instead of an empty list. Keyed on (client, category,
+        # subject) rather than using EmailLog.log() directly, so re-running this
+        # command doesn't pile up duplicate rows each time.
+        EMAIL_LOGS = [
+            (client_list[0], EmailLog.Category.INVOICE, f"Invoice {inv1.number} from CoachOS Demo",
+             inv1.id, now - timedelta(days=20)),
+            (client_list[0], EmailLog.Category.PAYMENT_RECEIPT, f"Payment received — Invoice {inv1.number}",
+             inv1.id, now - timedelta(days=19)),
+            (client_list[1], EmailLog.Category.INVOICE, f"Invoice {inv2.number} from CoachOS Demo",
+             inv2.id, now - timedelta(days=2)),
+            (client_list[1], EmailLog.Category.ACTIVITY_CONFIRMATION, "Session confirmed: Discovery Follow-Up Call",
+             "", now - timedelta(days=1)),
+            (client_list[2], EmailLog.Category.ACTIVITY_REMINDER, "Reminder: your upcoming session",
+             "", now - timedelta(hours=6)),
+        ]
+        for log_client, category, subject, related_id, sent_at in EMAIL_LOGS:
+            log, created = EmailLog.objects.get_or_create(
+                workspace=workspace, client=log_client, category=category, subject=subject,
+                defaults=dict(recipient_email=log_client.email, related_id=str(related_id)),
+            )
+            if created:
+                # sent_at is auto_now_add — backdate it after creation so the Email
+                # Communication list reads as a real history, not everything "just now".
+                EmailLog.objects.filter(pk=log.pk).update(sent_at=sent_at)
 
         # Library — a folder with a few reference documents.
         folder, _ = KnowledgeFolder.objects.get_or_create(workspace=workspace, name="Coaching Templates", parent=None)
@@ -232,6 +290,7 @@ class Command(BaseCommand):
             )
 
         invalidate_demo_workspace_cache()
+        invalidate_demo_recipient_cache()
 
         self.stdout.write(self.style.SUCCESS(
             f"Demo workspace ready — login at /login: {DEMO_EMAIL} / {DEMO_PASSWORD}"

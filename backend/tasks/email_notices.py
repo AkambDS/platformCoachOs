@@ -244,12 +244,13 @@ def render_notice(workspace, key: str, values: dict, *, rows=None, cta=None, tmp
 
 
 def send_notice(workspace, key: str, to: list, values: dict, *, rows=None, cta=None,
-                reply_to=None, attachments=None, log: dict = None) -> str:
-    """Render + send one notice. `attachments` is [(filename, bytes, mimetype), ...];
-    `log` (category/client/related_id) records it in the client's EmailLog. Returns the
-    subject actually sent."""
+                reply_to=None, attachments=None, client=None, related_id="") -> str:
+    """Render + send one notice, logged in EmailLog (tasks.email_log.send_logged) under
+    `key` with its audience from NOTICES. `attachments` is [(filename, bytes, mimetype)];
+    `client` / `related_id` tie the log row to a client and record. Returns the subject."""
     from django.core.mail import EmailMultiAlternatives
     from tasks.email import _workspace_from_email, _owner_info
+    from tasks.email_log import send_logged
     owner_email, owner_name = _owner_info(workspace)
     values = {"workspace_name": workspace.name, **values}
     subject, html, plain = render_notice(workspace, key, values, rows=rows, cta=cta,
@@ -259,12 +260,8 @@ def send_notice(workspace, key: str, to: list, values: dict, *, rows=None, cta=N
     msg.attach_alternative(html, "text/html")
     for filename, content, mime in attachments or []:
         msg.attach(filename, content, mime)
-    msg.send()
-    if log:
-        from apps.clients.models import EmailLog
-        EmailLog.log(workspace=workspace, category=log["category"], client=log.get("client"),
-                     subject=subject, recipient_email=", ".join(t for t in to if t),
-                     related_id=log.get("related_id", ""), body_html=html)
+    send_logged(msg, workspace=workspace, use_case=key, client=client, related_id=related_id,
+                audience=NOTICES[key]["audience"])
     return subject
 
 

@@ -23,7 +23,7 @@ api.interceptors.request.use(cfg => {
 })
 
 // ── Types ─────────────────────────────────────────────────────────────────────
-interface Session { token: string; client_name: string; workspace_name: string; coach_name: string }
+interface Session { token: string; client_name: string; workspace_name: string; coach_name: string; is_demo?: boolean }
 interface Branding { name: string; logo_url: string; primary_colour: string }
 interface GoalProgress { id: string; progress_text: string; created_at: string }
 interface Goal { id: string; title: string; description: string; target_date: string | null; status: string; progress_count: number; progress_entries: GoalProgress[]; client_owned?: boolean; created_by_name?: string | null }
@@ -1633,7 +1633,32 @@ export default function ClientPortal() {
 
   useEffect(() => {
     const token = localStorage.getItem('portal_token')
-    if (token) setSession({ token, client_name: localStorage.getItem('portal_client_name') || '', workspace_name: localStorage.getItem('portal_workspace_name') || '', coach_name: localStorage.getItem('portal_coach_name') || '' })
+    if (token) {
+      setSession({
+        token,
+        client_name: localStorage.getItem('portal_client_name') || '',
+        workspace_name: localStorage.getItem('portal_workspace_name') || '',
+        coach_name: localStorage.getItem('portal_coach_name') || '',
+        is_demo: localStorage.getItem('portal_is_demo') === '1',
+      })
+      return
+    }
+
+    // "Preview the Client Portal" tour step (useTour.ts) opens this page with
+    // ?demo=1 and no token — self-authenticate against the fixed demo client
+    // rather than having the tour pass a token across tabs. See
+    // apps.portal.views.PortalDemoLoginView for why this can't reach a real client.
+    if (new URLSearchParams(window.location.search).get('demo') === '1') {
+      axios.post(`${BASE}/api/portal/demo-login/`).then(({ data }) => {
+        localStorage.setItem('portal_token', data.token)
+        localStorage.setItem('portal_client_name', data.client_name)
+        localStorage.setItem('portal_workspace_name', data.workspace_name)
+        localStorage.setItem('portal_coach_name', data.coach_name)
+        localStorage.setItem('portal_is_demo', '1')
+        window.history.replaceState({}, '', window.location.pathname)
+        setSession({ ...data, is_demo: true })
+      }).catch(() => {})
+    }
   }, [])
 
   const loadData = useCallback(async () => {
@@ -1667,7 +1692,7 @@ export default function ClientPortal() {
   useEffect(() => { if (session) loadData() }, [session, loadData])
 
   function logout() {
-    ['portal_token', 'portal_client_name', 'portal_workspace_name', 'portal_coach_name'].forEach(k => localStorage.removeItem(k))
+    ['portal_token', 'portal_client_name', 'portal_workspace_name', 'portal_coach_name', 'portal_is_demo'].forEach(k => localStorage.removeItem(k))
     setSession(null); setMe(null); setGoals([]); setCommitments([])
     setActivities([]); setMaterials([]); setInvoices([]); setNotes([]); setActiveTab('Overview')
   }
@@ -1715,6 +1740,15 @@ export default function ClientPortal() {
       />
 
       <div className="main-offset" style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+        {session.is_demo && (
+          <div style={{
+            background: '#1a2f4e', color: '#f7f4ef', padding: '8px 20px',
+            fontSize: 12.5, textAlign: 'center', flexShrink: 0,
+            borderBottom: '2px solid #d9b96a',
+          }}>
+            ▶ You're previewing {session.client_name}'s read-only client portal — nothing entered here is saved.
+          </div>
+        )}
         {/* Top nav — mirrors the coach app's TopNav (same tan background/gold-underline
             style), same tabs as the sidebar — matches how the coach app itself repeats
             its core sections in both places rather than duplicating a second, different set. */}

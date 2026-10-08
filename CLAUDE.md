@@ -264,7 +264,7 @@ access (§8), since this environment doesn't have that access.
   - `frontend/src/hooks/useTour.ts` — rewritten from a static sidebar-only
     tour into a router-aware walkthrough: each step navigates to the real
     screen (`/dashboard`, `/clients`, `/pipeline`, `/calendar`, `/invoices`,
-    `/reports`, `/library`, `/settings` ×2, `/team`) and highlights it via
+    `/email-communication` ×3, `/reports`, `/library`, `/settings` ×2, `/team`) and highlights it via
     `driver.js`, filtering the Team step for non-owners. This is also the
     same "Take a Tour" button already on the Dashboard for real users —
     the demo didn't introduce a second tour engine.

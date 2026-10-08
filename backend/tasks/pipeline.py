@@ -39,6 +39,55 @@ def _is_due(last_sent_at, frequency: str, opts: dict, today, tz) -> bool:
     return not last_sent_at or last_sent_at.astimezone(tz).date() != today
 
 
+def _workspace_tz(workspace):
+    from zoneinfo import ZoneInfo
+    try:
+        return ZoneInfo(getattr(workspace, "workspace_timezone", "") or "UTC")
+    except Exception:
+        return ZoneInfo("UTC")
+
+
+def _in_alert_window(deal, cfg, at, day) -> bool:
+    """Is the deal overdue at `at` (a datetime) and still inside its alert window on
+    `day` (local date)? Shared by the dispatcher and the Scheduled forecast."""
+    if not cfg.follow_up_days:
+        return False
+    days_in_stage = (at - deal.stage_changed_at).days
+    if days_in_stage < cfg.follow_up_days:
+        return False
+    if deal.alert_stop_date:
+        return day <= deal.alert_stop_date
+    return cfg.alert_stop_after_days is None or days_in_stage <= cfg.alert_stop_after_days
+
+
+def recipient_settings(cfg):
+    """[(key, enabled, frequency, schedule-options)] for owner / coach / client."""
+    sched = cfg.alert_schedule or {}
+    return [
+        ("owner",  cfg.notify_owner,  cfg.owner_frequency,  sched.get("owner")),
+        ("coach",  cfg.notify_coach,  cfg.coach_frequency,  sched.get("coach")),
+        ("client", cfg.notify_client, cfg.client_frequency, sched.get("client")),
+    ]
+
+
+def next_pipeline_send(deal, cfg, frequency, opts, last_sent_at, now, horizon_days=30):
+    """The next local 8 AM a follow-up to this recipient will go out, within
+    `horizon_days`, or None — same rules as dispatch_pipeline_alerts."""
+    from datetime import datetime, time, timedelta
+    tz = _workspace_tz(deal.workspace)
+    local_now = now.astimezone(tz)
+    day = local_now.date()
+    sent_today = last_sent_at and last_sent_at.astimezone(tz).date() == day
+    if sent_today or local_now.hour > SEND_HOUR:
+        day += timedelta(days=1)
+    for _ in range(horizon_days + 1):
+        at = datetime.combine(day, time(SEND_HOUR), tzinfo=tz)
+        if _in_alert_window(deal, cfg, at, day) and _scheduled_today(frequency, opts, day):
+            return at
+        day += timedelta(days=1)
+    return None
+
+
 @shared_task(name="tasks.pipeline.dispatch_pipeline_alerts")
 def dispatch_pipeline_alerts(respect_send_hour: bool = True):
     """Daily: for every active deal that's overdue in its current stage, email each
@@ -53,7 +102,6 @@ def dispatch_pipeline_alerts(respect_send_hour: bool = True):
     from apps.pipeline.models import Deal, PipelineStageConfig
     from .email import send_pipeline_alert, send_pipeline_client_checkin, _owner_info
 
-    from zoneinfo import ZoneInfo
     now = timezone.now()
 
     active_deals = Deal.objects.exclude(
@@ -64,10 +112,7 @@ def dispatch_pipeline_alerts(respect_send_hour: bool = True):
     for deal in active_deals:
         # "Today" in the workspace's own timezone, so "every Monday" / "the 15th" match the
         # coach's calendar rather than UTC's.
-        try:
-            tz = ZoneInfo(getattr(deal.workspace, "workspace_timezone", "") or "UTC")
-        except Exception:
-            tz = ZoneInfo("UTC")
+        tz = _workspace_tz(deal.workspace)
         local_now = now.astimezone(tz)
         if respect_send_hour and local_now.hour != SEND_HOUR:
             continue
@@ -77,18 +122,7 @@ def dispatch_pipeline_alerts(respect_send_hour: bool = True):
             cfg = PipelineStageConfig.objects.get(workspace=deal.workspace, slug=deal.stage)
         except PipelineStageConfig.DoesNotExist:
             continue
-        if not cfg.follow_up_days:
-            continue
-
-        days_in_stage = (now - deal.stage_changed_at).days
-        if days_in_stage < cfg.follow_up_days:
-            continue
-
-        # Per-deal override takes precedence over the stage's default stop window.
-        if deal.alert_stop_date:
-            if today > deal.alert_stop_date:
-                continue
-        elif cfg.alert_stop_after_days is not None and days_in_stage > cfg.alert_stop_after_days:
+        if not _in_alert_window(deal, cfg, now, today):
             continue
 
         updates = {}

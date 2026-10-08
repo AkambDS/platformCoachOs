@@ -1,4 +1,4 @@
-import { useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
 import { reportsApi, invoicesApi, clientsApi, activitiesApi, pipelineApi } from "../../api/client"
@@ -377,6 +377,12 @@ export default function Dashboard() {
   const hour = new Date().getHours()
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening"
 
+  // Captured once at mount, before the effect below clears the flag — otherwise
+  // WelcomeModal (its own separate 5-slide onboarding card, unrelated to useTour)
+  // would stack on top of the guided tour the demo login already auto-starts,
+  // showing two overlapping walkthroughs at once.
+  const [suppressWelcomeModal] = useState(() => sessionStorage.getItem(DEMO_START_TOUR_KEY) === "1")
+
   useEffect(() => {
     if (sessionStorage.getItem(DEMO_START_TOUR_KEY) === "1") {
       sessionStorage.removeItem(DEMO_START_TOUR_KEY)
@@ -387,7 +393,7 @@ export default function Dashboard() {
 
   return (
     <AppShell>
-      <WelcomeModal onStartTour={startTour} />
+      {!suppressWelcomeModal && <WelcomeModal onStartTour={startTour} />}
       <PageHeader
         title={`${greeting}, ${user?.full_name?.split(" ")[0]}`}
         subtitle={workspace?.name || ""}

@@ -14,6 +14,8 @@ EMAIL_HOST_PASSWORD = env("EMAIL_HOST_PASSWORD", default="")
 
 # Allow all origins in dev
 CORS_ALLOW_ALL_ORIGINS = True
+# Django admin login form POSTed through the Vite proxy (:5173/django-admin/)
+CSRF_TRUSTED_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
 # No password restrictions in dev
 AUTH_PASSWORD_VALIDATORS = []

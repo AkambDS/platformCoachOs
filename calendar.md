@@ -1053,3 +1053,30 @@ Same schedule for everyone: most stages will want the same day for all three rec
 Preview the next send: show "Next follow-up: Mon, Oct 12" on each deal in the Pipeline view, so people can see when the next email will go out.
 Merge the two migrations: I added two today (0012, 0013). Since neither has shipped, I can combine them into one before you commit.
 I'd do 5 now, and 1 and 4 when convenient. Nothing is committed yet. I'll write the changelog before we commit.
+
+## new feature added to add all reminder email notices in email communications
+The Email Communication page now tracks every email the workspace sends: what went out, what's scheduled and what failed. Tests pass (29 of 29, including 2 new ones) and the type check passes. I checked the endpoints against your real data, but haven't looked at the new page in a browser.
+
+What changed behind the scenes:
+
+Nothing can skip the log any more. Every workspace email now goes through one send function that records it, whether it was sent or failed. That covers the emails that were missing before: pipeline follow-ups (to you, the coach and the client check-in), the coach copies and client-action notices, reschedule-request emails, payment failed, contract signed and team invites.
+Failed sends are recorded with their error, instead of leaving no trace.
+Left out on purpose: portal login codes and password resets, because they contain one-time codes or links that shouldn't be stored; platform admin and health emails also stay out.
+Scheduled is a live forecast using the same rules the senders use:
+session reminders (24h and 1h) plus the coach's copy
+recurring invoices (voided ones are now excluded, matching the real job)
+pipeline follow-ups for each recipient on their own schedule (e.g. "every Monday at 8:00 AM")
+The page:
+
+Tabs: Sent · Scheduled · Failed. Failed only appears when something failed, and it's shown in red.
+Filters: recipient (All / Clients / Me & coaches / Team), email type (grouped by recipient), client and search.
+Scheduled is grouped by day (Overdue, Today, Tomorrow, …). Each row shows the time, the type, who it's to and why, e.g. "Proposal Sent" stage · every Monday.
+Click any row to see the email:
+Sent shows the exact copy that went out.
+Failed shows the error.
+Scheduled shows a preview built from real data, made by running the actual send code without sending, logging or saving anything.
+Your data right now:
+
+The 63 emails already in the log are still there, now labelled by type. Older 1-hour reminders show as "24h Session Reminder", because the old log didn't record which reminder it was.
+Scheduled still shows only the Nov 1 invoice. That's correct: you have no open deals past their follow-up date, and your two upcoming sessions are "rescheduled", which never get reminders.
+Internal emails (to you and your coaches) start appearing from now on. Earlier ones were never logged, so they can't be recovered.

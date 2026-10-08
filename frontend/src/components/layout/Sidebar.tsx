@@ -26,7 +26,7 @@ const COACH_NAV: NavItem[] = [
   { to: '/activities', Icon: CheckSquare,       label: 'Activities', tab: 'activities', tour: 'activities' },
   { section: 'Finance' },
   { to: '/invoices',   Icon: Receipt,           label: 'Invoices',   tab: 'invoices',   tour: 'invoices'   },
-  { to: '/email-communication', Icon: Mail,     label: 'Email Communication', roles: ['business_owner'] },
+  { to: '/email-communication', Icon: Mail,     label: 'Email Communication', roles: ['business_owner'], tour: 'email-communication' },
   { section: 'Content' },
   { to: '/library',    Icon: BookOpen,          label: 'Library',    tab: 'library',    tour: 'library'    },
   { to: '/reports',    Icon: BarChart3,         label: 'Reports',    tab: 'reports',    tour: 'reports' },

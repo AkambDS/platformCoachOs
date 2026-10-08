@@ -282,9 +282,14 @@ class GoalProgress(WorkspaceModel):
 
 
 class EmailLog(WorkspaceModel):
-    """A record of every client-facing email actually sent — powers the Email
-    Communication tab's "sent" history. Written by the various tasks.email.send_*
-    functions right after a successful send; see EmailLog.log() below."""
+    """A record of every email CoachOS sends for a workspace — to clients, to the coach /
+    owner, and to invited team members — whether it went out or failed. Powers the Email
+    Communication page. Written centrally by tasks.email_log.send_logged (every send path
+    goes through it), so a new email type can't silently skip the log.
+
+    `use_case` is the email's type key — the same key as Settings → Emails
+    (confirmation, pipeline_client, coach_session_booked, …). `category` is the older,
+    coarser field kept for existing rows and filters."""
     class Category(models.TextChoices):
         INVOICE               = "invoice",               "Invoice"
         PAYMENT_RECEIPT       = "payment_receipt",        "Payment Receipt"
@@ -299,7 +304,20 @@ class EmailLog(WorkspaceModel):
 
     id              = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     client          = models.ForeignKey(Client, on_delete=models.CASCADE, null=True, blank=True, related_name="email_logs")
-    category        = models.CharField(max_length=30, choices=Category.choices)
+    class Audience(models.TextChoices):
+        CLIENT = "client", "Client"
+        COACH  = "coach",  "Coach / owner"
+        TEAM   = "team",   "Team member"
+
+    class Status(models.TextChoices):
+        SENT   = "sent",   "Sent"
+        FAILED = "failed", "Failed"
+
+    category        = models.CharField(max_length=30, choices=Category.choices, blank=True)
+    use_case        = models.CharField(max_length=50, blank=True, db_index=True)
+    audience        = models.CharField(max_length=10, choices=Audience.choices, default=Audience.CLIENT)
+    status          = models.CharField(max_length=10, choices=Status.choices, default=Status.SENT)
+    error           = models.TextField(blank=True)
     subject         = models.CharField(max_length=300, blank=True)
     recipient_email = models.EmailField(blank=True)
     body_html       = models.TextField(blank=True)  # snapshot of what was actually sent, for the detail view

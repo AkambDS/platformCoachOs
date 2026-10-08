@@ -244,3 +244,64 @@ def test_goal_share_toggle_controls_portal_visibility(api_client, portal_api_cli
     assert res.status_code == 200
     assert len(res.data["goals"]) == 1
     assert res.data["goals"][0]["title"] == "Improve executive presence"
+
+
+@pytest.mark.django_db
+def test_every_email_is_logged_including_failures(client_record, workspace, coach):
+    """send_logged records each send with its type / audience; a failed send is logged
+    as failed (with the error) and still raises for the caller."""
+    from unittest.mock import patch
+    from apps.clients.models import EmailLog
+    from tasks.email_notices import send_notice
+
+    send_notice(workspace, "client_confirmed_notice", [coach.email],
+                dict(client_name=client_record.full_name, client_first_name=client_record.first_name,
+                     recipient_first_name="Coach", session_title="Kickoff", session_time="Mon 10am"),
+                client=client_record, related_id="abc")
+    row = EmailLog.objects.get(use_case="client_confirmed_notice")
+    assert row.audience == "coach" and row.status == "sent" and row.client_id == client_record.id
+
+    with patch("django.core.mail.EmailMultiAlternatives.send", side_effect=OSError("SMTP down")):
+        with pytest.raises(OSError):
+            send_notice(workspace, "goal_shared", [client_record.email],
+                        dict(client_first_name="Sarah", coach_name="Coach", goal_title="Run 10k"),
+                        client=client_record)
+    failed = EmailLog.objects.get(use_case="goal_shared")
+    assert failed.status == "failed" and "SMTP down" in failed.error and failed.audience == "client"
+
+
+@pytest.mark.django_db
+def test_scheduled_forecast_covers_pipeline_and_reminders(client_record, workspace, coach, business_owner):
+    """Scheduled = session reminders (+ coach copies) and pipeline follow-ups for every
+    enabled recipient, from the same rules the senders use; previews render real data."""
+    from datetime import timedelta
+    from django.utils import timezone
+    from apps.activities.models import Activity
+    from apps.pipeline.models import Deal, PipelineStageConfig
+    from tasks.email_forecast import scheduled_items, preview
+
+    PipelineStageConfig.objects.create(
+        workspace=workspace, slug="lead_new", label="New Lead", order=1, follow_up_days=1,
+        notify_owner=True, owner_frequency="daily",
+        notify_client=True, client_frequency="weekly", alert_schedule={"client": {"weekday": 0}},
+    )
+    deal = Deal.objects.create(workspace=workspace, client=client_record, coach=coach)
+    Deal.objects.filter(pk=deal.pk).update(stage_changed_at=timezone.now() - timedelta(days=5))
+    start = timezone.now() + timedelta(days=3)
+    Activity.objects.create(workspace=workspace, client=client_record, coach=coach, activity_type="session",
+                            title="Kickoff", start_at=start, end_at=start + timedelta(hours=1))
+
+    items = scheduled_items(workspace, 30)
+    kinds = {(i["use_case"], i["audience"]) for i in items}
+    assert ("pipeline", "coach") in kinds              # owner follow-up
+    assert ("pipeline_client", "client") in kinds      # client check-in, weekly
+    assert ("reminder_24h", "client") in kinds and ("reminder_1h", "client") in kinds
+    assert ("coach_session_reminder", "coach") in kinds
+    client_checkin = next(i for i in items if i["use_case"] == "pipeline_client")
+    from datetime import datetime
+    assert datetime.fromisoformat(client_checkin["scheduled_for"]).weekday() == 0   # a Monday
+
+    p = preview(workspace, client_checkin["preview"])
+    assert "Checking in" in p["subject"] and p["to"] == [client_record.email]
+    from apps.clients.models import EmailLog
+    assert not EmailLog.objects.exists()               # previews never send or log

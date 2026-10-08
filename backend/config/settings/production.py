@@ -20,7 +20,10 @@ X_FRAME_OPTIONS             = "DENY" # X-Frame-Options: DENY
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
 # ── Email: AWS SES via SMTP ───────────────────────────────────────────────
-EMAIL_BACKEND     = "django.core.mail.backends.smtp.EmailBackend"
+# DemoSafeEmailBackend wraps the real SMTP backend and silently drops any message
+# addressed only to the coachos-demo workspace's own users/clients — see its
+# docstring for why DemoWorkspaceReadOnlyMiddleware alone doesn't cover this.
+EMAIL_BACKEND     = "config.email_backends.DemoSafeEmailBackend"
 EMAIL_HOST        = env("EMAIL_HOST",     default="email-smtp.us-east-1.amazonaws.com")
 EMAIL_PORT        = env.int("EMAIL_PORT", default=587)
 EMAIL_USE_TLS     = True

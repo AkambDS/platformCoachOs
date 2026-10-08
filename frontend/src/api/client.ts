@@ -197,6 +197,7 @@ export const emailCommApi = {
   sent:      (p?: any)       => api.get('/api/clients/email-log/', { params: p }),
   scheduled: (p?: any)       => api.get('/api/clients/email-log/scheduled/', { params: p }),
   detail:    (id: string)    => api.get(`/api/clients/email-log/${id}/`),
+  scheduledPreview: (p: any) => api.get('/api/clients/email-log/scheduled/preview/', { params: p }),
 }
 export const pipelineApi = {
   deals:   (p?: any)               => api.get('/api/pipeline/deals/', { params: p }),

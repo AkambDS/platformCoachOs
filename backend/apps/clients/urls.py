@@ -23,6 +23,7 @@ availability_router.register(r"", views.CoachAvailabilityRuleViewSet, basename="
 urlpatterns = [
     path("email-log/",             views.email_log_sent),
     path("email-log/scheduled/",   views.email_log_scheduled),
+    path("email-log/scheduled/preview/", views.email_log_scheduled_preview),
     path("email-log/<uuid:pk>/",   views.email_log_detail),
     path("", include(router.urls)),
     path("<uuid:client_pk>/goals/",       include(goal_router.urls)),

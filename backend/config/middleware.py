@@ -45,6 +45,11 @@ class WorkspaceTenantMiddleware:
 
 
 DEMO_WORKSPACE_SLUG = "coachos-demo"
+# The one client the "Preview the Client Portal" tour step is allowed to log into —
+# see apps.portal.views.PortalDemoLoginView, which is hardcoded to this address and
+# accepts no email/code, so this constant is the single source of truth for "which
+# client" rather than something a caller can influence. Must match seed_demo_workspace.
+DEMO_PORTAL_CLIENT_EMAIL = "maria.chen@example.com"
 _DEMO_WORKSPACE_ID_CACHE_KEY = "demo_workspace_id_v1"
 _DEMO_EXEMPT_PATHS = {
     "/api/auth/login/", "/api/auth/logout/", "/api/auth/refresh/",
@@ -52,6 +57,10 @@ _DEMO_EXEMPT_PATHS = {
     # demo_lead_event) — these record interest in the demo itself, not workspace data,
     # and the tour-event ping fires while already logged in as the demo user.
     "/api/demo/lead/", "/api/demo/lead/event/",
+    # Issues a read-only portal session for the fixed demo client (see
+    # PortalDemoLoginView) — the POST here only ever mints a token; every subsequent
+    # portal write still carries this same workspace_id and gets blocked below.
+    "/api/portal/demo-login/",
 }
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 

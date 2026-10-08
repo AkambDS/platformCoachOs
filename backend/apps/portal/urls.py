@@ -4,6 +4,7 @@ from . import views
 urlpatterns = [
     path("request-code/",                            views.PortalRequestCodeView.as_view(),    name="portal-request-code"),
     path("login/",                                   views.PortalLoginView.as_view(),          name="portal-login"),
+    path("demo-login/",                              views.PortalDemoLoginView.as_view(),      name="portal-demo-login"),
     path("me/",                                      views.PortalMeView.as_view(),             name="portal-me"),
     path("goals/",                                   views.PortalGoalsView.as_view(),          name="portal-goals"),
     path("goals/<uuid:goal_id>/",                    views.PortalGoalDetailView.as_view(),     name="portal-goal-detail"),
