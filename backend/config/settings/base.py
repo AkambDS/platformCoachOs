@@ -142,6 +142,10 @@ REST_FRAMEWORK = {
         "rest_framework.filters.SearchFilter",
         "rest_framework.filters.OrderingFilter",
     ],
+    # Exactly one trusted proxy (nginx) sits in front of Django, so take the client IP
+    # from the last X-Forwarded-For entry nginx appended — not the whole client-supplied
+    # header, which anyone can forge to dodge every per-IP throttle below.
+    "NUM_PROXIES": 1,
     # Rate limiting — applied per-view; these define the buckets.
     "DEFAULT_THROTTLE_CLASSES": [
         "rest_framework.throttling.AnonRateThrottle",

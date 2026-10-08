@@ -12,6 +12,8 @@ import { useInactivityTimer } from '../../hooks/useInactivityTimer'
 import InactivityWarningModal from '../../components/InactivityWarningModal'
 import { InlineOfficeViewer } from '../../components/OfficeEditor'
 import { useToast } from '../../components/ui'
+import { FlowStar } from '../../components/NorthStarFlow'
+import GoldenThreadFlow from '../../components/GoldenThreadFlow'
 
 const BASE = import.meta.env.VITE_API_BASE_URL || ''
 
@@ -160,16 +162,13 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
   }
 
   return (
-    <div style={{ minHeight: '100vh', width: '100%', background: 'var(--paper)', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-      <style>{'@media (max-width: 900px) { .portal-login-divider { display: none; } .portal-login-left { text-align: center; align-items: center !important; } .portal-login-word { display: none; } }'}</style>
+    <div className="auth-ombre" style={{ minHeight: '100vh', width: '100%', display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
+      <style>{'@media (max-width: 900px) { .portal-login-divider { display: none; } .portal-login-left { text-align: center; align-items: center !important; } }'}</style>
 
-      {/* oversized background word — real texture, fills the page instead of leaving it bare */}
-      <span aria-hidden="true" className="portal-login-word" style={{
-        position: 'absolute', top: '50%', left: '38%', transform: 'translate(-50%, -54%)',
-        fontFamily: "'Cormorant Garamond', serif", fontWeight: 600, fontStyle: 'italic',
-        fontSize: 'min(26vw, 400px)', lineHeight: 1, color: 'var(--navy)', opacity: 0.028,
-        whiteSpace: 'nowrap', userSelect: 'none', pointerEvents: 'none', zIndex: 0,
-      }}>progress</span>
+      {/* Background: LangSmith-style — curves fan in from the left, merge into a straight gold line along the rule, then rise into the card's North Star. */}
+      <div aria-hidden="true" className="portal-login-flow" style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 0 }}>
+        <GoldenThreadFlow className="auth-flow-canvas" />
+      </div>
 
       {/* masthead */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '40px 48px 0', position: 'relative', zIndex: 1 }}>
@@ -199,7 +198,7 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
               Everything from your coaching program — goals, notes, and what's next — stays in one workspace between sessions.
             </p>
 
-            <div style={{ width: 36, height: 2, background: 'var(--gold)', marginBottom: 28 }} />
+            <div data-flow-rule style={{ width: 36, height: 2, background: 'var(--gold)', marginBottom: 28 }} />
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
               <div style={{ display: 'flex', gap: 16, alignItems: 'baseline' }}>
@@ -218,16 +217,17 @@ function LoginScreen({ branding, onLogin }: { branding: Branding | null; onLogin
           </div>
         </div>
 
-        <div className="portal-login-divider" style={{ width: 1, alignSelf: 'stretch', margin: '72px 0', background: 'var(--border)' }} />
+        <div className="portal-login-divider" style={{ width: 1, alignSelf: 'stretch', margin: '72px 0' }} />
 
         {/* RIGHT — the actual sign-in card */}
         <div style={{ flex: '1 1 380px', minWidth: 320, padding: '48px 48px 64px 56px', boxSizing: 'border-box', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ width: '100%', maxWidth: 380 }}>
 
-            <div style={{ background: '#fff', border: '1px solid var(--cream)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(26,23,20,0.04), 0 16px 40px rgba(26,23,20,0.07)' }}>
+            <div data-flow-target style={{ background: '#fff', border: '1px solid var(--cream)', borderRadius: 10, overflow: 'hidden', boxShadow: '0 1px 2px rgba(26,23,20,0.04), 0 16px 40px rgba(26,23,20,0.07)' }}>
               <div style={{ height: 3, background: 'linear-gradient(90deg, var(--gold), var(--gold-light) 50%, var(--gold))' }} />
               <div style={{ padding: '40px 36px 36px' }}>
-                <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, fontSize: 27, color: 'var(--ink)', margin: '0 0 8px' }}>Client Portal</h2>
+                <h2 style={{ fontFamily: "'Cormorant Garamond', serif", fontWeight: 400, fontSize: 27, color: 'var(--ink)', margin: '0 0 8px' }}>
+                  <FlowStar />Client Portal</h2>
 
                 {step === 'email' ? (
                   <>

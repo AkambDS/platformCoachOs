@@ -1113,7 +1113,9 @@ class ClientMessageDraftViewSet(viewsets.ModelViewSet):
         if len(attachments) != len(draft.attachments or []):
             # Don't delete the underlying S3 object if it's actually a client File
             # (Assessment) attached by reference — only ad-hoc uploads own their object.
-            is_referenced_file = Assessment.objects.filter(file_s3_key=s3_key).exists()
+            is_referenced_file = Assessment.objects.filter(
+                workspace=request.user.workspace, file_s3_key=s3_key,
+            ).exists()
             if not is_referenced_file:
                 try:
                     default_storage.delete(s3_key)

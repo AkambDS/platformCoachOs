@@ -57,9 +57,13 @@ Celery ──▶ Stripe / Google Calendar / Zoom / SES(Resend) / Twilio
 Django ──▶ S3 (files, media)
 ```
 
-- **Single EC2 host**, single Postgres, single Redis, one domain
-  (`coachos.rass-consulting.com`) — `docker-compose.prod.yml` runs everything.
-  No per-tenant infrastructure; isolation is entirely application/data-layer.
+- **Single EC2 host** (app containers, Redis, nginx, OnlyOffice) + **AWS RDS
+  Postgres** (`coachos-db…us-east-1.rds.amazonaws.com`, db `coachos`) for
+  data, one domain (`coachos.rass-consulting.com`). Prod `DATABASE_URL` points
+  at RDS — the `db` service in `docker-compose.prod.yml` is **unused and
+  empty** in prod, and `make backup` dumps that empty container, not RDS
+  (verified 2026-10-08). No per-tenant infrastructure; isolation is entirely
+  application/data-layer.
 - **Frontend:** React 18 + TypeScript + Vite, Zustand (auth store),
   React Query, Tailwind, FullCalendar, Recharts.
 - **Backend:** Django 5 + DRF, `djangorestframework-simplejwt`, dj-stripe
@@ -342,3 +346,15 @@ access (§8), since this environment doesn't have that access.
     unrelated, already-existing changes on `MaintenanceBanner`/
     `PlatformInvoice`/`PlatformPayment` that predate this work and were
     deliberately left out of this migration).
+
+
+---
+
+## 10. Phase 2 enhancements (planned)
+
+Full plan in **`PHASE2.md`** — read it before touching tenant isolation, DB
+roles, deploys, or onboarding a new workspace. Headline: Postgres RLS is
+currently inert (master DB login + workspace never set for cookie-auth coach
+requests + transaction-local setting expires immediately), so isolation is
+app-code-only today. Must-do before workspace #2: automated off-host backups,
+separate DB roles, end-to-end RLS, staging + CI/CD + rollback, Zoom OAuth.

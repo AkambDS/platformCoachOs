@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import Deal, StageHistory, DealProgress
 
 
@@ -18,7 +19,7 @@ class DealProgressSerializer(serializers.ModelSerializer):
         fields = ["id", "field_name", "old_value", "new_value", "note", "changed_by_name", "changed_at"]
 
 
-class DealSerializer(serializers.ModelSerializer):
+class DealSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     stage_history = StageHistorySerializer(many=True, read_only=True)
     progress_log  = DealProgressSerializer(many=True, read_only=True)
     client_name    = serializers.CharField(source="client.full_name",  read_only=True)

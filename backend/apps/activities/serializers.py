@@ -2,6 +2,7 @@ import threading
 import datetime
 from dateutil.relativedelta import relativedelta
 from rest_framework import serializers
+from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import Activity
 
 _REPEAT_DELTA = {
@@ -82,7 +83,7 @@ def _fire(fn, *args):
     threading.Thread(target=fn, args=args, daemon=True).start()
 
 
-class ActivitySerializer(serializers.ModelSerializer):
+class ActivitySerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     client_name = serializers.CharField(source="client.full_name", read_only=True)
     coach_name  = serializers.CharField(source="coach.full_name",  read_only=True)
     affiliation_name  = serializers.CharField(source="affiliation.name",  read_only=True, default="")

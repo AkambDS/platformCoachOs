@@ -7,6 +7,7 @@ from rest_framework.throttling import AnonRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from django.utils import timezone
 from datetime import timedelta
+import logging
 import uuid
 
 from .models import User, Workspace, WorkspaceInvitation, WorkspaceRegistrationToken
@@ -16,6 +17,8 @@ from .serializers import (
     CoachOSTokenObtainPairSerializer,
 )
 from .permissions import IsBusinessOwner, IsWorkspaceMember
+
+logger = logging.getLogger(__name__)
 
 
 class LoginRateThrottle(AnonRateThrottle):
@@ -90,24 +93,22 @@ class LoginView(TokenObtainPairView):
         if response.status_code == 200:
             access  = response.data.pop("access")
             refresh = response.data.pop("refresh")
-            _set_auth_cookies(response, access, refresh)
 
             from rest_framework_simplejwt.tokens import AccessToken
             token = AccessToken(access)
             try:
                 user = User.objects.select_related("workspace").get(id=token["user_id"])
+                # A non-platform-admin with no workspace is a broken account. Refuse the login
+                # (no cookies issued) — never attach it to some other workspace: that used to
+                # fall back to Workspace.objects.first(), i.e. a real customer's workspace
+                # (PHASE2.md DB-2).
                 if user.workspace_id is None and user.role != User.Role.PLATFORM_ADMIN:
-                    first_ws = Workspace.objects.first()
-                    if first_ws:
-                        user.workspace = first_ws
-                        user.save(update_fields=["workspace"])
-                        from rest_framework_simplejwt.tokens import RefreshToken
-                        new_refresh = RefreshToken.for_user(user)
-                        new_refresh["workspace_id"] = str(user.workspace_id)
-                        new_refresh["role"]         = user.role
-                        new_refresh["full_name"]    = user.full_name
-                        new_refresh["email"]        = user.email
-                        _set_auth_cookies(response, str(new_refresh.access_token), str(new_refresh))
+                    logger.warning("Login refused: user %s has no workspace", user.id)
+                    return Response(
+                        {"detail": "This account isn't attached to a workspace. Please contact support."},
+                        status=status.HTTP_403_FORBIDDEN,
+                    )
+                _set_auth_cookies(response, access, refresh)
                 response.data["user"]      = UserSerializer(user).data
                 response.data["workspace"] = WorkspaceSerializer(user.workspace).data if user.workspace else None
             except User.DoesNotExist:

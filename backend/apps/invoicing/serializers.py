@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import Invoice, InvoiceItem, Payment
 
 
@@ -25,7 +26,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
         return _build_email_html(obj)
 
 
-class InvoiceDetailSerializer(serializers.ModelSerializer):
+class InvoiceDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     items          = InvoiceItemSerializer(many=True)
     client_name    = serializers.CharField(source="client.full_name",  read_only=True)
     client_email   = serializers.CharField(source="client.email",      read_only=True)

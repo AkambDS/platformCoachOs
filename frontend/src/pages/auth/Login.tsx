@@ -4,7 +4,7 @@ import { authApi, systemApi, demoApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 import { DEMO_EMAIL, DEMO_PASSWORD, DEMO_START_TOUR_KEY, DEMO_LEAD_EMAIL_KEY } from '../../constants/demo'
 import DemoGateModal from '../../components/DemoGateModal'
-import NorthStarFlow from '../../components/NorthStarFlow'
+import NorthStarFlow, { FlowStar } from '../../components/NorthStarFlow'
 
 export default function Login() {
   const [email, setEmail]       = useState('')
@@ -65,37 +65,51 @@ export default function Login() {
           {banner.message}
         </div>
       )}
-    <div className="auth-split">
-      {/* Brand Panel */}
-      <div className="auth-brand auth-brand--light">
-        {/* Background: curved paths with round dots converging on a North Star */}
+    <div className="login-page auth-ombre">
+      {/* Background: streams fan in from the bottom-left corner to each feature bullet, then flow on into the card's North Star */}
+      <div aria-hidden="true" className="login-flow">
         <NorthStarFlow className="auth-flow-canvas" />
-        {/* Logo */}
-        <div className="auth-brand-logo">
-          <>Coach<span>OS</span></>
-        </div>
-        <div className="auth-brand-logo-sub">Coaching Management Platform</div>
-
-        <div className="auth-brand-content">
-          <div className="auth-brand-headline">
-            <>Your coaching<br />practice, <em>elevated</em></>
-          </div>
-          <p className="auth-brand-sub">
-            Everything you need to run a world-class coaching business — clients, sessions, pipeline, and revenue in one place.
-          </p>
-          <ul className="auth-brand-features">
-            <li>Client management &amp; progress tracking</li>
-            <li>Session scheduling &amp; automated reminders</li>
-            <li>Pipeline &amp; deal flow management</li>
-            <li>Professional invoicing &amp; revenue reports</li>
-          </ul>
-        </div>
       </div>
 
-      {/* Form Panel */}
-      <div className="auth-form-area auth-form-area--light">
-        <div className="auth-form-card">
-          <div className="auth-form-title">Welcome back</div>
+      {/* masthead */}
+      <div className="login-masthead">
+        <div className="auth-brand-logo">Coach<span>OS</span></div>
+        <div className="auth-brand-logo-sub">Coaching Management Platform</div>
+      </div>
+
+      <div className="login-row">
+        {/* LEFT — editorial column */}
+        <div className="login-left">
+          <span aria-hidden="true" className="login-quote">&ldquo;</span>
+          <div className="login-left-inner">
+            <h1 className="login-headline">Your coaching practice, <em>elevated</em></h1>
+            <p className="login-sub">
+              Everything you need to run a world-class coaching business — clients, sessions, pipeline, invoicing and a client portal, in one place.
+            </p>
+            <div className="login-rule" />
+            <div className="login-points">
+              {[
+                'Client CRM — goals, commitments & session notes',
+                'Scheduling with Google Calendar, Zoom & reminders',
+                'A branded portal where clients track goals & pay',
+                'Pipeline with automated, scheduled follow-ups',
+                'Stripe invoicing, payments & revenue reports',
+              ].map((text, i) => (
+                <div key={text} className="login-point">
+                  <span className="login-point-num" data-flow-in>{String(i + 1).padStart(2, '0')}</span>
+                  <span className="login-point-text" data-flow-source>{text}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        <div className="login-divider" />
+
+        {/* RIGHT — sign-in card */}
+        <div className="login-right">
+        <div className="auth-form-card auth-form-card--boxed" data-flow-target>
+          <div className="auth-form-title"><FlowStar />Welcome back</div>
           <p className="auth-form-sub">Sign in to your workspace</p>
 
           {error && <div className="auth-error">{error}</div>}
@@ -158,6 +172,7 @@ export default function Login() {
             </button>
           </div>
         </div>
+      </div>
       </div>
     </div>
     {showDemoGate && (

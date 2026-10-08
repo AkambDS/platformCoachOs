@@ -1,8 +1,9 @@
 from rest_framework import serializers
+from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import KnowledgeFolder, KnowledgeItem
 
 
-class FolderSerializer(serializers.ModelSerializer):
+class FolderSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     children = serializers.SerializerMethodField()
 
     class Meta:
@@ -18,7 +19,7 @@ class FolderSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class KnowledgeItemSerializer(serializers.ModelSerializer):
+class KnowledgeItemSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     presigned_url    = serializers.SerializerMethodField()
     inline_url       = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()
@@ -60,6 +61,46 @@ class KnowledgeItemSerializer(serializers.ModelSerializer):
         ascii_name = filename.encode("ascii", "ignore").decode("ascii").replace('"', "'") or "file"
         disposition = f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
         return generate_presigned_url(obj.s3_key, disposition=disposition)
+
+    # ── Tenant isolation (PHASE2.md DB-1/DB-8) ──────────────────────────────────
+    def _workspace_id(self):
+        request = self.context.get("request")
+        return getattr(getattr(request, "user", None), "workspace_id", None)
+
+    def validate_s3_key(self, value):
+        # Uploads are always stored under library/<workspace_id>/ (see views.py) — refuse a
+        # key from anywhere else, or an item could be pointed at another workspace's file
+        # and hand out a presigned URL for it.
+        if value and not value.startswith(f"library/{self._workspace_id()}/"):
+            raise serializers.ValidationError("Invalid file reference.")
+        return value
+
+    @staticmethod
+    def _uuid_strs(value):
+        import uuid
+        out = []
+        for v in value or []:
+            try:
+                out.append(str(uuid.UUID(str(v))))
+            except (ValueError, TypeError):
+                pass
+        return out
+
+    def validate_shared_client_ids(self, value):
+        # Keep only ids of clients in this workspace; stale/foreign ids are dropped rather
+        # than rejected so an edit doesn't fail over a since-deleted client.
+        from apps.clients.models import Client
+        ids = self._uuid_strs(value)
+        valid = {str(pk) for pk in Client.objects.filter(
+            workspace_id=self._workspace_id(), id__in=ids).values_list("id", flat=True)} if ids else set()
+        return [i for i in ids if i in valid]
+
+    def validate_shared_user_ids(self, value):
+        from apps.accounts.models import User
+        ids = self._uuid_strs(value)
+        valid = {str(pk) for pk in User.objects.filter(
+            workspace_id=self._workspace_id(), id__in=ids).values_list("id", flat=True)} if ids else set()
+        return [i for i in ids if i in valid]
 
     def create(self, validated_data):
         validated_data["workspace"]   = self.context["request"].user.workspace

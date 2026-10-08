@@ -1106,6 +1106,8 @@ def capture_demo_lead(request):
     first_name = (request.data.get("first_name") or "").strip()
     if not email or not first_name:
         return Response({"detail": "First name and email are required."}, status=400)
+    if len(first_name) > 100:
+        return Response({"detail": "First name is too long."}, status=400)
     try:
         validate_email(email)
     except Exception:

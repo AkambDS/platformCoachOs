@@ -1,5 +1,6 @@
 """CoachOS — clients/serializers.py"""
 from rest_framework import serializers
+from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote, ClientMessageDraft
 from apps.activities.models import CoachAvailabilityRule
 
@@ -82,7 +83,7 @@ class ClientGoalSerializer(serializers.ModelSerializer):
         return obj.created_by_id is None
 
 
-class CommitmentSerializer(serializers.ModelSerializer):
+class CommitmentSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model  = Commitment
         fields = ["id", "text", "activity", "created_by", "created_at"]
@@ -105,7 +106,7 @@ class ClientListSerializer(serializers.ModelSerializer):
                   "pipeline_stage", "pipeline_deal_id"]
 
 
-class ClientDetailSerializer(serializers.ModelSerializer):
+class ClientDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     """Full serializer for client detail view."""
     assessments = AssessmentSerializer(many=True, read_only=True)
     goals       = ClientGoalSerializer(many=True, read_only=True)
@@ -211,7 +212,7 @@ class ClientMessageDraftSerializer(serializers.ModelSerializer):
         return obj.signed_pdf_assessment.file_name
 
 
-class GoalProgressSerializer(serializers.ModelSerializer):
+class GoalProgressSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):
     class Meta:
         model  = GoalProgress
         fields = ["id", "goal", "progress_text", "created_at"]

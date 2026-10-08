@@ -575,20 +575,67 @@ body {
   flex-shrink: 0;
   opacity: .9;
 }
-/* Login-only: white panels, with an animated background (NorthStarFlow) filling the
-   brand panel behind its content. */
+/* Coach login — same layout and look as the client portal login (ClientPortal.tsx's
+   LoginScreen): ombré background, NorthStarFlow sweeping across
+   the whole page to the top-right corner, editorial left column, gold-topped card on the right. */
+/* Ombré: warm paper (bottom-left) → champagne → soft dawn blue (top-right), with a gold
+   glow in the corner where the North Star sits. */
+.auth-ombre {
+  background:
+    radial-gradient(ellipse 55% 45% at 97% 4%, rgba(212,176,106,.30), transparent 70%),
+    radial-gradient(ellipse 45% 55% at 0% 100%, rgba(184,146,46,.08), transparent 70%),
+    linear-gradient(120deg, #f7f4ef 0%, #f5efe4 38%, #eef0f2 68%, #e6edf6 100%);
+}
 .auth-flow-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
-.auth-brand--light > :not(.auth-flow-canvas) { position: relative; z-index: 1; }
-.auth-form-area.auth-form-area--light { background: #ffffff; }
-.auth-brand--light { background: #ffffff; border-right: 1px solid var(--border); }
-.auth-brand--light::before,
-.auth-brand--light::after { display: none; }
-.auth-brand--light .auth-brand-logo,
-.auth-brand--light .auth-brand-headline { color: var(--navy); }
-.auth-brand--light .auth-brand-logo-sub,
-.auth-brand--light .auth-brand-headline em { color: var(--gold); }
-.auth-brand--light .auth-brand-sub { color: var(--muted); }
-.auth-brand--light .auth-brand-features li { color: var(--ink-soft); }
+.login-page { min-height: 100vh; width: 100%; display: flex; flex-direction: column; position: relative; overflow: hidden; }
+.login-flow { position: absolute; inset: 0; pointer-events: none; z-index: 0; }
+.login-masthead { padding: 40px 48px 0; position: relative; z-index: 1; }
+.login-masthead .auth-brand-logo { color: var(--navy); margin-bottom: 4px; }
+.login-masthead .auth-brand-logo-sub { color: var(--gold); }
+.login-row { flex: 1; display: flex; flex-wrap: wrap; align-items: center; width: 100%; max-width: 1180px; margin: 0 auto; box-sizing: border-box; position: relative; z-index: 1; }
+.login-left { flex: 1 1 480px; min-width: 320px; padding: 64px 56px 64px 48px; box-sizing: border-box; position: relative; display: flex; align-items: center; }
+.login-quote { position: absolute; top: -56px; left: 28px; font-family: 'Cormorant Garamond', serif; font-size: 380px; line-height: 1; color: var(--navy); opacity: .07; user-select: none; pointer-events: none; }
+.login-left-inner { position: relative; display: flex; flex-direction: column; max-width: 460px; }
+.login-headline { font-family: 'Cormorant Garamond', serif; font-weight: 400; font-size: 44px; line-height: 1.18; color: var(--ink); margin: 0 0 16px; }
+.login-headline em { font-style: italic; color: var(--gold); }
+.login-sub { font-size: 14.5px; color: var(--muted); line-height: 1.65; margin: 0 0 28px; max-width: 400px; }
+.login-rule { width: 36px; height: 2px; background: var(--gold); margin-bottom: 28px; }
+.login-points { display: flex; flex-direction: column; gap: 18px; }
+.login-point { display: flex; gap: 16px; align-items: baseline; }
+.login-point-num { font-family: 'Cormorant Garamond', serif; font-size: 15px; color: var(--gold); font-weight: 600; flex-shrink: 0; width: 20px; }
+.login-point-text { font-size: 14px; color: var(--ink-soft); line-height: 1.5; }
+/* invisible on purpose — NorthStarFlow's streams cross this gutter into the card */
+.login-divider { width: 1px; align-self: stretch; margin: 72px 0; }
+.login-right { flex: 1 1 380px; min-width: 320px; padding: 48px 48px 64px 56px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; }
+.auth-form-card--boxed {
+  max-width: 420px; position: relative; overflow: hidden;
+  background: #fff; border: 1px solid var(--cream); border-radius: 10px;
+  padding: 40px 36px 36px;
+  box-shadow: 0 1px 2px rgba(26,23,20,.04), 0 16px 40px rgba(26,23,20,.07);
+}
+.auth-form-card--boxed::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  background: linear-gradient(90deg, var(--gold), var(--gold-light) 50%, var(--gold));
+}
+.auth-form-card--boxed .auth-form-title { font-size: 34px; }
+/* NorthStarFlow's star — part of the card, next to its title; the streams converge on it */
+.flow-star {
+  display: inline-block; width: 20px; height: 20px; margin-right: 12px; vertical-align: 1px;
+  color: var(--gold); filter: drop-shadow(0 0 4px rgba(212,176,106,.5));
+  animation: flow-star-breathe 3.2s ease-in-out infinite;
+}
+@keyframes flow-star-breathe { 50% { opacity: .78; } }
+@media (prefers-reduced-motion: reduce) { .flow-star { animation: none; } }
+@media (max-width: 900px) {
+  .login-divider { display: none; }
+  .login-masthead { padding: 32px 16px 0; text-align: center; }
+  .login-left, .login-right { min-width: 0; flex-basis: 100%; }
+  .login-left { text-align: center; padding: 32px 16px 16px; }
+  .login-left-inner { align-items: center; }
+  .login-headline { font-size: 34px; }
+  .login-right { padding: 16px 16px 48px; }
+  .auth-form-card--boxed { padding: 32px 22px 28px; }
+}
 .auth-form-area {
   background: var(--paper);
   display: flex;
