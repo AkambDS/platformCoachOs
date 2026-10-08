@@ -18,6 +18,9 @@ interface TourStep {
   // click — see isDemoUser below. Keeps the portal-preview step (which logs into
   // one specific fake client) from ever appearing for a real coach's real clients.
   demoOnly?: boolean
+  // Replaces `description` for the demo user only — lets the intro promise the
+  // portal-preview step without making that promise to real coaches, who never get it.
+  demoDescription?: string
 }
 
 // Each step navigates to the real screen it describes, then highlights an element on it —
@@ -29,7 +32,8 @@ const STEPS: TourStep[] = [
   {
     path: '/dashboard',
     title: 'One practice, three logins',
-    description: "CoachOS has a login for you (the owner), one for any coaches you add, and a completely separate self-serve Client Portal for your clients. We'll walk through your side first, then show you the portal at the end.",
+    description: "CoachOS has a login for you (the owner), one for any coaches you add, and a completely separate self-serve Client Portal for your clients. Let's walk through your side of the app.",
+    demoDescription: "CoachOS has a login for you (the owner), one for any coaches you add, and a completely separate self-serve Client Portal for your clients. We'll walk through your side first, then show you the portal at the end.",
   },
   {
     path: '/dashboard', element: '[data-tour="dashboard"]',
@@ -148,7 +152,7 @@ export function useTour() {
           ...(step.element ? { element: step.element } : {}),
           popover: {
             title: step.title,
-            description: step.description,
+            description: (isDemoUser && step.demoDescription) || step.description,
             side: 'right',
             showButtons: ['next', 'previous', 'close'],
             showProgress: true,   // driver.js hides .driver-popover-progress-text (inline display:none) without this
