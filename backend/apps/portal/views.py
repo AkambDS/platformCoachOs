@@ -331,6 +331,7 @@ class PortalMeView(APIView):
         except Client.DoesNotExist:
             raise NotFound()
 
+        from apps.settings_app.views import workspace_logo_url
         coach_name = client.coach.full_name if client.coach else client.workspace.name
         return Response({
             "id":             str(client.id),
@@ -338,6 +339,9 @@ class PortalMeView(APIView):
             "email":          client.email,
             "coach_name":     coach_name,
             "workspace_name": client.workspace.name,
+            # The client's OWN workspace branding — the portal shows this after login.
+            "workspace_slug":     client.workspace.slug,
+            "workspace_logo_url": workspace_logo_url(client.workspace),
         })
 
 
@@ -521,9 +525,10 @@ class PortalMaterialViewConfigView(APIView):
     ?mode=edit here at all; a client should never be able to write back into a coach's
     shared library item. Reuses that same view's ONLYOFFICE_DOC_TYPES/_doc_server_file_url
     and the same onlyoffice-file/onlyoffice-callback endpoints — those don't check who
-    initiated the session (OnlyOffice's document server authenticates itself to them
-    with its own JWT), so pointing a portal-issued config at them is safe; the actual
-    access-control decision is made right here, before that config is ever issued."""
+    initiated the session (they require the item-bound `doc` token in their URLs, and the
+    callback also needs a body signed by the document server), so pointing a
+    portal-issued config at them is safe; the actual access-control decision is made
+    right here, before that config is ever issued."""
     authentication_classes = [PortalJWTAuthentication]
     permission_classes     = [IsAuthenticated]
 
@@ -537,7 +542,7 @@ class PortalMaterialViewConfigView(APIView):
             return Response({"detail": "No file to preview."}, status=http_status.HTTP_400_BAD_REQUEST)
 
         from django.conf import settings as dj_settings
-        from apps.library.views import ONLYOFFICE_DOC_TYPES, _doc_server_file_url
+        from apps.library.views import ONLYOFFICE_DOC_TYPES, _doc_server_file_url, _doc_server_callback_url
 
         ext = item.file_name.rsplit(".", 1)[-1].lower() if "." in item.file_name else ""
         doc_type = ONLYOFFICE_DOC_TYPES.get(ext)
@@ -553,7 +558,7 @@ class PortalMaterialViewConfigView(APIView):
         key = hashlib.md5(
             f"{item.id}-{item.version}-{item.updated_at.timestamp()}".encode()
         ).hexdigest()
-        callback_url = f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-callback/"
+        callback_url = _doc_server_callback_url(item)
 
         config = {
             "document": {

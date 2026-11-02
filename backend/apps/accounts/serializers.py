@@ -144,9 +144,14 @@ class RegisterWorkspaceSerializer(serializers.Serializer):
         return user
 
 
+# Roles a workspace owner may invite. Never business_owner (one per workspace, created at
+# registration) or platform_admin (CoachOS staff — would see every workspace).
+INVITABLE_ROLES = ("coach", "assistant", "limited")
+
+
 class InviteUserSerializer(serializers.Serializer):
     email = serializers.EmailField()
-    role  = serializers.ChoiceField(choices=User.Role.choices)
+    role  = serializers.ChoiceField(choices=[c for c in User.Role.choices if c[0] in INVITABLE_ROLES])
 
     def validate_email(self, value):
         workspace = self.context["request"].user.workspace

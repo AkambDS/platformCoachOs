@@ -24,6 +24,7 @@ urlpatterns = [
     path("workspaces/<str:pk>/audit-log/",                            views.workspace_audit_log),
     path("registration-tokens/",                  views.registration_tokens),
     path("registration-tokens/<str:pk>/",         views.registration_token_detail),
+    path("registration-tokens/<str:pk>/send/",    views.registration_token_send),
     path("feedback/",                             views.feedback_list),
     path("feedback/<str:pk>/",                    views.feedback_detail),
     path("feedback/<str:pk>/comment/",            views.feedback_comment),

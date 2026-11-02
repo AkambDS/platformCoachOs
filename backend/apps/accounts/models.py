@@ -133,6 +133,17 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     class Meta:
         db_table = "users"
+        constraints = [
+            # Exactly one business owner per workspace — coaches, assistants and clients
+            # all hang off that owner's workspace. Enforced in the DB so no code path (or
+            # manual edit) can add a second owner, as the pre-fix login fallback once did
+            # (PHASE2.md DB-2).
+            models.UniqueConstraint(
+                fields=["workspace"],
+                condition=models.Q(role="business_owner"),
+                name="one_business_owner_per_workspace",
+            ),
+        ]
 
     def __str__(self):
         return f"{self.full_name} <{self.email}>"
@@ -215,6 +226,16 @@ class WorkspaceRegistrationToken(models.Model):
     )
     expires_at = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)
+    # Invite-email tracking (apps/superadmin/registration_invite.py). email_status is
+    # "" for links created before tracking existed, "failed" when our send raised,
+    # "sent" once accepted, then Resend's last_event ("delivered", "bounced", …) once
+    # polled. resend_email_id is blank when the send went over plain SMTP (local dev).
+    email_status            = models.CharField(max_length=20, blank=True)
+    email_error             = models.TextField(blank=True)
+    email_sent_at           = models.DateTimeField(null=True, blank=True)
+    email_send_count        = models.PositiveIntegerField(default=0)
+    resend_email_id         = models.CharField(max_length=64, blank=True)
+    email_status_checked_at = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = "workspace_registration_tokens"

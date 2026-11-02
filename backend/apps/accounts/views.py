@@ -200,6 +200,18 @@ def register(request):
             status=status.HTTP_403_FORBIDDEN,
         )
 
+    # An invite link is issued to one person: the register form shows its email
+    # read-only, but enforce it here too so a forwarded or leaked link can't be used
+    # to register under a different address.
+    if reg_token and reg_token.recipient_email:
+        submitted = (request.data.get("email") or "").strip().lower()
+        if submitted != reg_token.recipient_email.strip().lower():
+            return Response(
+                {"detail": "This invite link was issued for a different email address. "
+                           "Ask whoever sent it for a new link."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
     serializer = RegisterWorkspaceSerializer(data=request.data)
     if not serializer.is_valid():
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -358,6 +370,14 @@ def accept_invite(request):
             expires_at__gt=timezone.now(),
         )
     except WorkspaceInvitation.DoesNotExist:
+        return Response({"detail": "Invalid or expired invitation."},
+                        status=status.HTTP_400_BAD_REQUEST)
+
+    # Defense in depth for invitations stored before InviteUserSerializer restricted roles:
+    # an invite can never create a business owner or a platform admin.
+    from .serializers import INVITABLE_ROLES
+    if invitation.role not in INVITABLE_ROLES:
+        logger.warning("Refused invitation %s with non-invitable role %s", invitation.id, invitation.role)
         return Response({"detail": "Invalid or expired invitation."},
                         status=status.HTTP_400_BAD_REQUEST)
 

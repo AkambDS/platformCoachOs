@@ -113,14 +113,97 @@ def workspace_list(request):
 
 # ── Workspace detail ───────────────────────────────────────────────────────────
 
-@api_view(["GET", "PATCH"])
+def _workspace_delete_blocker(ws, request):
+    """Why this workspace can't be deleted from the console, or None if it can."""
+    from config.middleware import DEMO_WORKSPACE_SLUG
+    if ws.slug == DEMO_WORKSPACE_SLUG:
+        return "The shared demo workspace can't be deleted (re-seed it instead)."
+    if request.user.workspace_id == ws.id or ws.users.filter(role="platform_admin").exists():
+        return "This workspace holds a platform-admin account — deleting it would delete that admin login."
+    if ws.is_active:
+        return "Suspend this workspace first, then delete it."
+    return None
+
+
+def _delete_workspace(request, ws):
+    """DELETE /api/superadmin/workspaces/{pk}/ — permanently delete a workspace and
+    everything in it (users, clients, invoices, sessions, library, logs). Guarded by
+    _workspace_delete_blocker() plus a typed-slug confirmation. Users cascade with the
+    workspace, which frees their emails for a fresh registration."""
+    import logging
+    from collections import Counter
+    from django.db import transaction
+    from django.db.models import Q
+    from apps.accounts.management.commands.delete_workspace import delete_with_checks
+    from apps.invoicing.models import Payment
+    from apps.library.models import KnowledgeItem
+
+    blocker = _workspace_delete_blocker(ws, request)
+    if blocker:
+        return Response({"detail": blocker}, status=400)
+    if (request.data.get("confirm") or "").strip() != ws.slug:
+        return Response({"detail": f'Type the workspace slug "{ws.slug}" to confirm.'}, status=400)
+
+    summary = {
+        "name":       ws.name,
+        "slug":       ws.slug,
+        "users":      list(ws.users.values_list("email", flat=True)),
+        "clients":    Client.objects.filter(workspace=ws).count(),
+        "invoices":   Invoice.objects.filter(workspace=ws).count(),
+        "payments":   Payment.objects.filter(Q(workspace=ws) | Q(invoice__workspace=ws)).count(),
+        "activities": Activity.objects.filter(workspace=ws).count(),
+        "deals":      Deal.objects.filter(workspace=ws).count(),
+        "library":    KnowledgeItem.objects.filter(workspace=ws).count(),
+    }
+
+    class _Abort(Exception):
+        pass
+
+    ws_id, deleted, foreign = str(ws.id), Counter(), []
+    try:
+        with transaction.atomic():
+            # Invoice.client and Payment.invoice are PROTECT, which would block the
+            # workspace cascade — remove them explicitly, payments first. Every step
+            # checks that the cascade touches only THIS workspace's rows (a row of another
+            # workspace linked to one of this workspace's users, say) and rolls the whole
+            # delete back if it would.
+            for roots in (list(Payment.objects.filter(Q(workspace=ws) | Q(invoice__workspace=ws))),
+                          list(Invoice.objects.filter(workspace=ws)),
+                          [ws]):
+                if roots:
+                    delete_with_checks(ws, roots, deleted, foreign)
+                if foreign:
+                    raise _Abort()
+            # workspace=None so this record outlives the workspace's own (cascaded) logs.
+            AuditLog.objects.create(
+                workspace=None, user=request.user, action="delete_workspace",
+                table_name="workspaces", record_id=ws_id, diff=summary,
+                ip_address=request.META.get("REMOTE_ADDR"),
+            )
+    except _Abort:
+        logging.getLogger(__name__).warning("Workspace delete refused for %s: %s", ws_id, foreign[:20])
+        return Response({
+            "detail": f"Nothing was deleted: {len(foreign)} row(s) in OTHER workspaces are linked to this "
+                      f"workspace's data and would be deleted or changed. Run check_tenant_integrity, "
+                      f"fix those links, then retry.",
+            "foreign": foreign[:20],
+        }, status=409)
+    logging.getLogger(__name__).warning(
+        "Workspace deleted by %s: %s (%s) %s", request.user.email, summary["name"], ws_id, summary)
+    return Response({"deleted": summary})
+
+
+@api_view(["GET", "PATCH", "DELETE"])
 @permission_classes([IsPlatformAdmin])
 def workspace_detail(request, pk):
-    """GET/PATCH /api/superadmin/workspaces/{pk}/"""
+    """GET/PATCH/DELETE /api/superadmin/workspaces/{pk}/"""
     try:
         ws = Workspace.objects.get(pk=pk)
-    except Workspace.DoesNotExist:
+    except Exception:  # DoesNotExist, or a malformed UUID (ValidationError)
         return Response({"detail": "Not found."}, status=404)
+
+    if request.method == "DELETE":
+        return _delete_workspace(request, ws)
 
     if request.method == "PATCH":
         if "plan" in request.data:
@@ -157,6 +240,7 @@ def workspace_detail(request, pk):
         "owner_joined":  owner.date_joined.isoformat() if owner else None,
         "owner_last_login": owner.last_login.isoformat() if owner and owner.last_login else None,
         "owner_role":       owner.role if owner else None,
+        "delete_blocked_reason": _workspace_delete_blocker(ws, request),
         "stats": {
             "clients":    Client.objects.filter(workspace=ws).count(),
             "deals":      Deal.objects.filter(workspace=ws).count(),
@@ -409,43 +493,72 @@ def workspace_pipeline_stages(request, pk):
 
 # ── Registration tokens ────────────────────────────────────────────────────────
 
+def _frontend_url():
+    from django.conf import settings as dj_settings
+    return getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
+
+
+def _register_url(t):
+    return f"{_frontend_url()}/register?token={t.id}"
+
+
+def _fmt_token(t):
+    return {
+        "id":               str(t.id),
+        "note":             t.note,
+        "recipient_name":   t.recipient_name,
+        "recipient_email":  t.recipient_email,
+        "url":              _register_url(t),
+        "expires_at":       t.expires_at.isoformat(),
+        "used":             t.used,
+        "used_by":          t.used_by.name if t.used_by else None,
+        "used_by_id":       str(t.used_by.id) if t.used_by else None,
+        "used_by_pending":  t.used_by.pending_activation if t.used_by else False,
+        "created_at":       t.created_at.isoformat(),
+        "email_status":     t.email_status,
+        "email_error":      t.email_error,
+        "email_sent_at":    t.email_sent_at.isoformat() if t.email_sent_at else None,
+        "email_send_count": t.email_send_count,
+        "email_tracked":    bool(t.resend_email_id),
+    }
+
+
+def _invite_days(request, default=7):
+    try:
+        return max(1, min(90, int(request.data.get("days", default))))
+    except (TypeError, ValueError):
+        return default
+
+
 @api_view(["GET", "POST"])
 @permission_classes([IsPlatformAdmin])
 def registration_tokens(request):
     """
-    GET  /api/superadmin/registration-tokens/  — list all tokens
-    POST /api/superadmin/registration-tokens/  — create a new one
+    GET  /api/superadmin/registration-tokens/  — list all tokens (refreshes delivery status)
+    POST /api/superadmin/registration-tokens/  — create a new one and email it
     """
-    from django.conf import settings as dj_settings
-    frontend_url = getattr(dj_settings, "FRONTEND_URL", "http://localhost:5173")
-
-    def _fmt(t):
-        return {
-            "id":               str(t.id),
-            "note":             t.note,
-            "recipient_name":   t.recipient_name,
-            "recipient_email":  t.recipient_email,
-            "url":              f"{frontend_url}/register?token={t.id}",
-            "expires_at":       t.expires_at.isoformat(),
-            "used":             t.used,
-            "used_by":          t.used_by.name if t.used_by else None,
-            "used_by_id":       str(t.used_by.id) if t.used_by else None,
-            "used_by_pending":  t.used_by.pending_activation if t.used_by else False,
-            "created_at":       t.created_at.isoformat(),
-        }
+    from .registration_invite import send_registration_invite, refresh_delivery_statuses
 
     if request.method == "POST":
-        days = int(request.data.get("days", 7))
+        days = _invite_days(request)
         recipient_name  = request.data.get("recipient_name", "").strip()
         recipient_email = request.data.get("recipient_email", "").strip()
 
         if not recipient_name or not recipient_email:
             return Response({"detail": "Owner name and email are required."}, status=400)
 
-        # Block if this email is already a registered workspace owner.
-        if User.objects.filter(email__iexact=recipient_email, role="business_owner").exists():
+        # Block if any account already uses this email — registration requires a globally
+        # unique email, so the invite would only fail at sign-up. Say which workspace holds
+        # it: deleting an invite row never deletes the workspace created from it.
+        existing = User.objects.select_related("workspace").filter(email__iexact=recipient_email).first()
+        if existing:
+            ws = existing.workspace
+            where = (f"workspace \"{ws.name}\" (created {ws.created_at:%b %d, %Y}"
+                     f"{', inactive' if not ws.is_active else ''})") if ws else "no workspace"
             return Response(
-                {"detail": f"{recipient_email} is already a registered workspace owner. No invite needed."},
+                {"detail": f"{recipient_email} is already registered as "
+                           f"{existing.get_role_display()} of {where}. "
+                           f"Use a different email, or remove that account/workspace first."},
                 status=400,
             )
 
@@ -454,86 +567,54 @@ def registration_tokens(request):
             recipient_email__iexact=recipient_email, used=False
         ).delete()
 
-        note = recipient_name
         token = WorkspaceRegistrationToken.objects.create(
             created_by=request.user,
-            note=note,
+            note=recipient_name,
             recipient_name=recipient_name,
             recipient_email=recipient_email,
             expires_at=timezone.now() + timedelta(days=days),
         )
+        # Outcome is recorded on the token — a failed send still leaves the link
+        # usable, and the list shows "Failed" so the admin can copy it or send again.
+        send_registration_invite(token, _register_url(token), reply_to=request.user.email)
+        return Response(_fmt_token(token), status=201)
 
-        # Send the invite email with the registration link.
-        register_url = f"{frontend_url}/register?token={token.id}"
-        expires_str  = token.expires_at.strftime("%B %d, %Y")
-        try:
-            from django.core.mail import EmailMultiAlternatives
-            import logging
-            logger = logging.getLogger(__name__)
-            plain = (
-                f"Hi {recipient_name},\n\n"
-                f"You've been invited to create your coaching workspace on CoachOS.\n\n"
-                f"Click the link below to set up your workspace:\n{register_url}\n\n"
-                f"This link expires on {expires_str} and can only be used once.\n\n"
-                f"If you have any questions, reply to this email."
-            )
-            html = f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="UTF-8"/></head>
-<body style="margin:0;padding:0;background:#eeebe5;">
-<table width="100%" cellpadding="0" cellspacing="0" style="padding:40px 16px;">
-  <tr><td align="center">
-  <table width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
-    <tr><td style="background:#1a2f4e;padding:24px 40px;border-radius:8px 8px 0 0;">
-      <span style="font-family:Georgia,serif;font-size:22px;color:#f5f0e8;">CoachOS</span>
-    </td></tr>
-    <tr><td style="height:3px;background:linear-gradient(90deg,#b8922e,#d9b96a,#b8922e);"></td></tr>
-    <tr><td style="background:#fff;padding:40px;border-radius:0 0 8px 8px;font-family:Arial,sans-serif;">
-      <h2 style="margin:0 0 16px;font-size:22px;color:#16130f;">You're invited to CoachOS</h2>
-      <p style="color:#4a443e;line-height:1.6;margin:0 0 24px;">
-        Hi {recipient_name},<br><br>
-        You've been invited to create your coaching workspace on CoachOS — a dedicated platform to manage clients, sessions, invoices, and your pipeline.
-      </p>
-      <div style="text-align:center;margin:0 0 32px;">
-        <a href="{register_url}" style="background:#1B3A6B;color:#fff;padding:14px 32px;
-           text-decoration:none;border-radius:6px;font-weight:600;font-size:15px;display:inline-block;">
-          Set Up My Workspace
-        </a>
-      </div>
-      <p style="color:#8c8279;font-size:13px;margin:0;">
-        This link expires on <strong>{expires_str}</strong> and can only be used once.<br>
-        If you did not expect this invitation, you can safely ignore this email.
-      </p>
-    </td></tr>
-  </table></td></tr>
-</table>
-</body></html>"""
-            msg = EmailMultiAlternatives(
-                subject="You're invited to set up your CoachOS workspace",
-                body=plain,
-                from_email=dj_settings.DEFAULT_FROM_EMAIL,
-                to=[recipient_email],
-            )
-            msg.attach_alternative(html, "text/html")
-            msg.send()
-            logger.info(f"Registration invite sent to {recipient_email}")
-        except Exception as exc:
-            import logging
-            logging.getLogger(__name__).error(f"Registration invite email failed for {recipient_email}: {exc}")
-            # Token still created — admin can copy the link manually.
+    tokens = list(WorkspaceRegistrationToken.objects.select_related("used_by")[:50])
+    refresh_delivery_statuses(tokens)
+    return Response([_fmt_token(t) for t in tokens])
 
-        return Response(_fmt(token), status=201)
 
-    tokens = WorkspaceRegistrationToken.objects.all()[:50]
-    return Response([_fmt(t) for t in tokens])
+@api_view(["POST"])
+@permission_classes([IsPlatformAdmin])
+def registration_token_send(request, pk):
+    """POST /api/superadmin/registration-tokens/{pk}/send/ — re-send the invite email.
+    An expired link is extended by `days` (default 7) first so the new email works."""
+    from .registration_invite import send_registration_invite
+    try:
+        token = WorkspaceRegistrationToken.objects.select_related("used_by").get(pk=pk)
+    except Exception:  # DoesNotExist, or a malformed UUID (ValidationError)
+        return Response({"detail": "Not found."}, status=404)
+    if token.used:
+        return Response({"detail": "This link was already used to register a workspace."}, status=400)
+    if not token.recipient_email:
+        return Response({"detail": "This link has no recipient email."}, status=400)
+
+    if token.expires_at <= timezone.now() or "days" in request.data:
+        token.expires_at = timezone.now() + timedelta(days=_invite_days(request))
+        token.save(update_fields=["expires_at"])
+
+    ok = send_registration_invite(token, _register_url(token), reply_to=request.user.email)
+    return Response(_fmt_token(token), status=200 if ok else 502)
 
 
 @api_view(["DELETE"])
 @permission_classes([IsPlatformAdmin])
 def registration_token_detail(request, pk):
-    """DELETE /api/superadmin/registration-tokens/{pk}/"""
+    """DELETE /api/superadmin/registration-tokens/{pk}/ — permanently delete the invite
+    row (any status). A workspace registered through it is not affected."""
     try:
         token = WorkspaceRegistrationToken.objects.get(pk=pk)
-    except WorkspaceRegistrationToken.DoesNotExist:
+    except Exception:  # DoesNotExist, or a malformed UUID (ValidationError)
         return Response({"detail": "Not found."}, status=404)
     token.delete()
     return Response(status=204)

@@ -116,7 +116,9 @@ class ClientDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSe
     class Meta:
         model  = Client
         fields = "__all__"
-        read_only_fields = ["id", "workspace", "created_at", "updated_at"]
+        # portal_access only changes through ClientViewSet.invite_portal / revoke_portal,
+        # which are workspace-owner-only — never via a plain client create/edit.
+        read_only_fields = ["id", "workspace", "created_at", "updated_at", "portal_access"]
 
     def validate_email(self, value):
         if not value:

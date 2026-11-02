@@ -44,10 +44,15 @@ def test_full_client_lifecycle_smoke(api_client, portal_api_client, workspace, m
     # ── 3. Edit the client ───────────────────────────────────────────────────
     res = api_client.patch(f"/api/clients/{client_id}/", {
         "status": "Active",
-        "portal_access": True,
     }, format="json")
     assert res.status_code == 200
     assert res.data["status"] == "Active"
+
+    # Portal access is owner-only and goes through invite-portal (not a plain edit).
+    monkeypatch.setattr("tasks.email.send_portal_invite_email", lambda *a, **kw: None)
+    res = api_client.post(f"/api/clients/{client_id}/invite-portal/")
+    assert res.status_code == 200
+    assert res.data["portal_access"] is True
 
     # ── 4. Add a note ────────────────────────────────────────────────────────
     res = api_client.post(f"/api/clients/{client_id}/notes/", {

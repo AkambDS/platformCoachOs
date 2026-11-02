@@ -266,6 +266,159 @@ def test_library_share_lists_drop_foreign_ids(world):
     assert res.data["shared_user_ids"] == [str(world["owner_b"].id)]
 
 
+@pytest.mark.django_db
+def test_csv_import_stays_in_importers_workspace(world):
+    """Import creates clients (and deals) only in the importer's workspace; a coach_email
+    from another workspace never resolves — the row falls back to the importer's own owner."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from apps.clients.models import Client
+    from apps.pipeline.models import Deal
+
+    csv_text = (
+        "first_name,last_name,email_1,coach_email,pipeline\n"
+        f"Imp,One,imp1@b.test,{world['coach_a1'].email},lead_new\n"   # A's coach — must not resolve
+        f"Imp,Two,{world['client_a1'].email},,\n"                      # same email as A's client — not a dup in B
+    )
+    api = _api(world["owner_b"])
+    res = api.post("/api/clients/import/",
+                   {"file": SimpleUploadedFile("c.csv", csv_text.encode(), content_type="text/csv")},
+                   format="multipart")
+    assert res.status_code == 201, _body(res)
+    assert res.data["created"] == 2, res.data
+    assert "already exists" not in _body(res)                         # A's client not revealed
+
+    imported = Client.objects.filter(email__in=["imp1@b.test", world["client_a1"].email], first_name="Imp")
+    assert imported.count() == 2
+    for c in imported:
+        assert c.workspace_id == world["ws_b"].id
+        assert c.coach_id == world["owner_b"].id                        # fallback, never A's coach
+    assert Deal.objects.filter(client__in=imported, workspace=world["ws_b"]).count() == 1
+    assert not Client.objects.filter(workspace=world["ws_a"], first_name="Imp").exists()
+
+
+@pytest.mark.django_db
+def test_coach_without_clients_edit_cannot_create_or_import(world):
+    """Tab permissions gate client creation by every route: a coach the owner set to
+    Clients = view-only can't add a client via the form OR bulk-create via CSV import."""
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from apps.accounts.models import TabPermission
+    from apps.clients.models import Client
+
+    coach = world["coach_a1"]
+    TabPermission.objects.create(workspace=world["ws_a"], user=coach, tab="clients",
+                                 can_view=True, can_edit=False, can_delete=False)
+    api = _api(coach)
+    before = Client.objects.filter(workspace=world["ws_a"]).count()
+
+    res = api.post("/api/clients/", {"first_name": "No", "last_name": "Edit", "email": "noedit@a.test"}, format="json")
+    assert res.status_code == 403, _body(res)
+    csv_text = "first_name,last_name,email_1\nNo,Import,noimport@a.test\n"
+    res = api.post("/api/clients/import/",
+                   {"file": SimpleUploadedFile("c.csv", csv_text.encode(), content_type="text/csv")},
+                   format="multipart")
+    assert res.status_code == 403, _body(res)
+    assert Client.objects.filter(workspace=world["ws_a"]).count() == before
+
+    # Export only needs view — still allowed.
+    assert api.get("/api/clients/export/").status_code == 200
+
+    # With the default coach permissions (edit allowed), import works again.
+    TabPermission.objects.filter(user=coach).delete()
+    res = api.post("/api/clients/import/",
+                   {"file": SimpleUploadedFile("c.csv", csv_text.encode(), content_type="text/csv")},
+                   format="multipart")
+    assert res.status_code == 201, _body(res)
+
+
+@pytest.mark.django_db
+def test_only_owner_can_grant_or_revoke_portal_access(world, monkeypatch):
+    """Portal access is a workspace-owner decision: coaches can't invite/revoke (even on
+    their own client, even with Clients edit), and can't flip portal_access via a plain edit."""
+    from apps.clients.models import Client
+    monkeypatch.setattr("tasks.email.send_portal_invite_email", lambda *a, **kw: None)
+    client = world["client_a1"]                       # coach_a1's own client
+    Client.objects.filter(pk=client.pk).update(portal_access=False)
+    coach = _api(world["coach_a1"])
+
+    assert coach.post(f"/api/clients/{client.id}/invite-portal/").status_code == 403
+    coach.patch(f"/api/clients/{client.id}/", {"portal_access": True}, format="json")
+    client.refresh_from_db(); assert client.portal_access is False
+
+    owner = _api(world["owner_a"])
+    assert owner.post(f"/api/clients/{client.id}/invite-portal/").status_code == 200
+    client.refresh_from_db(); assert client.portal_access is True
+    assert coach.post(f"/api/clients/{client.id}/revoke-portal/").status_code == 403
+    client.refresh_from_db(); assert client.portal_access is True
+    assert owner.post(f"/api/clients/{client.id}/revoke-portal/").status_code == 200
+    client.refresh_from_db(); assert client.portal_access is False
+
+
+@pytest.mark.django_db
+def test_only_one_business_owner_per_workspace(world):
+    """The DB refuses a second business owner in a workspace (as the pre-fix login fallback
+    once created); coaches/assistants can still be added, and other workspaces keep theirs."""
+    from django.db import IntegrityError, transaction
+    from apps.accounts.models import User
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            User.objects.create_user(email="owner2@a.test", password="x" * 12, full_name="Owner Two",
+                                     workspace=world["ws_a"], role="business_owner")
+    with pytest.raises(IntegrityError):
+        with transaction.atomic():
+            User.objects.filter(pk=world["coach_a1"].pk).update(role="business_owner")   # promote → refused
+    User.objects.create_user(email="coach3@a.test", password="x" * 12, full_name="Coach Three",
+                             workspace=world["ws_a"], role="coach")
+    assert User.objects.filter(workspace=world["ws_a"], role="business_owner").count() == 1
+    assert User.objects.filter(workspace=world["ws_b"], role="business_owner").count() == 1
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("role", ["platform_admin", "business_owner"])
+def test_invite_cannot_create_owner_or_superadmin(world, role, monkeypatch):
+    """An owner can only invite coach/assistant/limited — never a second business owner, and
+    never a platform admin (who would see every workspace). Also refused at accept time for
+    invitations stored before the restriction."""
+    from datetime import timedelta
+    from django.utils import timezone
+    from apps.accounts.models import User, WorkspaceInvitation
+    monkeypatch.setattr("tasks.email.send_invite_email", lambda *a, **kw: None)
+    owner = _api(world["owner_a"])
+    res = owner.post("/api/auth/invite/", {"email": f"esc-{role}@x.test", "role": role}, format="json")
+    assert res.status_code == 400, _body(res)
+    assert not WorkspaceInvitation.objects.filter(email=f"esc-{role}@x.test").exists()
+
+    legacy = WorkspaceInvitation.objects.create(workspace=world["ws_a"], invited_by=world["owner_a"],
+                                                email=f"legacy-{role}@x.test", role=role,
+                                                expires_at=timezone.now() + timedelta(hours=48))
+    res = APIClient().post("/api/auth/accept-invite/", {"token": str(legacy.token), "password": "longpassword1",
+                                                        "full_name": "Legacy"}, format="json")
+    assert res.status_code == 400, _body(res)
+    assert not User.objects.filter(email=f"legacy-{role}@x.test").exists()
+
+    # control: a normal coach invite still works
+    assert owner.post("/api/auth/invite/", {"email": "ok-coach@x.test", "role": "coach"}, format="json").status_code in (200, 201)
+
+
+@pytest.mark.django_db
+def test_branding_is_never_another_workspaces(world):
+    """Pre-login branding is neutral unless a workspace is named; the portal shows the
+    client's OWN workspace logo/name (this used to return the oldest workspace's to all)."""
+    from apps.accounts.models import Workspace
+    Workspace.objects.filter(pk=world["ws_a"].pk).update(logo_data="data:image/png;base64,AAAA")
+    anon = APIClient()
+    assert anon.get("/api/settings/public-branding/").data["name"] == "CoachOS"
+    assert anon.get("/api/settings/public-branding/").data["logo_url"] == ""
+    a = anon.get(f"/api/settings/public-branding/?workspace={world['ws_a'].slug}").data
+    assert a["name"] == world["ws_a"].name and str(world["ws_a"].id) in a["logo_url"]
+    b = anon.get(f"/api/settings/public-branding/?workspace={world['ws_b'].slug}").data
+    assert b["name"] == world["ws_b"].name and b["logo_url"] == ""
+
+    me_b = _portal_api(world["client_b1"]).get("/api/portal/me/").data
+    assert me_b["workspace_name"] == world["ws_b"].name and me_b["workspace_logo_url"] == ""
+    me_a = _portal_api(world["client_a1"]).get("/api/portal/me/").data
+    assert str(world["ws_a"].id) in me_a["workspace_logo_url"]
+
+
 # ── 4. Inside one workspace: coach sees only their own clients ───────────────
 
 @pytest.mark.django_db

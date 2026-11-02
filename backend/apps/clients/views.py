@@ -30,6 +30,7 @@ from .serializers import (ClientListSerializer, ClientDetailSerializer,
                           ClientNoteSerializer, ClientMessageDraftSerializer,
                           CoachAvailabilityRuleSerializer)
 from apps.accounts.permissions import IsAssistantOrAbove, IsCoachOrAbove, IsBusinessOwnerOrSuperuser, IsBusinessOwner, require_tab
+from apps.accounts.onlyoffice_auth import sign_doc_url, doc_token_ok, signed_callback_body, internal_download_url
 
 
 def _log(request, client, action, **metadata):
@@ -87,9 +88,17 @@ class ClientViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == "destroy":
             return [IsBusinessOwnerOrSuperuser()]
+        if self.action in ("invite_portal", "revoke_portal"):
+            # Granting/removing a client's portal login (and emailing them the invite) is a
+            # workspace-owner decision only — coaches/assistants can't, whatever their tabs.
+            return [IsBusinessOwner()]
         if self.action in ("create", "update", "partial_update"):
             return [IsAssistantOrAbove(), require_tab("clients", "edit")()]
-        if self.action in ("csv_import", "csv_export"):
+        if self.action == "csv_import":
+            # Import creates clients, so it needs the same Clients "edit" right as the
+            # New Client form — a coach the owner limited to view-only can't bulk-create.
+            return [IsCoachOrAbove(), require_tab("clients", "edit")()]
+        if self.action == "csv_export":
             return [IsCoachOrAbove(), require_tab("clients", "view")()]
         return [IsAssistantOrAbove(), require_tab("clients", "view")()]
     # No OrderingFilter — archived/inactive clients need to always sort last regardless of
@@ -741,11 +750,15 @@ class AssessmentViewSet(viewsets.ModelViewSet):
     def _doc_server_file_url(self, obj):
         """Mirrors apps.library.views._doc_server_file_url — routes the OnlyOffice
         container through our own backend rather than a presigned S3/MinIO URL, since
-        JWT + presigned-query-string auth can't coexist on the same request."""
+        JWT + presigned-query-string auth can't coexist on the same request. Carries a
+        `doc` token bound to this one file (apps.accounts.onlyoffice_auth)."""
         if not obj.file_s3_key:
             return None
-        return (f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}"
-                f"/api/clients/{obj.client_id}/assessments/{obj.id}/onlyoffice-file/")
+        return sign_doc_url(
+            f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}"
+            f"/api/clients/{obj.client_id}/assessments/{obj.id}/onlyoffice-file/",
+            "assessment-file", obj.id,
+        )
 
     @action(detail=True, methods=["get"], url_path="edit-config")
     def edit_config(self, request, pk=None, client_pk=None):
@@ -779,8 +792,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         key = hashlib.md5(
             f"{obj.id}-{obj.version}-{obj.updated_at.timestamp()}".encode()
         ).hexdigest()
-        callback_url = (f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}"
-                        f"/api/clients/{obj.client_id}/assessments/{obj.id}/onlyoffice-callback/")
+        callback_url = sign_doc_url(
+            f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}"
+            f"/api/clients/{obj.client_id}/assessments/{obj.id}/onlyoffice-callback/",
+            "assessment-callback", obj.id,
+        )
 
         config = {
             "document": {
@@ -831,18 +847,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
 
         import hashlib, uuid as uuid_lib, requests
 
-        # ConvertService fetches `url` itself with no auth headers of its own (unlike the
-        # editor, which signs document.url requests) — so the token has to travel as a
-        # query param that onlyoffice_file accepts as a fallback to the Authorization header.
-        file_token = ""
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            file_token = jwt.encode({"aid": str(obj.id)}, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+        # ConvertService fetches `url` itself; the file-bound `doc` token in the URL is
+        # what onlyoffice_file checks.
         source_url = self._doc_server_file_url(obj)
         if not source_url:
             return Response({"detail": "File is unavailable."}, status=status.HTTP_400_BAD_REQUEST)
-        if file_token:
-            source_url += f"?token={file_token}"
 
         convert_key = hashlib.md5(f"convert-{obj.id}-{uuid_lib.uuid4()}".encode()).hexdigest()
         payload = {
@@ -901,20 +910,10 @@ class AssessmentViewSet(viewsets.ModelViewSet):
             permission_classes=[AllowAny], authentication_classes=[])
     def onlyoffice_file(self, request, pk=None, client_pk=None):
         """GET .../onlyoffice-file/ — serves the raw file to the OnlyOffice Document
-        Server. Not user-authenticated — verified via a JWT instead, same as
-        onlyoffice_callback below. Editor opens sign this request themselves (Authorization
-        header); the conversion API (convert_to_pdf) does not, so it passes the token as
-        a ?token= query param on the URL it hands to ConvertService instead."""
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            token = (request.headers.get("Authorization", "").removeprefix("Bearer ")
-                      or request.query_params.get("token", ""))
-            if not token:
-                return Response({"detail": "Missing token."}, status=status.HTTP_403_FORBIDDEN)
-            try:
-                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
-            except jwt.InvalidTokenError:
-                return Response({"detail": "Invalid token."}, status=status.HTTP_403_FORBIDDEN)
+        Server (editor and ConvertService). Not user-authenticated: requires the `doc`
+        token we put in the URL, valid only for this file."""
+        if not doc_token_ok(request, "assessment-file", pk):
+            return Response({"detail": "Invalid or missing document token."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             obj = Assessment.objects.get(pk=pk, client_id=client_pk)
@@ -932,19 +931,14 @@ class AssessmentViewSet(viewsets.ModelViewSet):
             permission_classes=[AllowAny], authentication_classes=[])
     def onlyoffice_callback(self, request, pk=None, client_pk=None):
         """POST from the OnlyOffice Document Server when a document is saved.
-        Not user-authenticated — the JWT token OnlyOffice signs the payload with is
-        verified instead, same as apps.library.views.onlyoffice_callback."""
-        body = request.data
-
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            token = body.get("token") or request.headers.get("Authorization", "").removeprefix("Bearer ")
-            if not token:
-                return Response({"error": 1})
-            try:
-                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
-            except jwt.InvalidTokenError:
-                return Response({"error": 1})
+        Not user-authenticated. Requires the file-bound `doc` token from the callback URL
+        AND a body signed by the doc server; only the signed body's values are used —
+        same as apps.library.views.onlyoffice_callback."""
+        if not doc_token_ok(request, "assessment-callback", pk):
+            return Response({"error": 1})
+        body = signed_callback_body(request)
+        if body is None:
+            return Response({"error": 1})
 
         try:
             obj = Assessment.objects.get(pk=pk, client_id=client_pk)
@@ -953,13 +947,9 @@ class AssessmentViewSet(viewsets.ModelViewSet):
 
         # status 2 = ready for saving (editor closed), 6 = force-save while still open
         if body.get("status") in (2, 6):
-            download_url = body.get("url")
+            download_url = internal_download_url(body.get("url"))
             if download_url:
                 import requests
-                if download_url.startswith(dj_settings.ONLYOFFICE_SERVER_URL):
-                    download_url = download_url.replace(
-                        dj_settings.ONLYOFFICE_SERVER_URL, dj_settings.ONLYOFFICE_INTERNAL_URL, 1
-                    )
                 resp = requests.get(download_url, timeout=30)
                 if resp.status_code == 200:
                     from django.core.files.base import ContentFile

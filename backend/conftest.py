@@ -1,10 +1,51 @@
 """
 pytest-django conftest — factories and shared fixtures for all tests.
 """
+import threading
+
 import pytest
 from django.utils import timezone
 from datetime import timedelta
 import uuid
+
+
+def pytest_configure(config):
+    # Throttle counters must not live in the dev Redis: shared with the running app and
+    # with earlier test runs, they made login/rate-limited tests fail with random 429s.
+    # (Not cache.clear() on Redis — that would also wipe the dev Celery queue.)
+    from django.conf import settings
+    settings.CACHES = {"default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"}}
+
+
+@pytest.fixture(autouse=True)
+def _isolate_side_effects(monkeypatch):
+    """Keep async side effects inside the test that caused them.
+
+    * Celery `.delay()` runs inline (eager) instead of going to the dev worker, which
+      reads the dev DB — so emails land in `mail.outbox` and tasks see the test's rows.
+    * Background threads started by app code (activities' `_fire`, portal/contract
+      notices) run synchronously: a real thread opens its own DB connection outside the
+      test transaction, can't see the test's rows, and its ErrorLog writes leak into
+      later tests.
+    * Fresh cache per test, so throttle counts don't carry over between tests.
+    """
+    from django.core.cache import cache
+    from config.celery import app as celery_app
+
+    cache.clear()
+    monkeypatch.setattr(celery_app.conf, "task_always_eager", True)
+    monkeypatch.setattr(celery_app.conf, "task_eager_propagates", False)
+
+    real_start = threading.Thread.start
+
+    def start(self):
+        target = getattr(self, "_target", None)
+        if (getattr(target, "__module__", "") or "").startswith(("tasks.", "apps.")):
+            self.run()
+        else:
+            real_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", start)
 
 @pytest.fixture
 def workspace(db):

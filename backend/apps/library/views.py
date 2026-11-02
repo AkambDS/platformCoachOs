@@ -12,6 +12,9 @@ from django.shortcuts import get_object_or_404
 from .models import KnowledgeFolder, KnowledgeItem
 from .serializers import FolderSerializer, KnowledgeItemSerializer
 from apps.accounts.permissions import IsAssistantOrAbove, require_tab
+from apps.accounts.onlyoffice_auth import (
+    sign_doc_url, doc_token_ok, signed_callback_body, internal_download_url,
+)
 
 FILE_SIZE_LIMIT = 100 * 1024 * 1024  # 100 MB
 
@@ -40,11 +43,23 @@ def _doc_server_file_url(item):
     `Authorization: Bearer <jwt>` header to every outbound request it makes — including
     the document download — and MinIO rejects a request carrying both that header AND
     a presigned query-string signature with "multiple authentication types". Routing
-    through our backend means there's exactly one auth mechanism on that request (the
-    JWT we already verify), and the backend fetches the S3 object itself, server-side."""
+    through our backend means there's exactly one auth mechanism on that request, and the
+    backend fetches the S3 object itself, server-side. The URL carries a `doc` token bound
+    to this one item (apps.accounts.onlyoffice_auth)."""
     if not item.s3_key:
         return None
-    return f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-file/"
+    return sign_doc_url(
+        f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-file/",
+        "library-file", item.id,
+    )
+
+
+def _doc_server_callback_url(item):
+    """Save-callback URL for this item, with its own item-bound `doc` token."""
+    return sign_doc_url(
+        f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-callback/",
+        "library-callback", item.id,
+    )
 
 
 def _detect_ctype(mime: str, filename: str) -> str:
@@ -234,18 +249,11 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
 
         import requests
 
-        # ConvertService fetches `url` itself with no auth headers of its own (unlike the
-        # editor, which signs document.url requests) — token travels as a query param
-        # that onlyoffice_file accepts as a fallback to the Authorization header.
-        file_token = ""
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            file_token = jwt.encode({"iid": str(item.id)}, dj_settings.ONLYOFFICE_JWT_SECRET, algorithm="HS256")
+        # ConvertService fetches `url` itself; the item-bound `doc` token in the URL is
+        # what onlyoffice_file checks.
         source_url = _doc_server_file_url(item)
         if not source_url:
             return Response({"detail": "File is unavailable."}, status=status.HTTP_400_BAD_REQUEST)
-        if file_token:
-            source_url += f"?token={file_token}"
 
         convert_key = hashlib.md5(f"convert-{item.id}-{uuid_lib.uuid4()}".encode()).hexdigest()
         payload = {
@@ -318,20 +326,10 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             permission_classes=[AllowAny], authentication_classes=[])
     def onlyoffice_file(self, request, pk=None):
         """GET /api/library/items/{id}/onlyoffice-file/ — serves the raw file to the
-        OnlyOffice Document Server. Editor opens sign this request themselves
-        (Authorization header); the conversion API (convert_to_pdf) does not, so it
-        passes the token as a ?token= query param on the URL it hands to ConvertService
-        instead — same pattern as apps.clients.views.AssessmentViewSet."""
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            token = (request.headers.get("Authorization", "").removeprefix("Bearer ")
-                      or request.query_params.get("token", ""))
-            if not token:
-                return Response({"detail": "Missing token."}, status=status.HTTP_403_FORBIDDEN)
-            try:
-                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
-            except jwt.InvalidTokenError:
-                return Response({"detail": "Invalid token."}, status=status.HTTP_403_FORBIDDEN)
+        OnlyOffice Document Server (editor and ConvertService). Not user-authenticated:
+        requires the `doc` token we put in the URL, valid only for this item."""
+        if not doc_token_ok(request, "library-file", pk):
+            return Response({"detail": "Invalid or missing document token."}, status=status.HTTP_403_FORBIDDEN)
 
         try:
             item = KnowledgeItem.objects.get(pk=pk)
@@ -378,7 +376,7 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         key = hashlib.md5(
             f"{item.id}-{item.version}-{item.updated_at.timestamp()}".encode()
         ).hexdigest()
-        callback_url = f"{dj_settings.ONLYOFFICE_CALLBACK_BASE_URL}/api/library/items/{item.id}/onlyoffice-callback/"
+        callback_url = _doc_server_callback_url(item)
 
         config = {
             "document": {
@@ -406,19 +404,14 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             permission_classes=[AllowAny], authentication_classes=[])
     def onlyoffice_callback(self, request, pk=None):
         """POST from the OnlyOffice Document Server when a document is saved.
-        Not user-authenticated — the doc server calls this directly — so the
-        JWT token OnlyOffice signs the payload with is verified instead."""
-        body = request.data
-
-        if dj_settings.ONLYOFFICE_JWT_SECRET:
-            import jwt
-            token = body.get("token") or request.headers.get("Authorization", "").removeprefix("Bearer ")
-            if not token:
-                return Response({"error": 1})
-            try:
-                jwt.decode(token, dj_settings.ONLYOFFICE_JWT_SECRET, algorithms=["HS256"])
-            except jwt.InvalidTokenError:
-                return Response({"error": 1})
+        Not user-authenticated — the doc server calls this directly. Requires the
+        item-bound `doc` token from the callback URL AND a body signed by the doc server;
+        only the signed body's values are used."""
+        if not doc_token_ok(request, "library-callback", pk):
+            return Response({"error": 1})
+        body = signed_callback_body(request)
+        if body is None:
+            return Response({"error": 1})
 
         try:
             item = KnowledgeItem.objects.get(pk=pk)
@@ -427,15 +420,11 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
 
         # status 2 = ready for saving (editor closed), 6 = force-save while still open
         if body.get("status") in (2, 6):
-            download_url = body.get("url")
+            # Built from the browser-facing ONLYOFFICE_SERVER_URL — mapped to the internal
+            # address; anything not on our own OnlyOffice server is refused.
+            download_url = internal_download_url(body.get("url"))
             if download_url:
                 import requests
-                # download_url is built from the browser-facing ONLYOFFICE_SERVER_URL —
-                # not reachable from inside our own container. Swap in the internal address.
-                if download_url.startswith(dj_settings.ONLYOFFICE_SERVER_URL):
-                    download_url = download_url.replace(
-                        dj_settings.ONLYOFFICE_SERVER_URL, dj_settings.ONLYOFFICE_INTERNAL_URL, 1
-                    )
                 resp = requests.get(download_url, timeout=30)
                 if resp.status_code == 200:
                     from django.core.files.base import ContentFile

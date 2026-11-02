@@ -170,31 +170,44 @@ def email_template_attachments(request):
     return Response({"attachments": attachments})
 
 
+def workspace_logo_url(workspace):
+    """Public URL of a workspace's logo (served by serve_workspace_logo), or "" if none."""
+    from django.conf import settings as dj_settings
+    if not workspace or not workspace.logo_data:
+        return ""
+    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
+    if not backend_base:
+        allowed = getattr(dj_settings, "ALLOWED_HOSTS", [])
+        host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
+        backend_base = f"https://{host}" if host else "http://localhost:8000"
+    return f"{backend_base}/api/settings/logo/{workspace.id}/"
+
+
+_NEUTRAL_BRANDING = {"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"}
+
+
 @api_view(["GET"])
 @permission_classes([AllowAny])
 def public_branding(request):
     """
-    GET /api/settings/public-branding/ — no auth required.
-    Returns the first workspace's name and logo URL for the login/register pages.
+    GET /api/settings/public-branding/?workspace=<slug> — no auth required.
+    Branding (name, logo, colour) for pre-login pages. Returns the requested workspace's
+    branding (e.g. the client-portal login reached from a portal invite link), and neutral
+    CoachOS branding when no workspace is named — never some other workspace's (this used
+    to return the oldest workspace's logo/name to everyone).
     """
     try:
-        workspace = Workspace.objects.filter(is_active=True).order_by("created_at").first()
+        slug = (request.query_params.get("workspace") or "").strip()
+        workspace = Workspace.objects.filter(slug=slug, is_active=True).first() if slug else None
         if not workspace:
-            return Response({"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"})
-        from django.conf import settings as dj_settings
-        backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/")
-        if not backend_base:
-            allowed = getattr(dj_settings, "ALLOWED_HOSTS", [])
-            host = next((h for h in allowed if "onrender.com" in h and not h.startswith(".")), None)
-            backend_base = f"https://{host}" if host else "http://localhost:8000"
-        logo_url = f"{backend_base}/api/settings/logo/{workspace.id}/" if workspace.logo_data else ""
+            return Response(_NEUTRAL_BRANDING)
         return Response({
             "name": workspace.name,
-            "logo_url": logo_url,
+            "logo_url": workspace_logo_url(workspace),
             "primary_colour": workspace.primary_colour or "#1B3A6B",
         })
     except Exception:
-        return Response({"name": "CoachOS", "logo_url": "", "primary_colour": "#1B3A6B"})
+        return Response(_NEUTRAL_BRANDING)
 
 
 _BUILTIN_COLORS = {

@@ -1780,7 +1780,8 @@ def send_portal_invite_email(client_id: str):
             return
 
         frontend_url = getattr(settings, "FRONTEND_URL", "").rstrip("/")
-        portal_url   = f"{frontend_url}/client-portal"
+        # ?ws= lets the portal login screen show THIS workspace's branding
+        portal_url   = f"{frontend_url}/client-portal?ws={workspace.slug}"
         coach_name   = client.coach.full_name if client.coach else workspace.name
         owner_email, owner_name = _owner_info(workspace)
 
