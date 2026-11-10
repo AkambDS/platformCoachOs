@@ -1,4 +1,5 @@
-FROM --platform=linux/amd64 python:3.12-slim
+# Exact Python version — matches requirements.lock (a floating tag can change on rebuild)
+FROM --platform=linux/amd64 python:3.12.14-slim
 
 # System deps for WeasyPrint (PDF), psycopg2, and general C libs
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -20,9 +21,10 @@ WORKDIR /app
 # Upgrade pip + install build tools first
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install Python dependencies — requirements.lock pins every package (incl. sub-deps)
+# to the tested versions, so a rebuild never pulls a surprise new release.
+COPY requirements.txt requirements.lock ./
+RUN pip install --no-cache-dir -r requirements.txt -c requirements.lock
 
 COPY . .
 

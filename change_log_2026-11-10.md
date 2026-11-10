@@ -7,6 +7,7 @@ commit prod was rebuilt with on 2026-11-02.
 |---|---|---|
 | **A** | Prod 500 when saving a session whose end time is before its start time | uncommitted (new) |
 | **B** | Frontend half of the 2026-10-18 work, **never committed**, so **not live in prod** | uncommitted |
+| **C** | 🔴 Prod: every background job fails after today's rebuild (Celery 5.7 vs redis 5) | uncommitted (new) |
 
 No migrations. A backend-only deploy is **not** enough: Part B is frontend, so use the full
 `make deploy`.
@@ -86,6 +87,59 @@ this deploy, or accept that only the Superadmin can reach it.
 Docs also uncommitted: `CLAUDE.md`, `PHASE2.md`, `change_log_2026-10-18.md`, the deleted
 `change_log_2026-10-08_part2.md` (merged into 2026-10-18), and `ops/` (the pre- and
 post-deploy check scripts from 2026-10-18).
+
+---
+
+# Part C — 🔴 Background jobs broken by an unpinned Celery upgrade
+
+## What happened in prod
+- **Error (2026-11-10 21:45 UTC, `/api/portal/request-code/`):** `kombu.exceptions.VersionMismatch: Redis transport
+  requires redis-py versions 6.1.0 or later. You have 5.3.1`.
+- **Cause:**
+  - `requirements.txt` allowed `celery>=5.3,<6.0`, and kombu came in unpinned through
+    Celery.
+  - **Celery 5.7.0 and kombu 5.7.0 were released on 2026-11-03** and require redis-py ≥ 6.4.
+  - `redis` is pinned `<6.0`.
+  - The 2026-11-02 rebuild got 5.6 and was fine. Today's `make deploy` rebuilt the image
+    and pulled 5.7.
+- **Impact:** every `.delay()` (about 29 call sites) raises as soon as it tries to queue.
+  The Celery worker and beat run the same image, so they can't use the queue either.
+  - **Client portal login codes** (`send_portal_login_code_email.delay`) fail, so clients
+    can't log in to the portal.
+  - Google Calendar sync, reminders, scheduled invoices, stall alerts and invite retries
+    are also affected.
+  - Not affected: emails sent from a background thread rather than Celery, such as the
+    portal invite and the session confirmation. That's why Kendra's invite at 19:30 UTC
+    shows `sent`.
+
+## Fix
+- **`backend/requirements.txt`:** `celery>=5.3,<5.7` plus an explicit `kombu>=5.3,<5.7`.
+  A fresh resolve in a clean `python:3.12-slim` gives **celery 5.6.3, kombu 5.6.2,
+  redis 5.3.1**, the same versions the local stack runs.
+- **Later, a separate change:** upgrading to redis-py 6.4+ and Celery 5.7 is a separate,
+  tested change.
+- **Every version is now locked**, so this can't happen again:
+  - **`backend/requirements.lock`** (new) holds the exact version of all 116 packages,
+    including sub-dependencies. It was taken with `pip freeze` from the local stack the
+    test suite runs on.
+  - **`backend/Dockerfile`** installs `-r requirements.txt -c requirements.lock` and pins
+    the base image to `python:3.12.14-slim`, so a rebuild installs exactly the same set.
+  - **Verified:** a fresh `docker build` gives celery 5.6.3, kombu 5.6.2, redis 5.3.1 and
+    Django 5.1.15. `pip check` is clean, and the kombu Redis transport loads.
+  - **To upgrade a package later:**
+    1. Change `requirements.txt`.
+    2. Rebuild locally and run the tests.
+    3. Regenerate the lock (the command is at the top of the file).
+
+## Verify after deploy
+```bash
+docker compose -f docker-compose.prod.yml exec -T backend pip list 2>/dev/null | grep -iE "^(celery|kombu|redis) "
+#   expect: celery 5.6.3 / kombu 5.6.2 / redis 5.3.1
+docker compose -f docker-compose.prod.yml logs --since 10m celery 2>&1 | grep -iE "ready|VersionMismatch|error"
+#   expect: "celery@… ready." and no VersionMismatch
+```
+Then request a portal login code from `/client-portal`. The email should arrive, and the
+backend log should show a `200` for `/api/portal/request-code/`.
 
 ---
 

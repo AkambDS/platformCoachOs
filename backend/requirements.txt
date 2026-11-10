@@ -18,7 +18,10 @@ psycopg2-binary>=2.9,<3.0
 
 # ── Cache & Queue ─────────────────────────────────────────────────────────
 redis>=5.0,<6.0
-celery>=5.3,<6.0
+# celery/kombu 5.7 (2026-11-03) require redis-py >= 6.4 — every .delay() fails with
+# VersionMismatch against redis<6. Stay on 5.6 until redis is upgraded and tested.
+celery>=5.3,<5.7
+kombu>=5.3,<5.7
 django-celery-beat>=2.6,<3.0
 django-celery-results>=2.5,<3.0
 
