@@ -39,7 +39,7 @@ interface Invoice { id: string; number: string; status: string; total: string; a
 // badge silently never rendered (fell back to undefined → always "file"/nothing to click).
 interface Material { id: string; title: string; content_type: string; file_name?: string; presigned_url?: string; inline_url?: string; url?: string; video_url?: string }
 interface Note { id: string; text: string; note_type: string; topic?: string | null; session_date?: string | null; created_by_name: string | null; client_owned: boolean; created_at: string; updated_at: string }
-interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean }
+interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean; workspace_slug?: string; workspace_logo_url?: string }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(iso: string) {
@@ -1629,7 +1629,18 @@ export default function ClientPortal() {
   const [showIdleWarning, setShowIdleWarning] = useState(false)
   const { show: showToast, el: toastEl } = useToast()
 
-  useEffect(() => { axios.get(`${BASE}/api/settings/public-branding/`).then(r => setBranding(r.data)).catch(() => {}) }, [])
+  // Login-screen branding: only ever the client's OWN workspace — named by the invite link
+  // (?ws=<slug>, remembered for later visits) — otherwise neutral CoachOS. Never another
+  // workspace's logo. After login the sidebar uses /api/portal/me's workspace logo instead.
+  useEffect(() => {
+    let ws = new URLSearchParams(window.location.search).get('ws') || ''
+    try {
+      if (ws) localStorage.setItem('portal_ws', ws)
+      else ws = localStorage.getItem('portal_ws') || ''
+    } catch { /* storage unavailable — branding just stays neutral */ }
+    const qs = ws ? `?workspace=${encodeURIComponent(ws)}` : ''
+    axios.get(`${BASE}/api/settings/public-branding/${qs}`).then(r => setBranding(r.data)).catch(() => {})
+  }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('portal_token')
@@ -1673,6 +1684,8 @@ export default function ClientPortal() {
         api.get('/api/portal/notes/'),
       ])
       setMe(meR.data)
+      // Remember this client's workspace so the next login screen shows ITS branding.
+      try { if (meR.data?.workspace_slug) localStorage.setItem('portal_ws', meR.data.workspace_slug) } catch { /* ignore */ }
       setGoals(goalsR.data.goals || [])
       setCommitments(goalsR.data.commitments || [])
       setActivities(actR.data || [])
@@ -1718,7 +1731,7 @@ export default function ClientPortal() {
 
   if (!session) return <LoginScreen branding={branding} onLogin={d => setSession(d)} />
 
-  const wsName = session.workspace_name || branding?.name || 'CoachOS'
+  const wsName = session.workspace_name || me?.workspace_name || 'CoachOS'
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--paper)', display: 'flex' }}>
@@ -1735,7 +1748,7 @@ export default function ClientPortal() {
       {/* Left nav — mirrors the coach app's Sidebar (same CSS classes/visual style) */}
       <PortalSidebar
         activeTab={activeTab} setActiveTab={setActiveTab}
-        wsName={wsName} logoUrl={branding?.logo_url || ''}
+        wsName={wsName} logoUrl={me?.workspace_logo_url || ''}
         clientName={session.client_name} onLogout={logout}
       />
 

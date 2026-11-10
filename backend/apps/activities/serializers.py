@@ -127,6 +127,16 @@ class ActivitySerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerial
                             "client_rsvp_status", "client_rsvp_synced_at",
                             "requested_start_at"]
 
+    def validate(self, attrs):
+        # Postgres rejects tstzrange(start_at, end_at) with end before start (the
+        # no-overlap exclusion constraint) as a DataError → raw 500. Catch it here as a
+        # clear 400. Equal start/end stays allowed (zero-duration log entries).
+        start = attrs.get("start_at", getattr(self.instance, "start_at", None))
+        end   = attrs.get("end_at",   getattr(self.instance, "end_at", None))
+        if start and end and end < start:
+            raise serializers.ValidationError({"end_at": "End time must be after the start time."})
+        return super().validate(attrs)
+
     def create(self, validated_data):
         request = self.context["request"]
         send_confirmation = validated_data.pop("send_confirmation", True)

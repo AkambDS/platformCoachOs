@@ -1,9 +1,45 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { authApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
 
 interface PublicBranding { name: string; logo_url: string; primary_colour: string }
+
+/** Small help popover: opens on hover or click/tap, closes on outside click or Esc.
+ *  Floats over the page (position: absolute) so it never pushes the form down. */
+function HelpTip({ label, trigger, align = 'left', children }: {
+  label: string; trigger?: React.ReactNode; align?: 'left' | 'right'; children: React.ReactNode
+}) {
+  // Hover and click are tracked separately: a click "pins" it open, so hovering and
+  // then clicking (or a tap, which also fires mouseenter) doesn't toggle it shut.
+  const [hover, setHover]   = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const open  = hover || pinned
+  const close = () => { setHover(false); setPinned(false) }
+  const ref = useRef<HTMLSpanElement>(null)
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent) => { if (!ref.current?.contains(e.target as Node)) close() }
+    const onKey  = (e: KeyboardEvent) => { if (e.key === 'Escape') close() }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDown); document.removeEventListener('keydown', onKey) }
+  }, [open])
+  return (
+    <span ref={ref} className="help-tip" onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <button
+        type="button"
+        className={trigger ? 'help-tip-link' : 'help-tip-icon'}
+        aria-label={label}
+        aria-expanded={open}
+        onClick={() => setPinned(p => !p)}
+      >
+        {trigger ?? '?'}
+      </button>
+      {open && <span role="tooltip" className={`help-tip-pop help-tip-pop--${align}`}>{children}</span>}
+    </span>
+  )
+}
 
 export default function Register() {
   const [form, setForm] = useState({ workspace_name: '', full_name: '', email: '', password: '' })
@@ -11,9 +47,11 @@ export default function Register() {
   // typed their first character, which locked the field read-only after exactly one
   // keystroke (see the readOnly logic below).
   const [prefilledFromInvite, setPrefilledFromInvite] = useState(false)
+  const [nameFromInvite, setNameFromInvite] = useState(false)
   const [error, setError]     = useState('')
   const [loading, setLoading] = useState(false)
   const [pending, setPending] = useState(false)
+  const [tokenInvalid, setTokenInvalid] = useState(false)
   const [branding, setBranding] = useState<PublicBranding | null>(null)
   const login    = useAuthStore((s) => s.login)
   const navigate = useNavigate()
@@ -38,12 +76,21 @@ export default function Register() {
           email: recipient_email || f.email,
         }))
         if (recipient_email) setPrefilledFromInvite(true)
+        if (recipient_name) setNameFromInvite(true)
       })
-      .catch(() => setError('This invite link is invalid or has expired. Contact whoever sent it for a new one.'))
+      .catch(() => setTokenInvalid(true))
   }, [registrationToken])
 
   const update = (k: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm({ ...form, [k]: e.target.value })
+
+  const hintStyle: React.CSSProperties = { display: 'block', marginTop: 6, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }
+  const prefilledTag = (
+    <span style={{ marginLeft: 8, fontSize: 11, color: '#2d6a4f', fontWeight: 500, textTransform: 'none', letterSpacing: 0 }}>
+      🔒 from your invite
+    </span>
+  )
+  const lockedInputStyle: React.CSSProperties = { background: '#f5f5f5', color: 'var(--muted)', cursor: 'not-allowed' }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -145,56 +192,93 @@ export default function Register() {
                 Go to Login
               </a>
             </div>
+          ) : tokenInvalid ? (
+            /* ── Invalid / expired invite link ── */
+            <div style={{ padding: '8px 0' }}>
+              <div className="auth-form-title">Invite link expired</div>
+              <p className="auth-form-sub" style={{ marginBottom: 24 }}>
+                This workspace invite link is no longer valid — it may have expired or already been used.
+                Contact whoever sent it and ask for a new link.
+              </p>
+              <a href="/login" className="auth-btn" style={{ display: 'block', textAlign: 'center', textDecoration: 'none', boxSizing: 'border-box' }}>
+                Back to sign in
+              </a>
+            </div>
           ) : (
             /* ── Registration form ── */
             <>
-              <div style={{
-                display: 'inline-flex', alignItems: 'center', gap: 6,
-                padding: '4px 12px', borderRadius: 20,
-                background: '#fff3cd', border: '1px solid #d9a800',
-                fontSize: 11, fontWeight: 700, color: '#7a5c00',
-                textTransform: 'uppercase', letterSpacing: '.08em',
-                marginBottom: 16,
-              }}>
-                Business Owner Setup
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
+                <div style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '4px 12px', borderRadius: 20,
+                  background: '#fff3cd', border: '1px solid #d9a800',
+                  fontSize: 11, fontWeight: 700, color: '#7a5c00',
+                  textTransform: 'uppercase', letterSpacing: '.08em',
+                }}>
+                  Business Owner Setup
+                </div>
+                <HelpTip label="How workspace setup works" align="right" trigger={<><span className="help-tip-icon" aria-hidden>?</span>How it works</>}>
+                  <strong className="help-tip-title">Setting up your workspace</strong>
+                  <ol>
+                    <li><strong>Workspace name</strong> — your company or practice name.</li>
+                    {prefilledFromInvite
+                      ? <li><strong>Your name and email</strong> are pre-filled from your invite.</li>
+                      : <li>Enter <strong>your full name</strong> and <strong>email</strong>.</li>}
+                    <li>Choose a <strong>password</strong> and click <em>Create Workspace</em>.</li>
+                  </ol>
+                  You'll be the workspace's <strong>Business Owner</strong>. Coaches, assistants and
+                  clients are added afterwards and belong only to your workspace.
+                  {(prefilledFromInvite || nameFromInvite) && (
+                    <ul className="help-tip-note">
+                      <li>🔒 Name and email are locked to your invite, so only the invited person can create this workspace.</li>
+                    </ul>
+                  )}
+                </HelpTip>
               </div>
 
               <div className="auth-form-title">Create workspace</div>
-              <p className="auth-form-sub">Start your free coaching workspace today</p>
+              <p className="auth-form-sub">Set up your company's workspace on the CoachOS platform</p>
 
               {error && <div className="auth-error">{error}</div>}
 
               <form onSubmit={handleSubmit}>
-                <label className="auth-label">
-                  <span className="auth-label-text">Workspace Name</span>
+                <label className="auth-label" htmlFor="reg-workspace-name">
+                  <span className="auth-label-text">
+                    Workspace Name
+                    <HelpTip label="About the workspace name">
+                      Your company or practice name — e.g. <em>Rass Consulting</em> or <em>Bright Path LLC</em>.
+                      It must be unique on CoachOS, appears on your invoices, client emails and client portal,
+                      and can only be changed later by contacting CoachOS support.
+                    </HelpTip>
+                  </span>
                   <input
+                    id="reg-workspace-name"
                     className="auth-input"
                     type="text"
                     value={form.workspace_name}
                     onChange={update('workspace_name')}
-                    placeholder="e.g. Sarah Chen Coaching"
+                    placeholder="e.g. Rass Consulting"
                     required
                   />
+                  <span style={hintStyle}>Shown on your invoices, client emails and client portal.</span>
                 </label>
                 <label className="auth-label">
-                  <span className="auth-label-text">Your Full Name</span>
+                  <span className="auth-label-text">Your Full Name{nameFromInvite && prefilledTag}</span>
                   <input
                     className="auth-input"
                     type="text"
                     value={form.full_name}
                     onChange={update('full_name')}
                     placeholder="Sarah Chen"
+                    readOnly={nameFromInvite}
+                    style={nameFromInvite ? lockedInputStyle : undefined}
                     required
                   />
                 </label>
                 <label className="auth-label">
                   <span className="auth-label-text">
                     Email
-                    {prefilledFromInvite && (
-                      <span style={{ marginLeft: 8, fontSize: 11, color: '#2d6a4f', fontWeight: 400 }}>
-                        (pre-filled from invite)
-                      </span>
-                    )}
+                    {prefilledFromInvite && prefilledTag}
                   </span>
                   <input
                     className="auth-input"
@@ -203,20 +287,29 @@ export default function Register() {
                     onChange={update('email')}
                     placeholder="sarah@example.com"
                     readOnly={prefilledFromInvite}
-                    style={prefilledFromInvite ? { background: '#f5f5f5', color: 'var(--muted)', cursor: 'not-allowed' } : undefined}
+                    style={prefilledFromInvite ? lockedInputStyle : undefined}
                     required
                   />
                 </label>
-                <label className="auth-label">
-                  <span className="auth-label-text">Password (min 8 chars)</span>
+                <label className="auth-label" htmlFor="reg-password">
+                  <span className="auth-label-text">
+                    Password
+                    <HelpTip label="About your password">
+                      At least 8 characters. You'll sign in with your email and this password —
+                      as the Business Owner, this account controls billing, team and all workspace data.
+                    </HelpTip>
+                  </span>
                   <input
+                    id="reg-password"
                     className="auth-input"
                     type="password"
                     value={form.password}
                     onChange={update('password')}
                     placeholder="••••••••"
+                    minLength={8}
                     required
                   />
+                  <span style={hintStyle}>At least 8 characters.</span>
                 </label>
                 <button type="submit" className="auth-btn" disabled={loading}>
                   {loading ? 'Creating workspace…' : 'Create Workspace'}

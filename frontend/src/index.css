@@ -789,3 +789,48 @@ body {
   background: var(--gold-light);
   transition: width .25s ease;
 }
+
+/* ── Help tooltip (HelpTip in pages/auth/Register.tsx) — floats, never shifts layout ── */
+.help-tip { position: relative; display: inline-flex; align-items: center; vertical-align: middle; }
+.auth-label-text .help-tip { margin-left: 6px; }
+.help-tip-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--white);
+  color: var(--muted); font: 600 10px/1 'DM Sans', sans-serif;
+  letter-spacing: 0; text-transform: none; cursor: help; padding: 0;
+  transition: border-color .15s, color .15s;
+}
+.help-tip-link {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: none; border: none; padding: 4px 0; cursor: pointer;
+  font: 500 12.5px 'DM Sans', sans-serif; color: var(--muted);
+  transition: color .15s;
+}
+.help-tip-link .help-tip-icon { cursor: inherit; }
+.help-tip-icon:hover, .help-tip-link:hover, .help-tip-link:hover .help-tip-icon,
+.help-tip-icon:focus-visible, .help-tip-link:focus-visible { color: var(--ink); border-color: var(--gold); outline: none; }
+.help-tip-pop {
+  position: absolute; top: calc(100% + 8px); z-index: 50;
+  width: max-content; max-width: min(320px, calc(100vw - 48px));
+  padding: 14px 16px; border-radius: 6px;
+  background: #0d1829; color: rgba(248,245,240,.88);
+  font: 400 13px/1.55 'DM Sans', sans-serif;
+  letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+  box-shadow: 0 10px 30px rgba(13,24,41,.22);
+  animation: help-tip-in .12s ease-out;
+}
+.help-tip-pop--left  { left: -8px; }
+.help-tip-pop--right { right: 0; }
+.help-tip-pop strong { color: #fff; font-weight: 600; }
+.help-tip-pop em { color: var(--gold-light, #d9b96a); }
+.help-tip-pop ol { margin: 6px 0 8px; padding-left: 18px; }
+.help-tip-pop li { margin-bottom: 2px; }
+.help-tip-title { display: block; margin-bottom: 2px; }
+.help-tip-pop .help-tip-note { list-style: none; margin: 10px 0 0; padding: 8px 0 0; border-top: 1px solid rgba(248,245,240,.14); font-size: 12px; color: rgba(248,245,240,.75); }
+@keyframes help-tip-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+/* Inline tips anchor to their full-width container, not the tiny icon, so the
+   popover can't overflow the screen edge on narrow phones. */
+.auth-label-text { position: relative; }
+.auth-label-text .help-tip { position: static; }
+.auth-label-text .help-tip-pop { left: 0; right: auto; max-width: min(340px, 100%); }

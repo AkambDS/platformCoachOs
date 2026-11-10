@@ -20,11 +20,13 @@ export default function Clients() {
   // Creating clients only needs the "Clients" edit permission (matches the backend's
   // require_tab("clients", "edit") check on POST /api/clients/) — so a coach/assistant
   // the owner has granted Edit for via Team > Permissions can add clients too, not just
-  // the owner. CSV import stays owner/coach-only (backend gates it with IsCoachOrAbove
-  // regardless of the edit flag), and deleting a client stays owner-only (cascades
-  // invoices/deals/files, backend hard-requires IsBusinessOwnerOrSuperuser for it).
+  // the owner. CSV import creates clients too, so it needs the same Clients edit right
+  // and is additionally owner/coach-only (backend: IsCoachOrAbove + require_tab("clients",
+  // "edit")). Deleting a client stays owner-only (cascades invoices/deals/files, backend
+  // hard-requires IsBusinessOwnerOrSuperuser for it).
   const canAddClients = isOwner || !!user?.tab_permissions?.clients?.edit
   const isCoachOrAbove = isOwner || user?.role === 'coach'
+  const canImportClients = isCoachOrAbove && canAddClients
   const queryClient = useQueryClient()
   const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
@@ -319,7 +321,7 @@ export default function Clients() {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn btn-ghost" onClick={handleExport}>↓ Export CSV</button>
-            {isCoachOrAbove && (
+            {canImportClients && (
               <div style={{ position: 'relative', display: 'flex' }}>
                 <button className="btn btn-ghost" onClick={() => fileInputRef.current?.click()} disabled={importing}>
                   {importing ? 'Importing…' : '↑ Import CSV'}

@@ -350,11 +350,11 @@ access (§8), since this environment doesn't have that access.
 
 ---
 
-## 10. Phase 2 enhancements (planned)
+## 10. Phase 2 — multi-tenant hardening
 
-Full plan in **`PHASE2.md`** — read it before touching tenant isolation, DB
-roles, deploys, or onboarding a new workspace. Headline: Postgres RLS is
-currently inert (master DB login + workspace never set for cookie-auth coach
-requests + transaction-local setting expires immediately), so isolation is
-app-code-only today. Must-do before workspace #2: automated off-host backups,
-separate DB roles, end-to-end RLS, staging + CI/CD + rollback, Zoom OAuth.
+See **`PHASE2.md`** before touching anything that reads or writes customer data:
+what's done (workspace-scoped serializer links, refused workspace-less login, owner-only
+portal access, CSV import permission, rate-limit fix), the remaining must-do list, the
+rules every change must follow, and `backend/test_tenant_isolation.py` (run it before
+every push). Isolation is enforced in the application layer; database-level RLS is not
+in use (the existing 12 policies are inert because the app's DB login owns the tables).

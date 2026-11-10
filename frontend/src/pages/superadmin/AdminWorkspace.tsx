@@ -50,6 +50,9 @@ export default function AdminWorkspace() {
   const [tab, setTab] = useState<Tab>('overview')
   const [editPlan, setEditPlan] = useState(false)
   const [planDraft, setPlanDraft] = useState('')
+  const [showDelete, setShowDelete]     = useState(false)
+  const [deleteConfirm, setDeleteConfirm] = useState('')
+  const [deleteError, setDeleteError]   = useState('')
 
   const { data: ws, isLoading } = useQuery({
     queryKey: ['admin', 'workspace', id],
@@ -102,6 +105,16 @@ export default function AdminWorkspace() {
       qc.invalidateQueries({ queryKey: ['admin', 'workspaces'] })
       setEditPlan(false)
     },
+  })
+
+  const deleteWs = useMutation({
+    mutationFn: () => adminApi.deleteWorkspace(id!, deleteConfirm.trim()),
+    onSuccess: () => {
+      qc.removeQueries({ queryKey: ['admin', 'workspace', id] })
+      qc.invalidateQueries({ queryKey: ['admin'] })
+      navigate('/admin#workspaces')
+    },
+    onError: (err: any) => setDeleteError(err?.response?.data?.detail || 'Failed to delete workspace.'),
   })
 
   if (isLoading) {
@@ -259,6 +272,28 @@ export default function AdminWorkspace() {
                     <span style={{ fontSize: 13, fontWeight: 500 }}>{value}</span>
                   </div>
                 ))}
+              </div>
+            </div>
+
+            {/* ── Danger zone ─────────────────────── */}
+            <div style={{ background: 'var(--white)', border: '1px solid #f0c9c4', padding: '20px 24px' }}>
+              <div style={{ fontSize: 11, color: '#c0392b', textTransform: 'uppercase', letterSpacing: '.08em', fontWeight: 600, marginBottom: 10 }}>Danger Zone</div>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+                <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.5, flex: '1 1 260px' }}>
+                  Permanently delete this workspace and all of its users, clients, invoices, sessions and library items.
+                  Its users' emails become free to register again. <strong style={{ color: 'var(--ink)' }}>This cannot be undone.</strong>
+                  {ws.delete_blocked_reason && (
+                    <div style={{ marginTop: 6, fontSize: 12, color: '#b8922e', fontWeight: 600 }}>⚠ {ws.delete_blocked_reason}</div>
+                  )}
+                </div>
+                <button
+                  className="btn btn-sm"
+                  style={{ fontSize: 12, background: ws.delete_blocked_reason ? '#e9e4de' : '#c0392b', color: ws.delete_blocked_reason ? 'var(--muted)' : '#fff', border: 'none' }}
+                  disabled={!!ws.delete_blocked_reason}
+                  onClick={() => { setDeleteConfirm(''); setDeleteError(''); setShowDelete(true) }}
+                >
+                  Delete Workspace
+                </button>
               </div>
             </div>
 
@@ -590,6 +625,47 @@ export default function AdminWorkspace() {
           </div>
         )}
       </div>
+
+      {showDelete && (
+        <div
+          role="dialog" aria-modal="true" aria-labelledby="delete-ws-title"
+          onClick={() => !deleteWs.isPending && setShowDelete(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(13,24,41,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: 'var(--white)', width: '100%', maxWidth: 460, padding: '24px 28px', borderRadius: 6, boxShadow: '0 20px 50px rgba(0,0,0,.25)' }}>
+            <div id="delete-ws-title" style={{ fontSize: 17, fontWeight: 600, marginBottom: 10 }}>Delete “{ws.name}” permanently?</div>
+            <div style={{ fontSize: 13, color: 'var(--muted)', lineHeight: 1.6, marginBottom: 14 }}>
+              This deletes the workspace and everything in it:
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18, color: 'var(--ink)' }}>
+                <li>{ws.stats?.clients ?? 0} clients, {ws.stats?.invoices ?? 0} invoices, {ws.stats?.activities ?? 0} sessions, {ws.stats?.deals ?? 0} deals</li>
+                <li>All users and their logins{ws.owner_email ? <> (incl. owner <strong>{ws.owner_email}</strong>)</> : null}</li>
+                <li>Library, notes, goals, email and audit logs</li>
+              </ul>
+            </div>
+            <label style={{ fontSize: 12, color: 'var(--muted)', display: 'block', marginBottom: 6 }}>
+              Type <strong style={{ color: 'var(--ink)', fontFamily: 'monospace' }}>{ws.slug}</strong> to confirm
+            </label>
+            <input
+              className="form-input" autoFocus value={deleteConfirm}
+              onChange={e => { setDeleteConfirm(e.target.value); setDeleteError('') }}
+              onKeyDown={e => { if (e.key === 'Escape' && !deleteWs.isPending) setShowDelete(false) }}
+              placeholder={ws.slug}
+            />
+            {deleteError && <div style={{ marginTop: 10, fontSize: 13, color: '#c0392b' }}>{deleteError}</div>}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 18 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => setShowDelete(false)} disabled={deleteWs.isPending}>Cancel</button>
+              <button
+                className="btn btn-sm"
+                style={{ background: '#c0392b', color: '#fff', border: 'none', opacity: deleteConfirm.trim() === ws.slug ? 1 : .5 }}
+                disabled={deleteConfirm.trim() !== ws.slug || deleteWs.isPending}
+                onClick={() => deleteWs.mutate()}
+              >
+                {deleteWs.isPending ? 'Deleting…' : 'Delete permanently'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AdminShell>
   )
 }

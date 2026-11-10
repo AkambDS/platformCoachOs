@@ -2715,12 +2715,15 @@ export default function ClientDetail() {
                 </>
               ) : (
                 <>
-                  <button className="btn btn-outline btn-sm" onClick={() => {
-                    if (client.portal_access) setShowRevokeConfirm(true)
-                    else setShowInviteConfirm(true)
-                  }}>
-                    {client.portal_access ? 'Revoke Portal' : 'Invite to Portal'}
-                  </button>
+                  {/* Portal access is granted/revoked by the workspace owner only (backend: IsBusinessOwner) */}
+                  {isOwner && (
+                    <button className="btn btn-outline btn-sm" onClick={() => {
+                      if (client.portal_access) setShowRevokeConfirm(true)
+                      else setShowInviteConfirm(true)
+                    }}>
+                      {client.portal_access ? 'Revoke Portal' : 'Invite to Portal'}
+                    </button>
+                  )}
                   <button className="btn btn-outline btn-sm" onClick={() => { setEditForm(client); setEditMode(true) }}>Edit</button>
                   {isOwner && (
                     <button

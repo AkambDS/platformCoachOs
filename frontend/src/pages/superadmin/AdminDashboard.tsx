@@ -4,6 +4,22 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { adminApi } from '../../api/client'
 import AdminShell from '../../components/layout/AdminShell'
 
+// Invite-email status → [label, pill class]. Keys are WorkspaceRegistrationToken.email_status
+// values: ours ("", "sent", "failed") plus Resend's last_event values.
+const INVITE_EMAIL_STATUS: Record<string, [string, string]> = {
+  '':                 ['Not tracked', 'pill-grey'],
+  failed:             ['Failed', 'pill-red'],
+  sent:               ['Sent', 'pill-blue'],
+  queued:             ['Sent', 'pill-blue'],
+  scheduled:          ['Sent', 'pill-blue'],
+  delivery_delayed:   ['Delayed', 'pill-gold'],
+  delivered:          ['Delivered', 'pill-green'],
+  opened:             ['Opened', 'pill-green'],
+  clicked:            ['Clicked', 'pill-green'],
+  bounced:            ['Bounced', 'pill-red'],
+  complained:         ['Marked spam', 'pill-red'],
+}
+
 type Tab = 'overview' | 'workspaces' | 'invoices' | 'tokens' | 'feedback' | 'banner' | 'demo-leads'
 
 function hashToTab(hash: string): Tab {
@@ -147,12 +163,14 @@ export default function AdminDashboard() {
   const [tokenError, setTokenError] = useState('')
   const createToken = useMutation({
     mutationFn: () => adminApi.createToken({ recipient_name: tokenName, recipient_email: tokenEmail, days: tokenDays }),
-    onSuccess: () => {
+    onSuccess: (res) => {
       qc.invalidateQueries({ queryKey: ['admin', 'tokens'] })
       setTokenName('')
       setTokenEmail('')
       setTokenDays(7)
-      setTokenError('')
+      setTokenError(res.data?.email_status === 'failed'
+        ? `Link created, but the email failed to send (${res.data.email_error}). Use "Copy link" or "Send again".`
+        : '')
     },
     onError: (err: any) => {
       setTokenError(err?.response?.data?.detail || 'Failed to generate invite link.')
@@ -162,6 +180,19 @@ export default function AdminDashboard() {
   const deleteToken = useMutation({
     mutationFn: (id: string) => adminApi.deleteToken(id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'tokens'] }),
+  })
+
+  const resendToken = useMutation({
+    mutationFn: (id: string) => adminApi.resendToken(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin', 'tokens'] })
+      setTokenError('')
+    },
+    onError: (err: any) => {
+      qc.invalidateQueries({ queryKey: ['admin', 'tokens'] })
+      const d = err?.response?.data
+      setTokenError(d?.email_error ? `Email failed to send: ${d.email_error}` : d?.detail || 'Failed to send the invite email.')
+    },
   })
 
   const activateWorkspace = useMutation({
@@ -436,6 +467,7 @@ export default function AdminDashboard() {
                     <th>Email</th>
                     <th>Sign-up link</th>
                     <th>Expires</th>
+                    <th>Invite email</th>
                     <th>Workspace registered</th>
                     <th>Status</th>
                     <th></th>
@@ -463,6 +495,28 @@ export default function AdminDashboard() {
                       <td style={{ fontSize: 13, color: 'var(--muted)' }}>
                         {new Date(t.expires_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
                       </td>
+                      <td>
+                        {(() => {
+                          const [label, cls] = INVITE_EMAIL_STATUS[t.email_status] || [t.email_status, 'pill-grey']
+                          return (
+                            <span
+                              className={`pill ${cls}`}
+                              title={t.email_status === 'failed' ? t.email_error
+                                : t.email_status === '' ? 'Sent before email tracking was added'
+                                : t.email_status === 'sent' && !t.email_tracked ? 'Sent over SMTP — delivery status not available'
+                                : undefined}
+                            >
+                              {label}
+                            </span>
+                          )
+                        })()}
+                        {t.email_sent_at && (
+                          <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 3, whiteSpace: 'nowrap' }}>
+                            {new Date(t.email_sent_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                            {t.email_send_count > 1 && ` · sent ${t.email_send_count}×`}
+                          </div>
+                        )}
+                      </td>
                       <td style={{ fontSize: 13, color: t.used_by ? 'var(--ink)' : 'var(--muted)' }}>
                         {t.used_by || '—'}
                         {t.used_by_pending && (
@@ -481,30 +535,51 @@ export default function AdminDashboard() {
                         )}
                       </td>
                       <td>
-                        {t.used_by_pending && t.used_by_id ? (
-                          <button
-                            className="btn btn-dark btn-sm"
-                            style={{ fontSize: 12 }}
-                            disabled={activateWorkspace.isPending}
-                            onClick={() => {
-                              if (window.confirm(`Activate workspace "${t.used_by}"? The owner will be able to log in.`)) {
-                                activateWorkspace.mutate(t.used_by_id)
-                              }
-                            }}
-                          >
-                            Activate
-                          </button>
-                        ) : !t.used ? (
+                        <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end' }}>
+                          {t.used_by_pending && t.used_by_id && (
+                            <button
+                              className="btn btn-dark btn-sm"
+                              style={{ fontSize: 12 }}
+                              disabled={activateWorkspace.isPending}
+                              onClick={() => {
+                                if (window.confirm(`Activate workspace "${t.used_by}"? The owner will be able to log in.`)) {
+                                  activateWorkspace.mutate(t.used_by_id)
+                                }
+                              }}
+                            >
+                              Activate
+                            </button>
+                          )}
+                          {!t.used && t.recipient_email && (
+                            <button
+                              className="btn btn-ghost btn-sm"
+                              style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                              disabled={resendToken.isPending}
+                              onClick={() => {
+                                const expired = new Date(t.expires_at) < new Date()
+                                const msg = expired
+                                  ? `This link has expired. Extend it by 7 days and email it again to ${t.recipient_email}?`
+                                  : `Email this invite link again to ${t.recipient_email}?`
+                                if (window.confirm(msg)) resendToken.mutate(t.id)
+                              }}
+                            >
+                              {resendToken.isPending && resendToken.variables === t.id ? 'Sending…' : 'Send again'}
+                            </button>
+                          )}
                           <button
                             className="btn btn-ghost btn-sm"
                             style={{ color: 'var(--danger, #c0392b)', fontSize: 12 }}
+                            disabled={deleteToken.isPending}
                             onClick={() => {
-                              if (window.confirm('Revoke this invite link?')) deleteToken.mutate(t.id)
+                              const msg = t.used
+                                ? `Permanently delete this invite record? The workspace "${t.used_by || ''}" is NOT affected.`
+                                : 'Permanently delete this invite? The link will stop working immediately.'
+                              if (window.confirm(msg)) deleteToken.mutate(t.id)
                             }}
                           >
-                            Revoke
+                            Delete
                           </button>
-                        ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}
