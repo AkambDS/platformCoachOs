@@ -2,6 +2,7 @@ import threading
 import datetime
 from dateutil.relativedelta import relativedelta
 from rest_framework import serializers
+from django.utils import timezone
 from apps.accounts.tenancy import WorkspaceScopedSerializerMixin
 from .models import Activity
 
@@ -135,6 +136,19 @@ class ActivitySerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerial
         end   = attrs.get("end_at",   getattr(self.instance, "end_at", None))
         if start and end and end < start:
             raise serializers.ValidationError({"end_at": "End time must be after the start time."})
+
+        # Status changes from the "Mark as" menu (or any PATCH). A cancelled session has
+        # already emailed the client and freed its slot — reviving it here would leave the
+        # client believing it's off, so book a new one instead. Completed/Missed only make
+        # sense once the session has started.
+        new_status = attrs.get("status")
+        if self.instance and new_status and new_status != self.instance.status:
+            if self.instance.status == Activity.Status.CANCELLED:
+                raise serializers.ValidationError(
+                    {"status": "This session was cancelled and the client was told — schedule a new session instead."})
+            if new_status in (Activity.Status.COMPLETED, Activity.Status.MISSED) and start and start > timezone.now():
+                raise serializers.ValidationError(
+                    {"status": "A session can only be marked Completed or Missed once it has started."})
         return super().validate(attrs)
 
     def create(self, validated_data):

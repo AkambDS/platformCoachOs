@@ -37,3 +37,33 @@ def test_end_before_start_is_rejected_on_create_and_update():
                                                 "send_update": False}, format="json")
     assert res.status_code == 400, res.content
     assert Activity.objects.get(pk=aid).end_at == s + timedelta(hours=1)
+
+
+@pytest.mark.django_db
+def test_mark_as_status_rules():
+    """The Calendar/Activities "Mark as" menu PATCHes status: allowed moves work and send
+    nothing; Completed/Missed need the session to have started; cancelled stays cancelled."""
+    from apps.activities.models import Activity
+    ws, owner, coach, _, client, _ = _make_workspace("m")
+    now = timezone.now()
+    mk = lambda start, **kw: Activity.objects.create(workspace=ws, coach=coach, client=client, title="s",
+                                                      activity_type="call", start_at=start,
+                                                      end_at=start + timedelta(hours=1), **kw)
+    past, future = mk(now - timedelta(hours=2)), mk(now + timedelta(days=2))
+    api = _api(coach)
+    patch = lambda a, s: api.patch(f"/api/activities/{a.id}/", {"status": s, "send_update": False}, format="json")
+
+    for s in ("completed", "missed", "late", "scheduled"):          # past session: every move, incl. undo
+        assert patch(past, s).status_code == 200, s
+        past.refresh_from_db(); assert past.status == s
+
+    for s in ("completed", "missed"):                              # future: not yet
+        res = patch(future, s)
+        assert res.status_code == 400 and "status" in res.json(), s
+    for s in ("late", "rescheduled", "scheduled"):                 # future: fine
+        assert patch(future, s).status_code == 200, s
+
+    cancelled = mk(now - timedelta(hours=3), status="cancelled")
+    res = patch(cancelled, "scheduled")
+    assert res.status_code == 400 and "status" in res.json()
+    cancelled.refresh_from_db(); assert cancelled.status == "cancelled"

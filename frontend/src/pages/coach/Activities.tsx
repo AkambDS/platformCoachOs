@@ -5,6 +5,8 @@ import { activitiesApi, clientsApi, settingsApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, StatusBadge, useToast, displayActivityStatus } from '../../components/ui'
 import { DeclineRescheduleModal } from '../../components/DeclineRescheduleModal'
+import { ActivityStatusMenu, statusChangedLabel } from '../../components/ActivityStatusMenu'
+import { apiErrorMessage } from '../../lib/apiError'
 import { useAuthStore } from '../../store/auth'
 import {
   CalendarDays, MapPin, User, Clock, ChevronRight, Mail, CheckCircle2, Circle, XCircle,
@@ -449,7 +451,7 @@ function EmailPreviewModal({ activityId, defaultType = 'confirmation', onClose }
 }
 
 // ── Activity Detail Side Panel ─────────────────────────────────────────────────
-function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onStatusChange, onConfirmReschedule, onDeclineReschedule }: any) {
+function ActivityDetailModal({ activity, onClose, onCancel, onEdit, onStatusChange, onConfirmReschedule, onDeclineReschedule }: any) {
   const isActive = ['scheduled', 'late', 'rescheduled'].includes(activity.status)
   const [showEmailPreview, setShowEmailPreview] = useState(false)
   const [showDecline, setShowDecline] = useState(false)
@@ -480,35 +482,10 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
             </button>
           )}
           <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
-          {isActive && activity.status !== 'completed' && (
-            <button className="btn btn-sm"
-              style={{ background: '#16a085', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
-              onClick={() => onStatusChange(activity.id, 'completed')}>
-              Complete
-            </button>
-          )}
-          {isActive && activity.status !== 'late' && (
-            <button className="btn btn-sm"
-              style={{ background: '#d97706', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
-              onClick={() => onStatusChange(activity.id, 'late')}>
-              Late
-            </button>
-          )}
-          {isActive && activity.status !== 'rescheduled' && (
-            <button className="btn btn-sm"
-              style={{ background: '#2d6a9f', color: '#fff', border: 'none', borderRadius: 'var(--radius-sm)', fontWeight: 600 }}
-              onClick={() => onStatusChange(activity.id, 'rescheduled')}>
-              Reschedule
-            </button>
-          )}
-          {isActive && (
-            <button
-              className="btn btn-sm"
-              style={{ background: 'var(--rust)', color: 'white', borderRadius: 'var(--radius-sm)' }}
-              onClick={() => onMissed(activity.id)}
-            >
-              Missed
-            </button>
+          {/* One menu instead of Complete/Late/Reschedule/Missed buttons; shown for any
+              non-cancelled session so a wrong Completed/Missed can be put back. */}
+          {activity.status !== 'cancelled' && !isCommunicationLog && (
+            <ActivityStatusMenu activity={activity} onChange={s => onStatusChange(activity.id, s)} />
           )}
           {isActive && (
             <button className="btn btn-danger btn-sm" onClick={() => onCancel(activity)}>
@@ -617,15 +594,6 @@ export default function Activities() {
     )
   })
 
-  const handleMarkMissed = async (id: string) => {
-    try {
-      await activitiesApi.markMissed(id)
-      qc.invalidateQueries({ queryKey: ['activities-list'] })
-      setDetailTarget(null)
-      showToast('Session marked as missed')
-    } catch { showToast('Failed', 'error') }
-  }
-
   const handleCancel = async () => {
     if (!cancelTarget) return
     const inSeries = !!(cancelTarget.recurrence_id || cancelTarget.rrule)
@@ -643,12 +611,11 @@ export default function Activities() {
 
   const handleStatusChange = async (id: string, newStatus: string) => {
     try {
-      await activitiesApi.patch(id, { status: newStatus })
+      await activitiesApi.patch(id, { status: newStatus, send_update: false })
       qc.invalidateQueries({ queryKey: ['activities-list'] })
       setDetailTarget(null)
-      const labels: Record<string, string> = { completed: 'Marked complete', late: 'Marked late', rescheduled: 'Marked rescheduled' }
-      showToast(labels[newStatus] || 'Status updated')
-    } catch { showToast('Failed to update status', 'error') }
+      showToast(statusChangedLabel(newStatus))
+    } catch (e) { showToast(apiErrorMessage(e, 'Failed to update status'), 'error') }
   }
 
   const handleConfirmReschedule = async (id: string) => {
@@ -836,7 +803,6 @@ export default function Activities() {
         <ActivityDetailModal
           activity={detailTarget}
           onClose={() => setDetailTarget(null)}
-          onMissed={handleMarkMissed}
           onEdit={(a: any) => { setEditTarget(a); setDetailTarget(null) }}
           onCancel={(a: any) => { setCancelTarget(a); setDetailTarget(null) }}
           onStatusChange={handleStatusChange}

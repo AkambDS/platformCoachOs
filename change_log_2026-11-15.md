@@ -9,6 +9,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **A** | Save errors are readable and name the field; Website/LinkedIn accept `www.…`; LinkedIn is checked and clickable |
 | **B** | Clients list: real Status column, "Recently viewed" sort, case-insensitive name sort, spacing |
 | **C** | Affiliations move from sessions to clients |
+| **D** | Session status: one "Mark as" menu (Confirmed/Late/Completed/Missed/Rescheduled) |
 
 ---
 
@@ -94,3 +95,20 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_client_affiliations.py` (2 tests).
+
+---
+
+# Part D — Session status: one "Mark as" menu
+
+## Change
+- Calendar and Activities session pop-ups: **Mark as ▾** (Confirmed, Late, Completed,
+  Missed, Rescheduled — same colours and wording as the Calendar legend) replaces "Mark
+  Missed" (Calendar) and the Complete/Late/Reschedule/Missed buttons (Activities).
+  Cancel keeps its own button (it emails the client and frees the slot).
+- Shown on any non-cancelled session, so a wrong Completed/Missed can be undone.
+- **Server rules** (`ActivitySerializer.validate`): Completed/Missed only once the session
+  has started; a cancelled session can't be revived. No email is sent on a status change;
+  each change is in the session's edit history.
+
+## Tests
+`test_activity_validation.py::test_mark_as_status_rules`.

@@ -9,7 +9,9 @@ import AppShell from '../../components/layout/AppShell'
 import { Modal, StatusBadge, useToast, displayActivityStatus, STATUS_HEX } from '../../components/ui'
 import { EmailEditModal } from '../../components/EmailEditModal'
 import { DeclineRescheduleModal } from '../../components/DeclineRescheduleModal'
+import { ActivityStatusMenu, statusChangedLabel } from '../../components/ActivityStatusMenu'
 import { useAuthStore } from '../../store/auth'
+import { apiErrorMessage } from '../../lib/apiError'
 
 // ── Type config ───────────────────────────────────────────────────────────────
 const TYPE_CONFIG: Record<string, { bg: string; border: string; text: string; label: string }> = {
@@ -949,7 +951,7 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
 }
 
 // ── Activity Detail Modal ─────────────────────────────────────────────────────
-function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, onConfirmReschedule, onDeclineReschedule }: any) {
+function ActivityDetailModal({ activity, onClose, onStatusChange, onCancel, onEdit, onConfirmReschedule, onDeclineReschedule }: any) {
   const canAct = ['scheduled', 'rescheduled', 'late'].includes(activity.status)
   const cfg = typeConfig(activity.activity_type)
   const rsvp = rsvpStatus(activity)
@@ -960,7 +962,8 @@ function ActivityDetailModal({ activity, onClose, onMissed, onCancel, onEdit, on
       <div style={{ display: 'flex', gap: 8, width: '100%' }}>
         {canAct && <button className="btn btn-sm btn-outline" onClick={() => onEdit(activity)} style={{ marginRight: 'auto' }}>Edit</button>}
         <button className="btn btn-outline btn-sm" onClick={onClose}>Close</button>
-        {canAct && <button className="btn btn-sm" style={{ background: 'var(--rust)', color: 'white', borderRadius: 6 }} onClick={() => onMissed(activity.id)}>Mark Missed</button>}
+        {/* Any non-cancelled session — also lets a wrong Completed/Missed be put back. */}
+        {activity.status !== 'cancelled' && <ActivityStatusMenu activity={activity} onChange={s => onStatusChange(activity.id, s)} />}
         {canAct && <button className="btn btn-danger btn-sm" onClick={() => onCancel(activity)}>Cancel</button>}
       </div>
     }>
@@ -1126,13 +1129,13 @@ export default function Calendar() {
     setCalTitle(api.view.title)
   }
 
-  const handleMarkMissed = async (id: string) => {
+  const handleStatusChange = async (id: string, status: string) => {
     try {
-      await activitiesApi.markMissed(id)
+      await activitiesApi.patch(id, { status, send_update: false })
       qc.invalidateQueries({ queryKey: ['activities'] })
       setSelectedAct(null)
-      showToast('Session marked as missed')
-    } catch { showToast('Failed', 'error') }
+      showToast(statusChangedLabel(status))
+    } catch (e) { showToast(apiErrorMessage(e, 'Failed to update status'), 'error') }
   }
 
   const handleConfirmReschedule = async (id: string) => {
@@ -1468,7 +1471,7 @@ export default function Calendar() {
         <ActivityDetailModal
           activity={selectedAct}
           onClose={() => setSelectedAct(null)}
-          onMissed={handleMarkMissed}
+          onStatusChange={handleStatusChange}
           onEdit={(a: any) => { setEditingAct(a); setSelectedAct(null) }}
           onCancel={(a: any) => { setCancelTarget(a); setSelectedAct(null) }}
           onConfirmReschedule={handleConfirmReschedule}
