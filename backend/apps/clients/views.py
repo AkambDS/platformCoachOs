@@ -23,6 +23,7 @@ ONLYOFFICE_DOC_TYPES = {
 from django.shortcuts import get_object_or_404
 from django.core.files.storage import default_storage
 from django.utils import timezone
+from datetime import timedelta
 from .models import Client, Assessment, ClientGoal, Commitment, GoalProgress, ClientNote, ClientMessageDraft, EmailLog
 from .serializers import (ClientListSerializer, ClientDetailSerializer,
                           AssessmentSerializer, ClientGoalSerializer,
@@ -108,11 +109,27 @@ class ClientViewSet(viewsets.ModelViewSet):
     filter_backends    = [DjangoFilterBackend, SearchFilter]
     filterset_fields   = ["active_flag", "status", "coach"]
     search_fields      = ["first_name", "last_name", "email", "company"]
-    ordering_fields    = ["first_name", "last_name", "created_at"]
+    # "recent" = clients this user most recently opened or worked on (AccessLog), never-
+    # touched ones after, by last name.
+    ordering_fields    = ["recent", "first_name", "last_name", "created_at"]
+
+    def retrieve(self, request, *args, **kwargs):
+        from apps.audit.models import AccessLog
+        client = self.get_object()
+        # Feeds the "Recently viewed" sort and the audit trail. One row per user/client per
+        # 10 minutes — the detail page refetches on every save/tab switch.
+        if not AccessLog.objects.filter(
+            user=request.user, client_id=client.pk, action="viewed_client",
+            created_at__gte=timezone.now() - timedelta(minutes=10),
+        ).exists():
+            _log(request, client, "viewed_client")
+        return Response(self.get_serializer(client).data)
 
     def get_queryset(self):
         from apps.pipeline.models import Deal
-        from django.db.models import Case, When, Value, IntegerField
+        from apps.audit.models import AccessLog
+        from django.db.models import Case, When, Value, IntegerField, F
+        from django.db.models.functions import Lower
         qs = _client_qs(self.request).select_related("coach")
         tags = self.request.query_params.getlist("tag")
         if tags:
@@ -135,10 +152,26 @@ class ClientViewSet(viewsets.ModelViewSet):
                 pipeline_deal_id=Subquery(last_deal.values("id")[:1]),
                 _status_rank=status_rank,
             )
-            ordering = self.request.query_params.get("ordering") or "last_name"
+            ordering = self.request.query_params.get("ordering") or "recent"
             if ordering.lstrip("-") not in self.ordering_fields:
-                ordering = "last_name"
-            qs = qs.order_by("_status_rank", ordering)
+                ordering = "recent"
+            # Case-insensitive names: "bhatlap" and "Bhatlapanumarti" sort together, not
+            # capitals-first (Postgres collation differs local vs RDS, so don't rely on it).
+            last, first = Lower("last_name"), Lower("first_name")
+            if ordering == "recent":
+                qs = qs.annotate(_last_seen=Subquery(
+                    AccessLog.objects.filter(user=self.request.user, client_id=OuterRef("pk"))
+                    .order_by("-created_at").values("created_at")[:1]))
+                keys = [F("_last_seen").desc(nulls_last=True), last, first]
+            elif ordering.lstrip("-") == "first_name":
+                keys = [first, last]
+            elif ordering.lstrip("-") == "last_name":
+                keys = [last, first]
+            else:
+                keys = [F("created_at")]
+            if ordering.startswith("-") and ordering != "recent":
+                keys = [k.desc() if hasattr(k, "desc") else k for k in keys]
+            qs = qs.order_by("_status_rank", *keys, "pk")
         return qs
 
     def perform_destroy(self, instance):

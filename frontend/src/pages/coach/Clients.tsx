@@ -30,7 +30,7 @@ export default function Clients() {
   const queryClient = useQueryClient()
   const { show: toast, el: toastEl } = useToast()
   const [search, setSearch] = useState('')
-  const [sortBy, setSortBy] = useState<'first_name' | 'last_name'>('last_name')
+  const [sortBy, setSortBy] = useState<'recent' | 'first_name' | 'last_name'>('recent')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [selectedTag, setSelectedTag] = useState<string>('')
   const [tagDropdownOpen, setTagDropdownOpen] = useState(false)
@@ -470,10 +470,11 @@ export default function Clients() {
           <select
             className="fselect"
             value={sortBy}
-            onChange={e => setSortBy(e.target.value as 'first_name' | 'last_name')}
+            onChange={e => setSortBy(e.target.value as 'recent' | 'first_name' | 'last_name')}
             title="Sort by"
             style={{ width: 'auto', marginBottom: 0, fontSize: 12, padding: '6px 10px' }}
           >
+            <option value="recent">Sort: Recently Viewed</option>
             <option value="last_name">Sort: Last Name</option>
             <option value="first_name">Sort: First Name</option>
           </select>
@@ -533,13 +534,16 @@ export default function Clients() {
                     />
                   </th>
                 )}
+                {/* Fixed widths for the narrow columns so Client takes the slack — otherwise
+                    the browser spreads spare width evenly and "View →" / ✕ drift apart. */}
                 <th>Client</th>
-                <th>Status</th>
-                <th>Tags</th>
-                <th>Communication Tags</th>
-                <th>Coach</th>
-                <th></th>
-                {isOwner && <th></th>}
+                <th style={{ width: 120 }}>Status</th>
+                <th style={{ width: 140 }}>Pipeline</th>
+                <th style={{ width: 160 }}>Tags</th>
+                <th style={{ width: 180 }}>Communication Tags</th>
+                <th style={{ width: 150 }}>Coach</th>
+                <th style={{ width: 72 }}></th>
+                {isOwner && <th style={{ width: 40 }}></th>}
               </tr>
             </thead>
             <tbody>
@@ -578,6 +582,20 @@ export default function Clients() {
                         </div>
                       </div>
                     </div>
+                  </td>
+                  <td>
+                    {c.status ? (() => {
+                      const color = statusMap[c.status]?.color || '#6b7280'
+                      return (
+                        <span style={{
+                          display: 'inline-block', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap',
+                          padding: '2px 10px', borderRadius: 12,
+                          background: color + '18', color, border: `1px solid ${color}30`,
+                        }}>{c.status}</span>
+                      )
+                    })() : (
+                      <span style={{ fontSize: 12, color: 'var(--muted)' }}>—</span>
+                    )}
                   </td>
                   <td>
                     {c.pipeline_stage ? (() => {
@@ -638,7 +656,7 @@ export default function Clients() {
                   <td style={{ fontSize: 13, color: 'var(--muted)' }}>
                     {c.coach_name || '—'}
                   </td>
-                  <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500 }}>View →</td>
+                  <td style={{ color: 'var(--gold)', fontSize: 12, fontWeight: 500, whiteSpace: 'nowrap', textAlign: 'right' }}>View →</td>
                   {isOwner && (
                     <td onClick={e => e.stopPropagation()}>
                       <button

@@ -7,6 +7,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 |---|---|
 | — | `sql.md`: troubleshooting queries for prod (RDS) and local |
 | **A** | Save errors are readable and name the field; Website/LinkedIn accept `www.…`; LinkedIn is checked and clickable |
+| **B** | Clients list: real Status column, "Recently viewed" sort, case-insensitive name sort, spacing |
 
 ---
 
@@ -47,3 +48,27 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_client_url_fields.py` (3 tests).
+
+---
+
+# Part B — Clients list
+
+## What was wrong
+- The **Status** column showed the pipeline deal stage, not the client status ("—" for
+  clients without a deal).
+- **Name sort put capitals first** (local Postgres sorts byte-wise:
+  "Bhatlapanumarti, Tanzoe, bhatlap").
+- Columns spread unevenly; "View →" sat far from ✕.
+
+## Fix
+- **Status** (client status, coloured) and **Pipeline** (deal stage) are separate columns.
+- **Sorting:** case-insensitive first/last name (`Lower()`), and a new default
+  **"Recently viewed"**: clients this user opened or worked on most recently first (from
+  AccessLog), then the rest by last name; archived clients still last. Per user.
+- Opening a client logs **"Viewed Client"** in the audit trail (at most once per user per
+  client every 10 minutes).
+- Fixed widths for the narrow columns.
+- **Migration `audit/0004`:** the new action label + an index for the sort.
+
+## Tests
+`test_client_list_sort.py` (2 tests).

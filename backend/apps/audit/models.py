@@ -15,6 +15,7 @@ class AccessLog(WorkspaceModel):
         DELETED_FILE        = "deleted_file",         "Deleted File"
         VIEWED_GOALS        = "viewed_goals",         "Viewed Goals"
         VIEWED_FEEDBACK     = "viewed_feedback",      "Viewed Feedback"
+        VIEWED_CLIENT       = "viewed_client",        "Viewed Client"
         CREATED_CLIENT      = "created_client",       "Created Client"
         UPDATED_CLIENT      = "updated_client",       "Updated Client"
         DELETED_CLIENT      = "deleted_client",       "Deleted Client"
@@ -34,6 +35,8 @@ class AccessLog(WorkspaceModel):
     class Meta:
         db_table = "audit_accesslog"
         ordering = ["-created_at"]
+        # Clients list "Recently viewed" sort: latest row per (this user, each client).
+        indexes = [models.Index(fields=["user", "client_id", "-created_at"], name="accesslog_user_client_recent")]
 
     def __str__(self):
         return f"{self.user_name} — {self.action} ({self.created_at.date()})"
