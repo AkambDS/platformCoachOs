@@ -1897,6 +1897,7 @@ const USE_CASE_WHEN: Record<string, string> = {
   client_cancelled_notice: 'When a client cancels from their email',
   client_rsvp_notice:      'When a client responds to the Google Calendar invite',
   reschedule_request:      'When a client asks to reschedule',
+  client_goal_update:      'When a client adds a goal, logs progress or updates a goal in their portal',
   payment_failed:          'When a client’s card payment fails',
   contract_signed:         'When a client signs a contract',
   team_invite:             'When you invite someone to your workspace',

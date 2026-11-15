@@ -2011,6 +2011,76 @@ def send_contract_signed_notice(draft_id: str):
         logger.error(f"send_contract_signed_notice failed: {e}")
 
 
+# Portal goal events → (wording in the email). Keys are what the portal views pass.
+_GOAL_ACTIONS = {
+    "created":  "added a new goal",
+    "progress": "logged progress",
+    "completed": "marked a goal complete",
+    "reopened": "reopened a goal",
+    "status":   "changed a goal's status",
+    "updated":  "updated a goal",
+    "deleted":  "deleted a goal",
+}
+
+
+def _goal_update_recipients(client, goal=None):
+    """Who hears about a client's goal activity: the workspace owner, the client's
+    assigned coach, and the coach who set the goal — each once, same workspace only,
+    never the platform admin."""
+    from apps.accounts.models import User
+    people = [client.workspace.users.filter(role=User.Role.BUSINESS_OWNER).first(),
+              client.coach, getattr(goal, "created_by", None)]
+    seen, out = set(), []
+    for u in people:
+        if (u and u.email and u.workspace_id == client.workspace_id
+                and u.role != User.Role.PLATFORM_ADMIN and u.email.lower() not in seen):
+            seen.add(u.email.lower())
+            out.append(u)
+    return out
+
+
+@shared_task(name="tasks.email.send_client_goal_update")
+def send_client_goal_update(client_id: str, goal_id: str, event: str, details: dict = None):
+    """Email the owner and coaches when a client adds a goal, logs progress or changes a
+    goal in their portal. `details` carries what the goal row can't: the progress text,
+    and the title of a goal that was just deleted."""
+    from apps.clients.models import Client, ClientGoal
+    from tasks.email_notices import send_notice, app_url
+    details = details or {}
+    try:
+        client = Client.objects.select_related("workspace", "coach").get(id=client_id)
+        workspace = client.workspace
+        goal = ClientGoal.objects.select_related("created_by").filter(id=goal_id).first()
+        title = goal.title if goal else details.get("title", "")
+        status = goal.get_status_display() if goal else ""
+        progress_text = details.get("progress_text", "")
+
+        rows = [("Goal", title)]
+        if goal and goal.target_date:
+            rows.append(("Target date", goal.target_date.strftime("%B %d, %Y")))
+        if status:
+            rows.append(("Status", status))
+        rows.append(("Set by", "Client" if not goal or goal.created_by_id is None
+                     else goal.created_by.full_name))
+        if progress_text:
+            rows.append(("Progress", progress_text))
+
+        for user in _goal_update_recipients(client, goal):
+            send_notice(
+                workspace, "client_goal_update", [user.email],
+                dict(recipient_name=user.full_name, recipient_first_name=user.first_name,
+                     client_name=client.full_name, client_first_name=client.first_name,
+                     goal_title=title, goal_action=_GOAL_ACTIONS.get(event, "updated a goal"),
+                     goal_status=status, progress_text=progress_text),
+                rows=rows, cta=("Open in CoachOS", app_url(f"/clients/{client.id}")),
+                reply_to=[client.email] if client.email else None,
+                client=client, related_id=goal_id,
+            )
+    except Exception as e:
+        logger.error(f"send_client_goal_update failed: {e}")
+        _report_send_failure("send_client_goal_update", e, workspace=locals().get("workspace"))
+
+
 @shared_task(name="tasks.email.send_goal_shared_email")
 def send_goal_shared_email(goal_id: str):
     """Notifies the client that their coach shared a new goal — triggered from

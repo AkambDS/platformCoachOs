@@ -71,16 +71,26 @@ class ClientGoalSerializer(serializers.ModelSerializer):
     target_date = serializers.DateField(required=True)
     created_by_name = serializers.CharField(source="created_by.full_name", read_only=True)
     client_owned = serializers.SerializerMethodField()
+    # What the client logged in their portal, newest first — so the owner and coaches
+    # see every progress update on both client-added and shared coach goals.
+    progress_entries = serializers.SerializerMethodField()
 
     class Meta:
         model  = ClientGoal
         fields = ["id", "title", "description", "target_date",
                   "status", "visible_to_client", "created_by", "created_by_name",
-                  "client_owned", "created_at", "progress_count"]
-        read_only_fields = ["id", "created_at", "created_by"]
+                  "client_owned", "created_at", "updated_at", "progress_count",
+                  "progress_entries"]
+        read_only_fields = ["id", "created_at", "updated_at", "created_by"]
 
     def get_client_owned(self, obj):
         return obj.created_by_id is None
+
+    def get_progress_entries(self, obj):
+        # .all() uses ClientGoalViewSet's prefetch — no query per goal
+        entries = sorted(obj.progress_entries.all(), key=lambda p: p.created_at, reverse=True)
+        return [{"id": str(p.id), "progress_text": p.progress_text, "created_at": p.created_at}
+                for p in entries]
 
 
 class CommitmentSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSerializer):

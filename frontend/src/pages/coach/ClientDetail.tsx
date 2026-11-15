@@ -2413,6 +2413,7 @@ export default function ClientDetail() {
   const [showActivity, setShowActivity] = useState(false)
   const [showGoal, setShowGoal]       = useState(false)
   const [editingGoal, setEditingGoal] = useState<any>(null)
+  const [expandedProgress, setExpandedProgress] = useState<Set<string>>(new Set())
   const [searchGoalTitle, setSearchGoalTitle] = useState('')
   const [searchGoalDate, setSearchGoalDate]   = useState('')
   const [editMode, setEditMode] = useState(false)
@@ -3360,6 +3361,35 @@ export default function ClientDetail() {
                       >Delete</button>
                     </div>
                   </div>
+                  {/* Progress the client logged in their portal (newest first) */}
+                  {(g.progress_entries?.length ?? 0) > 0 && (() => {
+                    const entries: any[] = g.progress_entries
+                    const open = expandedProgress.has(g.id)
+                    const shown = open ? entries : entries.slice(0, 2)
+                    return (
+                      <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+                        <div style={{ fontSize: 10.5, fontWeight: 600, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted)', marginBottom: 6 }}>
+                          Client progress ({entries.length})
+                        </div>
+                        {shown.map(p => (
+                          <div key={p.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, lineHeight: 1.5, marginBottom: 4 }}>
+                            <span style={{ color: 'var(--muted)', whiteSpace: 'nowrap', minWidth: 110 }}>{fmtDatetime(p.created_at)}</span>
+                            <span style={{ whiteSpace: 'pre-wrap' }}>{p.progress_text}</span>
+                          </div>
+                        ))}
+                        {entries.length > 2 && (
+                          <button
+                            className="btn btn-ghost btn-sm" style={{ fontSize: 11, padding: '2px 0' }}
+                            onClick={() => setExpandedProgress(prev => {
+                              const next = new Set(prev)
+                              if (next.has(g.id)) next.delete(g.id); else next.add(g.id)
+                              return next
+                            })}
+                          >{open ? 'Show less' : `Show all ${entries.length}`}</button>
+                        )}
+                      </div>
+                    )
+                  })()}
                 </div>
               ))
             }

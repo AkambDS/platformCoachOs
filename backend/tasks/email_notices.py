@@ -143,6 +143,15 @@ NOTICES: dict[str, dict] = {
         closing="Open the session in CoachOS to confirm the new time, or reply to {client_email}. Nothing changes on your calendar until you confirm.",
         placeholders=_TO_COACH + _SESSION + ["{proposed_time}", "{message}"],
     ),
+    "client_goal_update": dict(
+        label="Client Goal Update", audience="coach",
+        subject="{client_name} {goal_action}: {goal_title}",
+        eyebrow="Goal Update", heading="{client_first_name} {goal_action}",
+        intro="Hi {recipient_first_name},\n\n{client_name} {goal_action} in their client portal.",
+        closing="Open the client in CoachOS to see all of their goals and progress.",
+        placeholders=_TO_COACH + ["{client_name}", "{client_first_name}", "{workspace_name}",
+                                  "{goal_title}", "{goal_action}", "{goal_status}", "{progress_text}"],
+    ),
     "payment_failed": dict(
         label="Payment Failed", audience="coach",
         subject="Payment failed — Invoice #{invoice_number}",

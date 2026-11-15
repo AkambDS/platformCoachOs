@@ -345,6 +345,13 @@ class PortalMeView(APIView):
         })
 
 
+def _notify_goal_update(client_id, goal_id, event, **details):
+    """Tell the workspace owner and the client's coaches about a client's goal activity
+    (tasks.email.send_client_goal_update — Settings → Emails "Client Goal Update")."""
+    from tasks.email import send_client_goal_update
+    send_client_goal_update.delay(str(client_id), str(goal_id), event, details)
+
+
 class PortalGoalsView(APIView):
     """GET /api/portal/goals/ — client's own goals (any status) + the coach's active
     shared goals, plus recent commitments. POST — client sets their own goal."""
@@ -362,7 +369,7 @@ class PortalGoalsView(APIView):
             # coach's — shared, and active or completed (a client can mark a coach goal
             # complete, so it must stay visible afterwards); paused stays hidden
             Q(visible_to_client=True, status__in=["active", "completed"])
-        ).order_by("-created_at"))
+        ).prefetch_related("progress_entries").order_by("-created_at"))
         commitments = Commitment.objects.filter(
             client_id=client_id, workspace_id=workspace_id
         ).order_by("-created_at")[:10]
@@ -395,6 +402,7 @@ class PortalGoalsView(APIView):
             status=ClientGoal.Status.ACTIVE,
             created_by=None,
         )
+        _notify_goal_update(client_id, goal.id, "created")
         data = ClientGoalSerializer(goal).data
         data["progress_entries"] = []
         return Response(data, status=201)
@@ -435,13 +443,17 @@ class PortalGoalDetailView(APIView):
             if status_value not in ("completed", "active"):
                 raise ValidationError({"status": "You can mark this goal complete or reopen it; "
                                                  "only your coach can change its details."})
-            goal.status = status_value
-            goal.save(update_fields=["status", "updated_at"])
+            if goal.status != status_value:
+                goal.status = status_value
+                goal.save(update_fields=["status", "updated_at"])
+                _notify_goal_update(client_id, goal.id,
+                                    "completed" if status_value == "completed" else "reopened")
             return self._respond(goal)
 
         title = (request.data.get("title") or "").strip()
         if not title:
             raise ValidationError({"title": "Title is required."})
+        before = (goal.title, goal.description, goal.target_date, goal.status)
         goal.title = title
         goal.description = (request.data.get("description") or "").strip()
 
@@ -456,12 +468,19 @@ class PortalGoalDetailView(APIView):
             goal.status = status_value
 
         goal.save(update_fields=["title", "description", "target_date", "status", "updated_at"])
+        if goal.status != before[3]:
+            _notify_goal_update(client_id, goal.id, {"completed": "completed", "active": "reopened"}
+                                .get(goal.status, "status"))
+        elif (goal.title, goal.description, goal.target_date) != before[:3]:
+            _notify_goal_update(client_id, goal.id, "updated")
         return self._respond(goal)
 
     def delete(self, request, goal_id):
         client_id, workspace_id = _get_portal_claims(request)
         goal = self._get_goal(goal_id, client_id, workspace_id)
+        title = goal.title
         goal.delete()
+        _notify_goal_update(client_id, goal_id, "deleted", title=title)
         return Response(status=204)
 
 
@@ -472,12 +491,14 @@ class PortalProgressView(APIView):
 
     def post(self, request, goal_id):
         client_id, workspace_id = _get_portal_claims(request)
-        try:
-            goal = ClientGoal.objects.get(
-                pk=goal_id, client_id=client_id, workspace_id=workspace_id,
-                visible_to_client=True,
-            )
-        except ClientGoal.DoesNotExist:
+        from django.db.models import Q
+        # Same goals the portal shows: the client's own (never "shared" — they're
+        # theirs) or a coach goal shared with them. Requiring visible_to_client for
+        # every goal made a client's own goals 404 here.
+        goal = ClientGoal.objects.filter(
+            pk=goal_id, client_id=client_id, workspace_id=workspace_id,
+        ).filter(Q(created_by__isnull=True) | Q(visible_to_client=True)).first()
+        if not goal:
             raise NotFound()
 
         progress_text = (request.data.get("progress_text") or "").strip()
@@ -490,6 +511,7 @@ class PortalProgressView(APIView):
             goal=goal,
             progress_text=progress_text,
         )
+        _notify_goal_update(client_id, goal.id, "progress", progress_text=progress_text)
         return Response(GoalProgressSerializer(progress).data, status=201)
 
 

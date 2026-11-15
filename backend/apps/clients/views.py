@@ -1125,7 +1125,7 @@ class ClientGoalViewSet(viewsets.ModelViewSet):
             workspace=self.request.user.workspace,
             client_id=self.kwargs["client_pk"],
             client__in=_client_qs(self.request),
-        )
+        ).select_related("created_by").prefetch_related("progress_entries")
 
     def list(self, request, *args, **kwargs):
         client = get_object_or_404(_client_qs(request), pk=self.kwargs["client_pk"])

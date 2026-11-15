@@ -8,6 +8,8 @@ commit prod was rebuilt with on 2026-11-02.
 | **A** | Prod 500 when saving a session whose end time is before its start time | uncommitted (new) |
 | **B** | Frontend half of the 2026-10-18 work, **never committed**, so **not live in prod** | uncommitted |
 | **C** | 🔴 Prod: every background job fails after today's rebuild (Celery 5.7 vs redis 5) | uncommitted (new) |
+| **D** | Portal: a client couldn't log progress on a goal they created themselves (404) | uncommitted (new) |
+| **E** | Owner + coaches see the client's goal progress, and get an email for every client goal update | uncommitted (new) |
 
 No migrations. A backend-only deploy is **not** enough: Part B is frontend, so use the full
 `make deploy`.
@@ -140,6 +142,100 @@ docker compose -f docker-compose.prod.yml logs --since 10m celery 2>&1 | grep -i
 ```
 Then request a portal login code from `/client-portal`. The email should arrive, and the
 backend log should show a `200` for `/api/portal/request-code/`.
+
+---
+
+# Part D — Portal: progress on a client's own goal returned 404
+
+## What happened in prod
+- **2026-11-10 23:32 UTC:** a RassConsulting portal client created goal "test1" in the portal,
+  then tried to log progress on it. Both attempts returned **404**
+  (`POST /api/portal/goals/<id>/progress/`, visible in the nginx log; not a 500, so not in
+  ErrorLog).
+- **Cause:** the portal shows two kinds of goals. The client's **own** goals (created in the
+  portal, `created_by` empty) are always shown. **Coach** goals are shown only when shared.
+  `PortalProgressView`, however, required `visible_to_client=True` for **every** goal. A
+  client's own goal is never "shared", so the portal offered progress on a goal that the
+  endpoint then refused.
+
+## Fix
+- `apps/portal/views.py` → `PortalProgressView` now uses the same rule as the goal list:
+  `created_by IS NULL OR visible_to_client = True`, still limited to the logged-in client
+  and their workspace.
+- **Tests (new): `apps/portal/tests.py`:**
+  - The client can log progress on their own goal. This test failed with 404 before the fix
+    and passes after.
+  - The client can log progress on a shared coach goal.
+  - An **unshared** coach goal still returns 404.
+  - Another client's goal still returns 404.
+- **Full suite: 68 passed.**
+
+## Verify after deploy
+As a portal client: create a goal → log progress on it → it saves. Or check that nginx shows
+`201` for it:
+```bash
+docker compose -f docker-compose.prod.yml logs --since 15m nginx | grep "/progress/"
+```
+
+---
+
+# Part E — Owner and coaches see and hear about the client's goal activity
+
+## Requirement
+In the portal a client can add goals, log progress and change status. The workspace owner,
+and the coaches involved, must **see** all of it (on both client-added goals and shared
+coach goals) and **be told** about it.
+
+## What was missing
+- **Seeing it:** no coach-side endpoint or UI showed progress entries. `GoalProgress` was
+  imported in the coach views but never used, and the coach screen only had a count.
+- **Being told:** there was no notification for any client goal action. Only coach → client
+  emails existed ("goal shared").
+
+## Now
+- **Client page → Goals (owner and coach):** each goal shows a **"Client progress (n)"**
+  timeline, newest first, with the date and text. It shows the latest 2, with "Show all".
+  Client-added goals keep their "Client-added" tag.
+  - Files: `apps/clients/serializers.py` (`ClientGoalSerializer.progress_entries`, plus
+    `updated_at`), `apps/clients/views.py` (prefetch, so one query not one per goal),
+    `pages/coach/ClientDetail.tsx`.
+- **New email "Client Goal Update"** (Settings → Emails, editable like the others). It's
+  sent when the client, in the portal:
+
+  | Action | Wording in the email |
+  |---|---|
+  | Adds a goal | "added a new goal" |
+  | Logs progress | "logged progress" (includes the progress text) |
+  | Marks complete / reopens | "marked a goal complete" / "reopened a goal" |
+  | Edits their own goal | "updated a goal" |
+  | Deletes their own goal | "deleted a goal" |
+
+  - **Who gets it:** the workspace **owner**, the client's **assigned coach**, and the
+    **coach who set the goal**. Each person gets it once, and only users of the same
+    workspace (never the platform admin).
+  - **Nothing changed means no email:** for example, re-marking an already-complete goal.
+  - Reply-To is the client, and the email links to the client's page.
+  - It's logged in Email Communication.
+  - Sent through Celery (fixed in Part C).
+  - Files: `tasks/email_notices.py` (`client_goal_update`), `tasks/email.py`
+    (`send_client_goal_update`, `_goal_update_recipients`), `apps/portal/views.py` (hooks on
+    create, progress, status, edit, delete), `pages/coach/Settings.tsx` (description).
+- **Tests:** `apps/portal/tests.py` now has 9 tests:
+  - recipients for each action, and the coach who set the goal is included;
+  - re-marking with the same status sends no email;
+  - edit and delete send emails;
+  - a user in another workspace is never emailed;
+  - owner and coach both see the progress on own and shared goals.
+- **Full suite: 77 passed.**
+
+## Verify after deploy
+1. As a portal client: add a goal, log progress, mark it complete.
+2. The owner and the coach each get 3 "Client Goal Update" emails.
+3. On the client's page → Goals, the goal shows "Client progress (1)" with the text.
+
+```bash
+docker compose -f docker-compose.prod.yml logs --since 15m celery | grep send_client_goal_update   # "succeeded"
+```
 
 ---
 
