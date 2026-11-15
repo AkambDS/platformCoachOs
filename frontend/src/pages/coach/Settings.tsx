@@ -1045,7 +1045,7 @@ function AffiliationsTab() {
       <div className="card-body" style={{ padding: 0 }}>
         {affiliations.length === 0 && (
           <div style={{ padding: '14px 18px', fontSize: 13, color: 'var(--muted)' }}>
-            No affiliations yet — add the businesses sessions can be booked under (e.g. "Rass Consulting", "LMT Consulting").
+            No affiliations yet — add the businesses your clients belong to (e.g. "Rass Consulting", "LMT Consulting"), then pick them on each client's page.
           </div>
         )}
         {affiliations.map((a: any) => (
@@ -1111,7 +1111,7 @@ function AffiliationsTab() {
           </>
         }>
           <div style={{ fontSize: 14, color: 'var(--ink)', lineHeight: 1.6 }}>
-            Delete <strong>"{deleteTarget.name}"</strong>? Activities already booked under this affiliation will keep their label.
+            Delete <strong>"{deleteTarget.name}"</strong>? It will be removed from every client and session that has it.
           </div>
         </Modal>
       )}

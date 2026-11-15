@@ -101,6 +101,10 @@ class Client(WorkspaceModel):
     phone_2_type = models.CharField(max_length=20, blank=True)
     website      = models.URLField(blank=True)
     linkedin_url = models.URLField(blank=True)
+    # Which of the workspace's businesses this client belongs to (Settings → Affiliation,
+    # owner-managed). Writes are workspace-scoped by WorkspaceScopedSerializerMixin.
+    affiliations = models.ManyToManyField("activities.AffiliationConfig", blank=True,
+                                          related_name="clients")
     # Address
     primary_address  = models.JSONField(default=dict, blank=True)
     billing_address  = models.JSONField(default=dict, blank=True)

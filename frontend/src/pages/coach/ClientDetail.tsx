@@ -161,10 +161,6 @@ function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSav
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter((t: any) => t.is_active),
   })
-  const { data: affiliations = [] } = useQuery({
-    queryKey: ['affiliation-configs'],
-    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
-  })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -173,7 +169,6 @@ function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSav
   const coaches = teamMembers.filter((m: any) => ['coach', 'business_owner'].includes(m.role))
 
   const [coachId, setCoachId] = useState(defaultCoachId || user?.id || '')
-  const [affiliationId, setAffiliationId] = useState('')
   const [form, setForm] = useState({ activity_type: 'session', title: '', location: '', notes: '' })
   const [date, setDate]           = useState('')
   const [startTime, setStartTime] = useState('')
@@ -203,7 +198,7 @@ function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSav
     const end_at = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.title || !start_at) return
     setSaving(true)
-    const payload: any = { ...form, client: clientId, coach: coachId || undefined, affiliation: affiliationId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation, email_template_id: emailTemplateId }
+    const payload: any = { ...form, client: clientId, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at), send_confirmation: sendConfirmation, email_template_id: emailTemplateId }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -248,18 +243,6 @@ function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSav
         </div>
       </div>
 
-      {/* Affiliation */}
-      {affiliations.length > 0 && (
-        <div className="fgroup">
-          <label className="flabel">Affiliation</label>
-          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
-            <option value="">— None —</option>
-            {affiliations.map((a: any) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
 
       {/* Title */}
       <div className="fgroup">
@@ -2536,6 +2519,13 @@ export default function ClientDetail() {
     return m
   }, [tagConfigs])
 
+  // Workspace's affiliation list (Settings → Affiliation, owner-managed); a client
+  // stores the ids of the ones it belongs to.
+  const { data: affiliationConfigs = [] } = useQuery({
+    queryKey: ['affiliation-configs'],
+    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
+  })
+
   const { data: commTagConfigs = [], refetch: refetchCommTags } = useQuery({
     queryKey: ['communication-tag-configs'],
     queryFn: () => settingsApi.getCommunicationTags().then(r => r.data),
@@ -2915,6 +2905,33 @@ export default function ClientDetail() {
                         <input className="finput" placeholder="https://linkedin.com/in/…"
                           value={(ef as any).linkedin_url || ''} onChange={e => setEditForm((f: any) => ({ ...f, linkedin_url: e.target.value }))} />
                       </div>
+                      <div className="fgroup" style={{ marginBottom: 14 }}>
+                        <label className="flabel">Affiliations</label>
+                        {(affiliationConfigs as any[]).length === 0 ? (
+                          <div style={{ fontSize: 12, color: 'var(--muted)', paddingTop: 6 }}>
+                            {isOwner ? 'None set up yet — add them in Settings → Affiliation.' : 'None set up yet — ask the workspace owner to add them in Settings.'}
+                          </div>
+                        ) : (
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, paddingTop: 4 }}>
+                            {(affiliationConfigs as any[]).map((a: any) => {
+                              const selected: number[] = (ef as any).affiliations || []
+                              const on = selected.includes(a.id)
+                              return (
+                                <button key={a.id} type="button"
+                                  onClick={() => setEditForm((f: any) => {
+                                    const cur: number[] = f.affiliations || []
+                                    return { ...f, affiliations: on ? cur.filter(x => x !== a.id) : [...cur, a.id] }
+                                  })}
+                                  style={{
+                                    fontSize: 12, fontWeight: 600, padding: '4px 12px', borderRadius: 14, cursor: 'pointer',
+                                    background: on ? a.color + '22' : 'transparent', color: on ? a.color : 'var(--muted)',
+                                    border: `1px solid ${on ? a.color : 'var(--border)'}`,
+                                  }}>{on ? '✓ ' : ''}{a.name}</button>
+                              )
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     {(() => {
                       const addr = (ef as any).primary_address || {}
@@ -3064,6 +3081,19 @@ export default function ClientDetail() {
                           { label: 'Birth Date', value: client.birth_date ? fmtDate(client.birth_date) : '—' },
                           { label: 'Website', value: extLink((client as any).website) },
                           { label: 'LinkedIn', value: extLink((client as any).linkedin_url) },
+                          { label: 'Affiliations', value: (() => {
+                            const ids: number[] = (client as any).affiliations || []
+                            const list = (affiliationConfigs as any[]).filter((a: any) => ids.includes(a.id))
+                            return list.length === 0 ? '—' : (
+                              <span style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                                {list.map((a: any) => (
+                                  <span key={a.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: a.color }} />{a.name}
+                                  </span>
+                                ))}
+                              </span>
+                            )
+                          })() },
                           { label: 'Coach',   value: (client as any).coach_name || '—' },
                           { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
                         ]

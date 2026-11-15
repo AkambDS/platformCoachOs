@@ -301,10 +301,6 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
   })
-  const { data: affiliations = [] } = useQuery({
-    queryKey: ['affiliation-configs'],
-    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
-  })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -318,7 +314,6 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     location: '', notes: '',
   })
   const [coachId, setCoachId] = useState(user?.id || '')
-  const [affiliationId, setAffiliationId] = useState('')
 
   // Auto-populate coach from the selected client's assigned coach
   useEffect(() => {
@@ -358,7 +353,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
     const end_at      = resolvedEndDate && resolvedEnd ? `${resolvedEndDate}T${resolvedEnd}` : ''
     if (!form.client || !form.title || !start_at || !end_at) return
     setSaving(true)
-    const payload: any = { ...form, coach: coachId || undefined, affiliation: affiliationId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at) }
+    const payload: any = { ...form, coach: coachId || undefined, start_at: toUTC(start_at), end_at: toUTC(end_at) }
     if (repeat !== 'none') {
       payload.repeat = repeat
       payload.repeat_until = (repeatEnd === 'date' && repeatUntil) ? repeatUntil : null
@@ -402,17 +397,6 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
       </div>
       <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
         onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
-      {affiliations.length > 0 && (
-        <div className="fgroup">
-          <label className="flabel">Affiliation</label>
-          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
-            <option value="">— None —</option>
-            {affiliations.map((a: any) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
       <div className="fgroup">
         <label className="flabel">Title *</label>
         <input className="finput" value={form.title} onChange={e => set('title', e.target.value)} placeholder="e.g. Weekly coaching session" />
@@ -734,10 +718,6 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     queryFn: () => settingsApi.getActivityTypes().then(r => r.data),
     select: (d: any[]) => d.filter(t => t.is_active),
   })
-  const { data: affiliations = [] } = useQuery({
-    queryKey: ['affiliation-configs'],
-    queryFn: () => settingsApi.getAffiliations().then(r => r.data),
-  })
   const { data: teamData } = useQuery({
     queryKey: ['team'],
     queryFn: () => authApi.team().then(r => r.data),
@@ -749,7 +729,6 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
   const localStart = activity.start_at ? toLocalInput(activity.start_at) : ''
   const localEnd   = activity.end_at   ? toLocalInput(activity.end_at)   : ''
   const [coachId, setCoachId] = useState(activity.coach || '')
-  const [affiliationId, setAffiliationId] = useState(activity.affiliation || '')
   const [form, setForm] = useState({
     client: activity.client || '',
     activity_type: activity.activity_type || 'session',
@@ -792,7 +771,6 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
     const payload: any = {
       ...form,
       coach: coachId || undefined,
-      affiliation: affiliationId || undefined,
       start_at: toUTC(start_at),
       end_at: toUTC(end_at),
       repeat,
@@ -835,17 +813,6 @@ function EditActivityModal({ activity, onClose, onSaved }: any) {
       </div>
       <CoachField coaches={coaches} coachId={coachId} setCoachId={setCoachId}
         onCoachAdded={() => qc.invalidateQueries({ queryKey: ['team'] })} />
-      {affiliations.length > 0 && (
-        <div className="fgroup">
-          <label className="flabel">Affiliation</label>
-          <select className="fselect" value={affiliationId} onChange={e => setAffiliationId(e.target.value)}>
-            <option value="">— None —</option>
-            {affiliations.map((a: any) => (
-              <option key={a.id} value={a.id}>{a.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
       <div className="fgroup"><label className="flabel">Title</label><input className="finput" value={form.title} onChange={e => set('title', e.target.value)} /></div>
       {activity.requested_start_at && (
         <div style={{

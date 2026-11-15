@@ -66,6 +66,17 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.ERROR(
                     f"   {n:6d}  {model._meta.label}.{field.name} -> {field.related_model._meta.label}"
                     f"   (row workspace → linked workspace) e.g. {pairs[:3]}"))
+            # Many-to-many links (e.g. Client.affiliations) — checked on the join table.
+            for field in model._meta.many_to_many:
+                if not _has_workspace(field.related_model):
+                    continue
+                src, tgt = field.m2m_field_name(), field.m2m_reverse_field_name()
+                n = (field.remote_field.through.objects
+                     .exclude(**{f"{tgt}__workspace_id": F(f"{src}__workspace_id")}).count())
+                if n:
+                    cross += n
+                    self.stdout.write(self.style.ERROR(
+                        f"   {n:6d}  {model._meta.label}.{field.name} -> {field.related_model._meta.label}"))
         problems += cross
         if not cross:
             self.stdout.write("   ok — no row links to another workspace's data")

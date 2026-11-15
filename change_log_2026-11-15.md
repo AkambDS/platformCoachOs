@@ -8,6 +8,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | — | `sql.md`: troubleshooting queries for prod (RDS) and local |
 | **A** | Save errors are readable and name the field; Website/LinkedIn accept `www.…`; LinkedIn is checked and clickable |
 | **B** | Clients list: real Status column, "Recently viewed" sort, case-insensitive name sort, spacing |
+| **C** | Affiliations move from sessions to clients |
 
 ---
 
@@ -72,3 +73,24 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_client_list_sort.py` (2 tests).
+
+---
+
+# Part C — Affiliations belong to clients, not sessions
+
+## Change
+- **Client page:** new **Affiliations** field (pick several from Settings → Affiliation,
+  owner-managed), shown on Overview with colour dots. Not in the client list.
+- **Removed from sessions:** Affiliation column + filter on the Activities page, and the
+  dropdown on every schedule/edit session form (Calendar, client page). Values already saved
+  on sessions stay in the database, unused.
+- **Workspace-scoped:** a client can't be given another workspace's affiliation (the
+  existing scoped-field mixin covers many-to-many fields).
+- `check_tenant_integrity` now also checks **many-to-many links** (it only checked single
+  links before). Verified it reports a deliberately bad link.
+- Settings → Affiliation wording updated; the delete message no longer claims sessions keep
+  the label (they never did).
+- **Migration `clients/0026`:** new client ↔ affiliation link table.
+
+## Tests
+`test_client_affiliations.py` (2 tests).
