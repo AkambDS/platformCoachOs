@@ -348,7 +348,7 @@ function NewActivityModal({ clientId, defaultCoachId, clientName, onClose, onSav
         </div>
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
           <span style={{ color: 'var(--gold)', fontWeight: 700, fontSize: 14, lineHeight: 1 }}>✓</span>
-          <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
+          <span>An automatic reminder will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> before the session.</span>
         </div>
       </div>
       {sendConfirmation && genericTemplates.length > 0 && confirmationTemplates.length === 0 && (

@@ -238,7 +238,7 @@ function ActivityFormModal({
           <label htmlFor="send_confirmation" style={{ fontSize: 13, cursor: 'pointer', lineHeight: 1.4 }}>
             <span style={{ fontWeight: 500, color: 'var(--ink)' }}>Send confirmation email + calendar invite</span>
             <span style={{ display: 'block', fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
-              Client gets a .ics file to add to their calendar, plus 24h and 1h reminders.
+              Client gets a .ics file to add to their calendar, plus a 24h reminder.
             </span>
           </label>
         </div>
@@ -379,12 +379,15 @@ function NotificationStatus({ activity }: { activity: any }) {
         label="24-hour reminder"
         pending={isScheduled}
       />
-      <NRow
-        sent={activity.reminder_1h_sent}
-        sentAt={activity.reminder_1h_sent_at}
-        label="1-hour reminder"
-        pending={isScheduled}
-      />
+      {/* 1h reminder is switched off (SESSION_REMINDER_HOURS) — only show past sends. */}
+      {activity.reminder_1h_sent && (
+        <NRow
+          sent={activity.reminder_1h_sent}
+          sentAt={activity.reminder_1h_sent_at}
+          label="1-hour reminder"
+          pending={false}
+        />
+      )}
       {isCancelled && (
         <NRow
           sent={!!activity.cancellation_sent_at}

@@ -1851,7 +1851,7 @@ const GENERIC_USE_CASES: UseCase[] = [
   { key: 'confirmation',         label: 'Booking Confirmation',     audience: 'client' },
   { key: 'reschedule',           label: 'Reschedule Notice',        audience: 'client' },
   { key: 'reminder_24h',         label: '24h Reminder',             audience: 'client' },
-  { key: 'reminder_1h',          label: '1h Reminder',              audience: 'client' },
+  // reminder_1h hidden: the 1h reminder is switched off (backend SESSION_REMINDER_HOURS).
   { key: 'invoice',              label: 'Invoice',                  audience: 'client' },
   { key: 'payment_receipt',      label: 'Payment Receipt',          audience: 'client' },
   { key: 'portal_invite',        label: 'Portal Invite',            audience: 'client' },

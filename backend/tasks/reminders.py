@@ -31,6 +31,14 @@ REMINDER_WINDOWS = [
 ]
 
 
+def active_reminder_windows():
+    """REMINDER_WINDOWS limited to settings.SESSION_REMINDER_HOURS (24h only by default —
+    the 1h reminder is switched off there, for every workspace)."""
+    from django.conf import settings
+    enabled = set(getattr(settings, "SESSION_REMINDER_HOURS", [24, 1]))
+    return [w for w in REMINDER_WINDOWS if w[0] in enabled]
+
+
 @shared_task(name="tasks.reminders.dispatch_activity_reminders")
 def dispatch_activity_reminders():
     """Scan for scheduled activities whose reminder lead time has arrived (or was
@@ -43,7 +51,7 @@ def dispatch_activity_reminders():
     dispatched = 0
     handled_ids: set[str] = set()  # at most one reminder slot actually fires per activity per run
 
-    for hours_before, label, db_flag in REMINDER_WINDOWS:
+    for hours_before, label, db_flag in active_reminder_windows():
         due_by = now + timedelta(hours=hours_before)
 
         # start_at__gt=now: never fires for a session that has already started —

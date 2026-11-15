@@ -55,14 +55,15 @@ def scheduled_items(workspace, days: int = 30) -> list:
     horizon = now + timedelta(days=days)
     items = []
 
-    # ── Session reminders (24h and 1h, each with the coach's copy) ────────────
+    # ── Session reminders (enabled lead times only — settings.SESSION_REMINDER_HOURS) ──
+    from tasks.reminders import active_reminder_windows
     for act in (Activity.objects
                 .filter(workspace=workspace, status="scheduled", start_at__gt=now,
                         start_at__lte=horizon + timedelta(hours=24))
                 .select_related("client", "coach")):
         client = act.client
         when = _fmt_dt_human(act.start_at, getattr(workspace, "workspace_timezone", ""))
-        for hours, flag in ((24, "reminder_24h_sent"), (1, "reminder_1h_sent")):
+        for hours, _label, flag in active_reminder_windows():
             if getattr(act, flag):
                 continue
             at = act.start_at - timedelta(hours=hours)

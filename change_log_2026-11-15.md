@@ -12,6 +12,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **D** | Session status: one "Mark as" menu (Confirmed/Late/Completed/Missed/Rescheduled) |
 | **E** | Monthly subscription invoices: "Due upon receipt" option |
 | **F** | Activities page shows one month at a time |
+| **G** | Session reminders: 24h only (1h switched off by a setting) |
 
 ---
 
@@ -143,3 +144,19 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_activity_month_view.py` (1 test: month range + owner/coach scope).
+
+---
+
+# Part G — Session reminders: 24h only
+
+- **Switch:** `SESSION_REMINDER_HOURS` in `config/settings/base.py`, default `[24]`, for
+  every workspace. To bring 1h back: `SESSION_REMINDER_HOURS=24,1` in `backend/.env` and
+  restart Celery — no code or DB change.
+- `tasks/reminders.py` (email + SMS) and the email forecast use only the enabled lead times.
+- UI: reminder descriptions say 24h only; the "1h Reminder" template is hidden in Settings;
+  the 1-hour row in a session's notification status shows only for past sends.
+- A session booked < 24h ahead gets the 24h reminder straight away (wording uses the real
+  time left).
+
+## Tests
+`test_reminder_windows.py` (2 tests: 1h off; 1h back when re-enabled).

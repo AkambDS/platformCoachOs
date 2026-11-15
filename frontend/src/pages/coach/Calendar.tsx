@@ -507,7 +507,7 @@ function NewActivityModal({ defaultStart, onClose, onSaved }: any) {
         </div>
         <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12, color: 'var(--muted)' }}>
           <span style={{ color: 'var(--gold)', fontWeight: 700, fontSize: 14, lineHeight: 1 }}>✓</span>
-          <span>Automatic reminders will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> and <strong style={{ color: 'var(--ink)' }}>1 hour</strong> before the session.</span>
+          <span>An automatic reminder will be sent to the client <strong style={{ color: 'var(--ink)' }}>24 hours</strong> before the session.</span>
         </div>
       </div>
       {sendConfirmation && genericTemplates.length > 0 && confirmationTemplates.length === 0 && (
@@ -1037,7 +1037,7 @@ function ActivityDetailModal({ activity, onClose, onStatusChange, onCancel, onEd
       )}
       {activity.status === 'scheduled' && (
         <div style={{ marginTop: 14, padding: '10px 12px', background: 'rgba(201,168,76,.07)', border: '1px solid rgba(201,168,76,.2)', borderRadius: 6, fontSize: 12, color: 'var(--muted)', lineHeight: 1.5 }}>
-          Client will receive automatic reminders <strong style={{ color: 'var(--ink)' }}>24h</strong> and <strong style={{ color: 'var(--ink)' }}>1h</strong> before this session.
+          Client will receive an automatic reminder <strong style={{ color: 'var(--ink)' }}>24h</strong> before this session.
         </div>
       )}
     </Modal>

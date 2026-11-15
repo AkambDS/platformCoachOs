@@ -300,6 +300,11 @@ CELERY_RESULT_BACKEND  = "django-db"
 CELERY_ACCEPT_CONTENT  = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_TIMEZONE        = "UTC"
+# Session reminder lead times (hours before start) that tasks.reminders actually sends,
+# for every workspace. 1h was turned off 2026-11-15 (24h only); add 1 back to re-enable:
+# SESSION_REMINDER_HOURS=24,1 in backend/.env — no code or DB change needed.
+SESSION_REMINDER_HOURS = env.list("SESSION_REMINDER_HOURS", cast=int, default=[24])
+
 CELERY_BEAT_SCHEDULER  = "django_celery_beat.schedulers:DatabaseScheduler"
 
 from celery.schedules import crontab
