@@ -21,6 +21,23 @@ down:
 restart:
 	$(COMPOSE) restart backend celery celery-beat
 
+# ── Safe deploy (recommended) — see ops/deploy.sh ────────────────────────────
+# plan: what changed + version changes + what would rebuild (changes nothing)
+deploy-plan:
+	ops/deploy.sh prod --plan
+
+# pull → version checks → back up images → build changed → regression tests → restart → health
+deploy-safe:
+	ops/deploy.sh prod
+
+# read-only health check (containers, site, versions, Celery, tenancy, logs)
+health:
+	ops/postdeploy_health.sh prod
+
+# put back the images backed up by the last deploy-safe
+rollback:
+	ops/rollback.sh prod
+
 # ── Deploy (pull code + rebuild + restart) ────────────────────────────────────
 
 # Full deploy — rebuilds everything including frontend on EC2 (slow on small instances)
@@ -83,4 +100,4 @@ backup:
 	$(COMPOSE) exec db pg_dump -U coachos coachos | gzip > backup_$(shell date +%Y%m%d_%H%M%S).sql.gz
 	@echo "Backup saved."
 
-.PHONY: status up down restart deploy logs logs-api logs-celery logs-nginx logs-all shell migrate createsuperuser backup
+.PHONY: status up down restart deploy deploy-plan deploy-safe health rollback logs logs-api logs-celery logs-nginx logs-all shell migrate createsuperuser backup

@@ -218,7 +218,13 @@ Important to know before building on top of these areas:
 
 ## 8. Operations quick reference
 
-- **Deploy:** `git push` locally → on EC2, `git pull` then
+- **Safe deploy (preferred, 2026-11-10):** on EC2 `make deploy-plan` then
+  `make deploy-safe` (`ops/deploy.sh`: changed-files diff, version checks against
+  `backend/requirements.lock`, image backup, rebuild only what changed, regression tests
+  in the new image, `ops/postdeploy_health.sh`). `make health` = read-only check,
+  `make rollback` = restore the backed-up images. Python packages are locked in
+  `backend/requirements.lock`; never rebuild without it.
+- **Deploy (legacy, no checks):** `git push` locally → on EC2, `git pull` then
   `make deploy` (full), `make deploy-backend` (skip frontend rebuild), or
   `make deploy-frontend HOST=ubuntu@<ec2-ip>` (local build + rsync). Always
   via `docker-compose.prod.yml` — the bare `docker compose up` uses the dev

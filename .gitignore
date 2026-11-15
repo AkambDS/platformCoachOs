@@ -31,3 +31,7 @@ Thumbs.db
 docs/stripe-setup-guide.html
 backend/library/
 new_features.md
+
+# ops/deploy.sh state (last deployed commit, image backups)
+.deploy_state_*
+.deploy_backup_*

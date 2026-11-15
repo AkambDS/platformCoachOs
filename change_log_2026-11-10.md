@@ -10,6 +10,7 @@ commit prod was rebuilt with on 2026-11-02.
 | **C** | 🔴 Prod: every background job fails after today's rebuild (Celery 5.7 vs redis 5) | uncommitted (new) |
 | **D** | Portal: a client couldn't log progress on a goal they created themselves (404) | uncommitted (new) |
 | **E** | Owner + coaches see the client's goal progress, and get an email for every client goal update | uncommitted (new) |
+| **F** | Safe deploy: version check, image backup, deploy only what changed, health check, regression tests | uncommitted (new) |
 
 No migrations. A backend-only deploy is **not** enough: Part B is frontend, so use the full
 `make deploy`.
@@ -121,7 +122,7 @@ post-deploy check scripts from 2026-10-18).
 - **Later, a separate change:** upgrading to redis-py 6.4+ and Celery 5.7 is a separate,
   tested change.
 - **Every version is now locked**, so this can't happen again:
-  - **`backend/requirements.lock`** (new) holds the exact version of all 116 packages,
+  - **`backend/requirements.lock`** (new) holds the exact version of all 115 packages,
     including sub-dependencies. It was taken with `pip freeze` from the local stack the
     test suite runs on.
   - **`backend/Dockerfile`** installs `-r requirements.txt -c requirements.lock` and pins
@@ -239,15 +240,60 @@ docker compose -f docker-compose.prod.yml logs --since 15m celery | grep send_cl
 
 ---
 
+# Part F — Safe deploy: version check, image backup, health check
+
+**Why:** Part C reached prod because a rebuild silently pulled new package versions,
+and nothing checked the result. Every deploy now goes through one script that shows
+what changed, backs up the running images, rebuilds only what changed, tests the new
+image before going live, and checks health afterwards.
+
+## New files
+| File | What it does |
+|---|---|
+| `ops/deploy.sh` | `prod` (default) or `local`. **1** files changed since the last deploy · **2** version checks: STOPS if `requirements.txt` changed without `requirements.lock` (or `package.json` without `package-lock.json`); lists every package version change and base-image change · **3** plan: what rebuilds; migrations → asks for an RDS snapshot · **5** backs up the running images (`coachos-backup:<svc>-<time>-<commit>`, newest 3 kept) · **6** builds only the changed services · **4** regression tests **in the new image**, before anything live changes (prod: DB-free tests; local: the full tenant/activity/regression suites) · restarts only what changed (nginx config tested first) · **7** health check; on success records the commit in `.deploy_state_<env>` |
+| `ops/postdeploy_health.sh` | Your health commands, plus pass/fail. **Hard checks** (exit 1): every container up/healthy, site URLs answer, `manage.py deploy_check`. **Warnings**: backend errors and 500s, Celery errors, nginx 404/5xx, app ErrorLog. `SINCE=10m` sets the log window (default 1h) |
+| `ops/rollback.sh` | Re-tags the backed-up images and restarts those services, then runs the health check. Warns if the rolled-back deploy had migrations |
+| `backend/apps/accounts/management/commands/deploy_check.py` | Read-only: DB · installed packages == `requirements.lock` · opens a real Celery broker channel (where `VersionMismatch` was raised) · worker ping · tenant integrity |
+| `backend/test_deploy_regression.py` | Installed packages == lock · every `requirements.txt` package is in the lock · broker channel opens · `POST /api/portal/request-code/` returns 200 and queues the email |
+| `Makefile` | `make deploy-plan`, `make deploy-safe`, `make health`, `make rollback` |
+| `.gitignore` | `.deploy_state_*`, `.deploy_backup_*` (per-server state) |
+
+Also: `requirements.lock` lost `pyflakes`. It had been installed by hand inside the old
+local container, so a clean image doesn't have it. The fresh build is now identical to
+the lock (115 packages).
+
+## Tested locally
+- `ops/deploy.sh local --plan`: listed the changes, showed the new lock and the base
+  image change (`python:3.12-slim` → `3.12.14-slim`), and planned the rebuild.
+- `ops/deploy.sh local --yes`: backed up 3 images, rebuilt, **26 regression tests
+  passed**, restarted, health check **HEALTHY**.
+  - The first attempts failed for real reasons, and the checks caught them: pyflakes
+    drift, and a worker or app still starting (retries added).
+- `ops/rollback.sh local`: restored the backed-up images and restarted.
+- With redis-py faked to an old version, `deploy_check` fails with the same
+  `VersionMismatch` as prod.
+- The prod-style DB-free test run in a one-off container passed (3 passed).
+
+**Not run on prod:** the `prod` paths (`git fetch` / fast-forward, the `backend` /
+`celery` / `celery-beat` / `nginx` service names, prod URLs) are untested until the first
+`make deploy-plan` on EC2.
+
+---
+
 ## Deploy
 1. **Locally:** run the tests above and `cd frontend && npx tsc --noEmit`, then commit and
    push.
-2. **On EC2:**
+2. **On EC2,** the first time with the new scripts:
    ```bash
-   git pull
-   make deploy        # full: Part B is frontend
-   docker compose -f docker-compose.prod.yml logs --since 10m backend 2>&1 | grep -E "Error|Traceback"
+   cd ~/platformCoachOs
+   git pull                                     # brings in ops/deploy.sh itself
+   chmod +x ops/*.sh
+   ops/deploy.sh --plan --from <commit running now>   # e.g. c6310ce, or whatever `git log -1` showed before the pull
+   ops/deploy.sh --from <same commit>           # backs up, rebuilds backend + frontend, tests, health check
    ```
+   From then on: `make deploy-plan`, then `make deploy-safe`. The script remembers the
+   last deployed commit.
+   - The old `make deploy` still works, but skips every check and backup.
 
 ## Post-deploy checks
 1. **Tenant integrity:** `docker compose -f docker-compose.prod.yml exec -T backend python
