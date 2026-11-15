@@ -11,6 +11,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **C** | Affiliations move from sessions to clients |
 | **D** | Session status: one "Mark as" menu (Confirmed/Late/Completed/Missed/Rescheduled) |
 | **E** | Monthly subscription invoices: "Due upon receipt" option |
+| **F** | Activities page shows one month at a time |
 
 ---
 
@@ -130,3 +131,15 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_invoice_due_upon_receipt.py` (2 tests).
+
+---
+
+# Part F — Activities page: one month at a time
+
+- ‹ Month › navigation (default this month, "This month" to jump back); status tabs, type
+  filter and search apply within the month. Uses the existing `start`/`end` API filter.
+- Who sees what is unchanged and confirmed: owner — the whole workspace; coach — sessions
+  they run; client portal — their own sessions.
+
+## Tests
+`test_activity_month_view.py` (1 test: month range + owner/coach scope).

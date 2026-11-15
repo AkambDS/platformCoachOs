@@ -9,7 +9,7 @@ import { ActivityStatusMenu, statusChangedLabel } from '../../components/Activit
 import { apiErrorMessage } from '../../lib/apiError'
 import { useAuthStore } from '../../store/auth'
 import {
-  CalendarDays, MapPin, User, Clock, ChevronRight, Mail, CheckCircle2, Circle, XCircle,
+  CalendarDays, MapPin, User, Clock, ChevronRight, ChevronLeft, Mail, CheckCircle2, Circle, XCircle,
 } from 'lucide-react'
 
 const TYPE_COLOURS: Record<string, string> = {
@@ -564,7 +564,16 @@ export default function Activities() {
   const [cancelTarget, setCancelTarget] = useState<any>(null)
   const [cancelScope,  setCancelScope]  = useState<'this'|'future'|'all'>('this')
 
-  const params: any = { page_size: 200 }
+  // One month at a time (default: this month) — the list was every session ever, which
+  // only grows. Bounds are the viewer's local month, sent as UTC instants (start/end
+  // filter on start_at in ActivityViewSet.get_queryset).
+  const [month, setMonth] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })
+  const monthEnd = new Date(month.getFullYear(), month.getMonth() + 1, 1)
+  const monthLabel = month.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+  const isThisMonth = (() => { const d = new Date(); return d.getFullYear() === month.getFullYear() && d.getMonth() === month.getMonth() })()
+  const shiftMonth = (n: number) => setMonth(m => new Date(m.getFullYear(), m.getMonth() + n, 1))
+
+  const params: any = { page_size: 200, start: month.toISOString(), end: new Date(monthEnd.getTime() - 1).toISOString() }
   if (statusFilter)      params.status = statusFilter
   if (typeFilter)        params.activity_type = typeFilter
 
@@ -581,7 +590,7 @@ export default function Activities() {
   })
 
   const { data, isLoading } = useQuery({
-    queryKey: ['activities-list', statusFilter, typeFilter],
+    queryKey: ['activities-list', statusFilter, typeFilter, month.toISOString()],
     queryFn: () => activitiesApi.list(params).then(r => r.data),
   })
   const activities: any[] = (data?.results || data || []).filter((a: any) => {
@@ -680,6 +689,20 @@ export default function Activities() {
           ))}
         </div>
 
+        {/* Month */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 14px' }}>
+          <button className="btn btn-outline btn-sm" onClick={() => shiftMonth(-1)} title="Previous month"
+            style={{ padding: '4px 8px', display: 'flex' }}><ChevronLeft size={14} /></button>
+          <div style={{ minWidth: 150, textAlign: 'center', fontWeight: 600, fontSize: 14 }}>{monthLabel}</div>
+          <button className="btn btn-outline btn-sm" onClick={() => shiftMonth(1)} title="Next month"
+            style={{ padding: '4px 8px', display: 'flex' }}><ChevronRight size={14} /></button>
+          {!isThisMonth && (
+            <button className="btn btn-ghost btn-sm" onClick={() => setMonth(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1) })}>
+              This month
+            </button>
+          )}
+        </div>
+
         {/* Toolbar */}
         <div className="toolbar">
           <div className="search-box">
@@ -711,7 +734,7 @@ export default function Activities() {
             <div className="empty-icon"><CalendarDays size={36} strokeWidth={1} /></div>
             <h3>No activities found</h3>
             <p style={{ marginBottom: 16 }}>
-              {statusFilter ? `No ${statusFilter} activities` : 'Schedule your first session to get started'}
+              {statusFilter ? `No ${statusFilter} activities in ${monthLabel}` : `No activities in ${monthLabel}`}
             </p>
             <button className="btn btn-dark" onClick={() => setShowForm(true)}>+ Schedule Activity</button>
           </div>
