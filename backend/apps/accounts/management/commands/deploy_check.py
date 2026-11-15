@@ -110,6 +110,19 @@ class Command(BaseCommand):
                     time.sleep(5)
                 if replies:
                     ok(f"{len(replies)} worker(s) answered: {', '.join(k for r in replies for k in r)}")
+                    # A worker started from OLD code rejects new tasks as "unregistered" and
+                    # silently drops them (2026-11-15: client file-share emails). Every task in
+                    # this image's code must be known to every running worker.
+                    app.loader.import_default_modules()
+                    expected = {n for n in app.tasks if n.startswith("tasks.")}
+                    registered = app.control.inspect(timeout=5).registered() or {}
+                    stale = {w: sorted(expected - set(t)) for w, t in registered.items() if expected - set(t)}
+                    if stale:
+                        for w, missing in stale.items():
+                            self.stdout.write(self.style.ERROR(f"     {w} is missing: {', '.join(missing[:8])}"))
+                        bad("worker-code", "a Celery worker is running old code — restart celery (and celery-beat)")
+                    else:
+                        ok(f"workers know all {len(expected)} background tasks")
                 else:
                     bad("worker", "no Celery worker answered the ping (is the celery container up?)")
             except Exception as e:

@@ -14,6 +14,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **F** | Activities page shows one month at a time |
 | **G** | Session reminders: 24h only (1h switched off by a setting) |
 | **H** | Client portal files: uploads, per-client permissions, share with coach, Library → Shared with you |
+| **I** | Health check catches a Celery worker running old code |
 
 ---
 
@@ -205,3 +206,42 @@ pending choices-only change to `visibility`, no SQL), `library/0006` (shared fla
 
 ## Tests
 `test_portal_uploads.py` (10 tests).
+
+---
+
+# Part I — Health check: Celery worker running old code
+
+- **What happened (local):** the Celery worker had been started before the new
+  file-share email task existed; it rejected each one as "unregistered task" and the email
+  was dropped. Restarting the worker fixed it; the missed emails were re-sent.
+- **Prevention:** `deploy_check` (run by `make health` and every `make deploy-safe`) now
+  fails with "a Celery worker is running old code — restart celery (and celery-beat)" if
+  any running worker is missing a task that exists in the code.
+- `make deploy-safe` already restarts Celery when backend code changes; this catches a
+  manual `git pull` + backend-only restart.
+
+---
+
+## Deploy
+1. **Locally:** run the tests below and `cd frontend && npx tsc --noEmit`, then push.
+2. **On EC2:** `make deploy-plan`, then `make deploy-safe`. It will list **6 migrations**
+   and ask you to confirm an **RDS snapshot** first:
+   `audit/0004`, `clients/0026`, `clients/0027`, `invoicing/0013`, `library/0005`, `library/0006`.
+   All add tables/columns/an index; existing data is unchanged (new client permission
+   fields get their defaults).
+3. Nothing to add to `.env` — reminders default to 24h only.
+
+## Tests (local, all passing)
+```
+docker compose exec -T api pytest -q test_portal_uploads.py test_tenant_isolation.py \
+  test_client_affiliations.py test_client_list_sort.py test_client_url_fields.py \
+  test_activity_validation.py test_activity_month_view.py test_invoice_due_upon_receipt.py \
+  test_reminder_windows.py test_deploy_regression.py apps/portal/tests.py
+```
+
+## Post-deploy checks
+1. `make health` → HEALTHY, including "workers know all … background tasks".
+2. Client page → Portal Permissions → defaults shown; client portal → Files → upload, Share
+   with coach → owner + coach emailed; file appears under Library → Shared with you.
+3. Clients list → Status column shows client statuses; sort defaults to Recently viewed.
+4. New Invoice → Monthly Subscription → "Upon receipt" → preview shows "Due: Upon Receipt".
