@@ -13,6 +13,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **E** | Monthly subscription invoices: "Due upon receipt" option |
 | **F** | Activities page shows one month at a time |
 | **G** | Session reminders: 24h only (1h switched off by a setting) |
+| **H** | Client portal files: uploads, per-client permissions, share with coach, Library → Shared with you |
 
 ---
 
@@ -160,3 +161,47 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_reminder_windows.py` (2 tests: 1h off; 1h back when re-enabled).
+
+---
+
+# Part H — Client portal files
+
+## Client page → Portal Permissions (owner or the client's coach)
+| Setting | Default |
+|---|---|
+| File upload | On |
+| Maximum file size | 10 MB (1–100) |
+| Maximum number of files | 5 (0–100) |
+| Client can delete their uploads | Off |
+
+## Client portal → Files
+- **Upload** (count, size and type enforced server-side; executables blocked).
+- Uploads are **private** until the client presses **Share with coach**; **Stop sharing**
+  hides the file again.
+- The client can **edit their own uploads** in the document editor; files the coach shared
+  stay view-only (one Library file can be shared with many clients).
+- Delete own uploads only when allowed.
+
+## Coach side
+- **Library → Shared with you → <client>** (sidebar): files clients shared. Owner sees every
+  client's; a coach only their own clients'. **Library → All Files never lists client
+  files.** Also listed on the **Client Files** page and on the client's Files tab.
+- Owner and the client's coach can **edit a client's shared file live**; its sharing, file
+  and "Save as PDF" are locked (server-side too).
+- **Client Files tab** on the client page: the client's coach can now edit client files
+  (Clients → edit) and the client's shared uploads (Library → edit), not only the owner.
+- **Email "Client File Shared"** to the workspace owner and the client's coach when a client
+  shares a file (editable in Settings → Emails).
+
+## Workspace isolation
+- Each upload is stored under `library/<workspace_id>/`, tied to the client's own
+  workspace; the portal login of the same person in another workspace can't see, share,
+  delete or count it, and that workspace's owner can't open it. A private upload can't be
+  opened by anyone else, even by id.
+
+## Migrations
+`clients/0027` (four permission fields), `library/0005` (`uploaded_by_client`; also a
+pending choices-only change to `visibility`, no SQL), `library/0006` (shared flag + date).
+
+## Tests
+`test_portal_uploads.py` (10 tests).

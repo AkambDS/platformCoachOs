@@ -801,13 +801,16 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         if not obj.file_s3_key:
             return Response({"detail": "No file to preview."}, status=status.HTTP_400_BAD_REQUEST)
 
+        from apps.accounts.permissions import has_tab_access
         is_owner    = request.user.role == "business_owner"
         is_uploader = obj.uploaded_by_id == request.user.id
-        can_edit    = is_owner or is_uploader
+        # The client's coach (get_object is already limited to clients this user can
+        # see) may edit, as anyone with Clients → edit — same right as editing the client.
+        can_edit    = is_owner or is_uploader or has_tab_access(request.user, "clients", "edit")
 
         requested_mode = request.query_params.get("mode", "view")
         if requested_mode == "edit" and not can_edit:
-            return Response({"detail": "Only the uploader or workspace owner can edit this file."},
+            return Response({"detail": "You don't have permission to edit this client's files."},
                              status=status.HTTP_403_FORBIDDEN)
         mode = "edit" if (requested_mode == "edit" and can_edit) else "view"
 

@@ -122,6 +122,8 @@ class ClientDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSe
     goals       = ClientGoalSerializer(many=True, read_only=True)
     commitments = CommitmentSerializer(many=True, read_only=True)
     coach_name  = serializers.CharField(source="coach.full_name", read_only=True)
+    # For the Portal Permissions tab: "3 of 5 files used".
+    portal_uploads_used = serializers.SerializerMethodField()
 
     class Meta:
         model  = Client
@@ -129,6 +131,9 @@ class ClientDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSe
         # portal_access only changes through ClientViewSet.invite_portal / revoke_portal,
         # which are workspace-owner-only — never via a plain client create/edit.
         read_only_fields = ["id", "workspace", "created_at", "updated_at", "portal_access"]
+
+    def get_portal_uploads_used(self, obj):
+        return obj.portal_uploads.count()
 
     URL_FIELDS = ("website", "linkedin_url")
 

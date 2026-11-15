@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useMemo } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { libraryApi, authApi, clientsApi } from '../../api/client'
 import { useAuthStore } from '../../store/auth'
@@ -66,6 +66,44 @@ function FolderTree({ folders, selected, onSelect }: {
         <FolderNode key={f.id} folder={f} selected={selected} onSelect={onSelect} depth={0} />
       ))}
     </>
+  )
+}
+
+// Sidebar section under the folder tree: one entry per client who shared files with you.
+function SharedWithYou({ clients, selected, onSelect }: {
+  clients: [string, { name: string; count: number }][]; selected: string | null; onSelect: (id: string) => void
+}) {
+  const [open, setOpen] = useState(true)
+  const row = (key: string, label: string, count: number, depth: number, icon: any) => {
+    const isSel = selected === key
+    return (
+      <div key={key} onClick={() => onSelect(key)} style={{
+        padding: `7px 12px 7px ${12 + depth * 16}px`, borderRadius: 'var(--radius-sm)', cursor: 'pointer', fontSize: 13,
+        fontWeight: isSel ? 600 : 400, background: isSel ? 'var(--gold-faint, #faf6ed)' : 'transparent',
+        color: isSel ? 'var(--gold)' : 'var(--ink)', display: 'flex', alignItems: 'center', gap: 6,
+      }}>
+        {icon}<span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{label}</span>
+        <span style={{ fontSize: 11, color: 'var(--muted)' }}>{count}</span>
+      </div>
+    )
+  }
+  const total = clients.reduce((n, [, c]) => n + c.count, 0)
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
+      <div onClick={() => setOpen(o => !o)} style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+        fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase', color: 'var(--muted)', padding: '4px 12px 6px' }}>
+        <ChevronRight size={11} style={{ transform: open ? 'rotate(90deg)' : 'none', transition: '.15s' }} /> Shared with you
+      </div>
+      {open && (clients.length === 0 ? (
+        <div style={{ fontSize: 12, color: 'var(--muted)', padding: '4px 12px 6px' }}>No client has shared a file yet.</div>
+      ) : (
+        <>
+          {row('shared:', 'All clients', total, 0, <Folder size={14} />)}
+          {clients.map(([id, c]) => row(`shared:${id}`, c.name, c.count, 1,
+            selected === `shared:${id}` ? <FolderOpen size={14} /> : <Folder size={14} />))}
+        </>
+      ))}
+    </div>
   )
 }
 
@@ -606,7 +644,10 @@ function FilePreviewPanel({ item, currentUser, folders, onClose, onEdit, onDelet
   const hasFile  = !!item.presigned_url
   const isOwner    = currentUser?.role === 'business_owner'
   const isUploader = item.uploaded_by === currentUser?.id
-  const canEdit    = isOwner || isUploader
+  // A client's shared file (Shared with you): owner + the client's coach may edit it live
+  // (server: library edit_config), but its sharing/file can't be changed or copied here.
+  const isClientFile = !!item.uploaded_by_client
+  const canEdit    = isOwner || isUploader || isClientFile
 
   const handleReplaceFile = async (file: File) => {
     setReplacing(true)
@@ -721,7 +762,7 @@ function FilePreviewPanel({ item, currentUser, folders, onClose, onEdit, onDelet
             <Download size={13} /> Download
           </button>
         )}
-        {hasFile && (
+        {hasFile && !isClientFile && (
           <>
             <input ref={replaceRef} type="file" style={{ display: 'none' }} onChange={e => { const f = e.target.files?.[0]; if (f) handleReplaceFile(f) }} />
             <button onClick={() => replaceRef.current?.click()} disabled={replacing} className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6 }}>
@@ -729,15 +770,17 @@ function FilePreviewPanel({ item, currentUser, folders, onClose, onEdit, onDelet
             </button>
           </>
         )}
-        {hasFile && !isPdf && isOffice && (
+        {hasFile && !isPdf && isOffice && !isClientFile && (
           <button onClick={() => setShowSavePdf(true)} className="btn btn-outline btn-sm" style={{ width: '100%', justifyContent: 'center', gap: 6 }}>
             <Download size={13} /> Save as PDF…
           </button>
         )}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button onClick={onEdit} className="btn btn-outline btn-sm" style={{ flex: 1, justifyContent: 'center', gap: 5 }}>
-            <Pencil size={12} /> Edit
-          </button>
+          {!isClientFile && (
+            <button onClick={onEdit} className="btn btn-outline btn-sm" style={{ flex: 1, justifyContent: 'center', gap: 5 }}>
+              <Pencil size={12} /> Edit
+            </button>
+          )}
           <button onClick={onDelete} className="btn btn-outline btn-sm" style={{ flex: 1, justifyContent: 'center', gap: 5, color: '#c0392b', borderColor: '#f5c6c2' }}>
             <Trash2 size={12} /> Delete
           </button>
@@ -820,9 +863,28 @@ export default function Library() {
   })
   const folders: any[] = foldersData as any[]
 
+  // "Shared with you": files clients chose to share from their portal — kept out of All
+  // Files (the backend never lists them without ?client_uploads=1). Selection values are
+  // 'shared:' (every client) or 'shared:<clientId>'. Owner sees every client's; a coach
+  // only their own clients' (server-side).
+  const { data: sharedData = [] } = useQuery({
+    queryKey: ['library-shared-with-you'],
+    queryFn: () => libraryApi.items({ client_uploads: 1, page_size: 500 }).then(r => r.data?.results ?? r.data),
+  })
+  const sharedClients = useMemo(() => {
+    const m = new Map<string, { name: string; count: number }>()
+    ;(sharedData as any[]).forEach(f => {
+      const c = m.get(f.uploaded_by_client) || { name: f.uploaded_by_client_name || 'Client', count: 0 }
+      c.count++; m.set(f.uploaded_by_client, c)
+    })
+    return [...m.entries()].sort((a, b) => a[1].name.localeCompare(b[1].name))
+  }, [sharedData])
+  const sharedSel = selectedFolder?.startsWith('shared:') ? selectedFolder.slice(7) : null   // '' = all clients
+
   const params: any = {}
   if (search) params.q = search
-  if (selectedFolder === 'root') params.folder = 'root'
+  if (sharedSel !== null) { params.client_uploads = 1; if (sharedSel) params.client = sharedSel }
+  else if (selectedFolder === 'root') params.folder = 'root'
   else if (selectedFolder) params.folder = selectedFolder
 
   const { data: itemsData = [], isLoading } = useQuery({
@@ -835,12 +897,14 @@ export default function Library() {
     if (!confirm(`Delete "${title}"?`)) return
     try {
       await libraryApi.deleteItem(id)
-      qc.invalidateQueries({ queryKey: ['library-items'] })
+      qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] })
       show('Deleted')
     } catch { show('Failed to delete', 'error') }
   }
 
-  const folderLabel = selectedFolder === null
+  const folderLabel = sharedSel !== null
+    ? (sharedSel ? `Shared with you · ${sharedClients.find(([id]) => id === sharedSel)?.[1].name || 'Client'}` : 'Shared with you')
+    : selectedFolder === null
     ? 'All Files'
     : selectedFolder === 'root'
       ? 'Unfiled'
@@ -876,6 +940,7 @@ export default function Library() {
             <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '.1em', textTransform: 'uppercase',
                           color: 'var(--muted)', padding: '4px 12px 8px' }}>Folders</div>
             <FolderTree folders={folders} selected={selectedFolder} onSelect={setSelectedFolder} />
+            <SharedWithYou clients={sharedClients} selected={selectedFolder} onSelect={setSelectedFolder} />
             <div style={{ borderTop: '1px solid var(--border)', marginTop: 8, paddingTop: 8 }}>
               <button className="btn btn-ghost btn-sm" onClick={() => setShowNewFolder(true)}
                 style={{ width: '100%', justifyContent: 'flex-start', gap: 6, fontSize: 12, color: 'var(--muted)' }}>
@@ -909,9 +974,11 @@ export default function Library() {
               <div style={{ textAlign: 'center', padding: 40 }}>
                 <Upload size={26} color="var(--muted)" style={{ margin: '0 auto 10px' }} />
                 <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                  {search ? 'No files match your search' : 'No files yet'}
+                  {search ? 'No files match your search'
+                    : sharedSel !== null ? 'No client has shared a file yet — clients share from their portal’s Files tab'
+                    : 'No files yet'}
                 </div>
-                {!search && (
+                {!search && sharedSel === null && (
                   <button className="btn btn-dark btn-sm" style={{ marginTop: 14 }} onClick={() => setShowUpload(true)}>
                     <Upload size={13} /> Upload File
                   </button>
@@ -997,9 +1064,9 @@ export default function Library() {
               onClose={() => setPreviewItem(null)}
               onEdit={() => setEditTarget(previewItem)}
               onDelete={() => { handleDeleteItem(previewItem.id, previewItem.title); setPreviewItem(null) }}
-              onReplaced={() => { qc.invalidateQueries({ queryKey: ['library-items'] }); setPreviewItem(null) }}
+              onReplaced={() => { qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] }); setPreviewItem(null) }}
               onEditInBrowser={() => setEditingItem(previewItem)}
-              onConverted={(newItem) => { qc.invalidateQueries({ queryKey: ['library-items'] }); setPreviewItem(newItem) }}
+              onConverted={(newItem) => { qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] }); setPreviewItem(newItem) }}
             />
           ) : (
             <EmptyPreviewState />
@@ -1013,7 +1080,7 @@ export default function Library() {
           getEditConfig={(mode) => libraryApi.editConfig(editingItem.id, mode).then(r => r.data)}
           onClose={() => setEditingItem(null)}
           onSaved={async () => {
-            qc.invalidateQueries({ queryKey: ['library-items'] })
+            qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] })
             try {
               const res = await libraryApi.getItem(editingItem.id)
               setPreviewItem(res.data)
@@ -1026,7 +1093,7 @@ export default function Library() {
         <UploadModal
           folders={folders}
           onClose={() => setShowUpload(false)}
-          onUploaded={() => { setShowUpload(false); qc.invalidateQueries({ queryKey: ['library-items'] }) }}
+          onUploaded={() => { setShowUpload(false); qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] }) }}
         />
       )}
       {showNewFolder && (
@@ -1040,7 +1107,7 @@ export default function Library() {
           item={editAccessTarget}
           currentUser={user}
           onClose={() => setEditAccessTarget(null)}
-          onSaved={() => { setEditAccessTarget(null); qc.invalidateQueries({ queryKey: ['library-items'] }) }}
+          onSaved={() => { setEditAccessTarget(null); qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] }) }}
         />
       )}
       {editTarget && (
@@ -1048,7 +1115,7 @@ export default function Library() {
           item={editTarget}
           folders={folders}
           onClose={() => setEditTarget(null)}
-          onSaved={() => { setEditTarget(null); qc.invalidateQueries({ queryKey: ['library-items'] }) }}
+          onSaved={() => { setEditTarget(null); qc.invalidateQueries({ queryKey: ['library-items'] }); qc.invalidateQueries({ queryKey: ['library-shared-with-you'] }) }}
         />
       )}
       {toastEl}

@@ -23,16 +23,19 @@ class KnowledgeItemSerializer(WorkspaceScopedSerializerMixin, serializers.ModelS
     presigned_url    = serializers.SerializerMethodField()
     inline_url       = serializers.SerializerMethodField()
     uploaded_by_name = serializers.SerializerMethodField()
+    uploaded_by_client_name = serializers.CharField(source="uploaded_by_client.full_name", read_only=True, default=None)
 
     class Meta:
         model  = KnowledgeItem
         fields = ["id", "folder", "content_type", "title", "description", "tags",
                   "visibility", "s3_key", "file_name", "url", "video_url",
                   "shared_client_ids", "shared_user_ids",
-                  "version", "view_count", "download_count", "uploaded_by",
+                  "version", "view_count", "download_count", "uploaded_by", "uploaded_by_client", "uploaded_by_client_name",
+                  "shared_with_coach", "shared_with_coach_at",
                   "uploaded_by_name", "created_at", "presigned_url", "inline_url"]
         read_only_fields = ["id", "view_count", "download_count",
-                            "uploaded_by", "created_at", "version"]
+                            "uploaded_by", "uploaded_by_client", "shared_with_coach",
+                            "shared_with_coach_at", "created_at", "version"]
 
     def get_inline_url(self, obj):
         """Presigned URL with inline disposition — for iframe/image preview."""
@@ -50,7 +53,11 @@ class KnowledgeItemSerializer(WorkspaceScopedSerializerMixin, serializers.ModelS
         return generate_presigned_url(obj.s3_key, disposition=disposition)
 
     def get_uploaded_by_name(self, obj):
-        return obj.uploaded_by.full_name if obj.uploaded_by else None
+        if obj.uploaded_by:
+            return obj.uploaded_by.full_name
+        if obj.uploaded_by_client_id:
+            return f"{obj.uploaded_by_client.full_name} (client)"
+        return None
 
     def get_presigned_url(self, obj):
         if not obj.s3_key: return None

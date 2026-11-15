@@ -342,6 +342,7 @@ class PortalMeView(APIView):
             # The client's OWN workspace branding — the portal shows this after login.
             "workspace_slug":     client.workspace.slug,
             "workspace_logo_url": workspace_logo_url(client.workspace),
+            "uploads":            _upload_policy(client),
         })
 
 
@@ -540,9 +541,153 @@ class PortalMaterialsView(APIView):
         return Response(KnowledgeItemSerializer(items, many=True, context={"request": request}).data)
 
 
+# ── Client file uploads (Client page → Portal Permissions) ────────────────────
+# Document/image/media types only — never anything a browser or OS would execute.
+PORTAL_UPLOAD_EXTS = {
+    "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "rtf", "txt", "csv",
+    "png", "jpg", "jpeg", "gif", "webp", "heic", "mp3", "m4a", "wav", "mp4", "mov", "webm",
+}
+
+
+def _upload_policy(client):
+    used = KnowledgeItem.objects.filter(uploaded_by_client=client).count()
+    return {
+        "enabled":    client.portal_upload_enabled,
+        "max_mb":     client.portal_upload_max_mb,
+        "max_files":  client.portal_upload_max_files,
+        "used":       used,
+        "can_delete": client.portal_can_delete_uploads,
+    }
+
+
+def _portal_client(request, lock=False):
+    client_id, workspace_id = _get_portal_claims(request)
+    qs = Client.objects.select_related("workspace", "coach")
+    if lock:
+        qs = qs.select_for_update(of=("self",))
+    try:
+        return qs.get(pk=client_id, workspace_id=workspace_id)
+    except Client.DoesNotExist:
+        raise NotFound()
+
+
+class PortalMaterialUploadView(APIView):
+    """POST /api/portal/materials/upload/ — the client adds a file to their portal library.
+    Stored as a KnowledgeItem tagged uploaded_by_client, in the client's own workspace,
+    and PRIVATE to the client until they share it (PortalMaterialShareView) — then their
+    coach and the workspace owner see it on Client Files / the client's Files tab (never
+    in the Library) and are emailed. Limits come from the client's Portal Permissions."""
+    authentication_classes = [PortalJWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+
+    def post(self, request):
+        import uuid as uuid_lib
+        from django.core.files.storage import default_storage
+        from django.db import transaction
+        from apps.library.views import _detect_ctype
+
+        file = request.FILES.get("file")
+        if not file:
+            raise ValidationError({"detail": "No file provided."})
+        ext = file.name.rsplit(".", 1)[-1].lower() if "." in file.name else ""
+        if ext not in PORTAL_UPLOAD_EXTS:
+            raise ValidationError({"detail": f"That file type (.{ext or '?'}) can't be uploaded. "
+                                             "Use a document, spreadsheet, PDF, image, audio or video file."})
+
+        with transaction.atomic():
+            # Row lock: two uploads at once can't both slip under the file-count limit.
+            client = _portal_client(request, lock=True)
+            if not client.portal_upload_enabled:
+                raise PermissionDenied("File uploads are turned off for your account — please ask your coach.")
+            if file.size > client.portal_upload_max_mb * 1024 * 1024:
+                raise ValidationError({"detail": f"File is too large — the limit is {client.portal_upload_max_mb} MB."})
+            used = KnowledgeItem.objects.filter(uploaded_by_client=client).count()
+            if used >= client.portal_upload_max_files:
+                raise ValidationError({"detail": f"You've reached your limit of {client.portal_upload_max_files} "
+                                                 "uploaded files — please ask your coach if you need more."})
+
+            s3_key = f"library/{client.workspace_id}/{uuid_lib.uuid4()}.{ext}"
+            default_storage.save(s3_key, file)
+            try:
+                item = KnowledgeItem.objects.create(
+                    workspace=client.workspace, uploaded_by_client=client,
+                    content_type=_detect_ctype(file.content_type or "", file.name),
+                    title=(request.data.get("title") or file.name)[:300], file_name=file.name, s3_key=s3_key,
+                    visibility=KnowledgeItem.Visibility.SPECIFIC,
+                    shared_client_ids=[str(client.id)],
+                    # Coach access follows uploaded_by_client.coach + shared_with_coach
+                    # (library get_queryset), so a reassigned client's files move with them.
+                    shared_user_ids=[],
+                )
+            except Exception:
+                default_storage.delete(s3_key)
+                raise
+
+        return Response(KnowledgeItemSerializer(item, context={"request": request}).data,
+                        status=http_status.HTTP_201_CREATED)
+
+
+class PortalMaterialShareView(APIView):
+    """POST /api/portal/materials/{id}/share/ {"shared": true|false} — the client shares
+    one of their own uploads with their coach (and so the workspace owner), or stops
+    sharing it. Sharing emails the owner + coach; un-sharing hides it from them again."""
+    authentication_classes = [PortalJWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+
+    def post(self, request, material_id):
+        from django.db import transaction
+        from django.utils import timezone
+        client = _portal_client(request)
+        item = KnowledgeItem.objects.filter(pk=material_id, workspace_id=client.workspace_id,
+                                            uploaded_by_client=client).first()
+        if not item:
+            raise NotFound("File not found.")
+        shared = bool(request.data.get("shared", True))
+        if shared != item.shared_with_coach:
+            item.shared_with_coach = shared
+            item.shared_with_coach_at = timezone.now() if shared else None
+            item.save(update_fields=["shared_with_coach", "shared_with_coach_at", "updated_at"])
+            if shared:
+                item_id = str(item.id)
+                transaction.on_commit(lambda: _notify_file_shared(item_id))
+        return Response(KnowledgeItemSerializer(item, context={"request": request}).data)
+
+
+def _notify_file_shared(item_id):
+    from tasks.email import send_client_file_uploaded
+    send_client_file_uploaded.delay(item_id)
+
+
+class PortalMaterialDeleteView(APIView):
+    """DELETE /api/portal/materials/{id}/ — only the client's OWN uploads, and only if
+    their Portal Permissions allow deleting. Files the coach shared can never be deleted."""
+    authentication_classes = [PortalJWTAuthentication]
+    permission_classes     = [IsAuthenticated]
+
+    def delete(self, request, material_id):
+        from django.core.files.storage import default_storage
+        client = _portal_client(request)
+        item = KnowledgeItem.objects.filter(pk=material_id, workspace_id=client.workspace_id,
+                                            uploaded_by_client=client).first()
+        if not item:
+            raise NotFound("File not found.")
+        if not client.portal_can_delete_uploads:
+            raise PermissionDenied("Deleting files is turned off for your account — please ask your coach.")
+        keys = [item.s3_key] + [v.get("s3_key") for v in (item.previous_versions or [])]
+        item.delete()
+        for k in filter(None, keys):
+            try:
+                default_storage.delete(k)
+            except Exception:
+                pass
+        return Response(status=http_status.HTTP_204_NO_CONTENT)
+
+
 class PortalMaterialViewConfigView(APIView):
-    """GET /api/portal/materials/{id}/view-config/ — OnlyOffice config for the client's
-    inline document preview. Deliberately VIEW-ONLY, always — unlike
+    """GET /api/portal/materials/{id}/view-config/?mode=view|edit — OnlyOffice config for
+    the client's document preview/editor. ?mode=edit is allowed ONLY for a file the client
+    uploaded themselves (KnowledgeItem.uploaded_by_client); anything a coach shared is
+    always view-only — unlike
     apps.library.views.KnowledgeItemViewSet.edit_config (coach side), there is no
     ?mode=edit here at all; a client should never be able to write back into a coach's
     shared library item. Reuses that same view's ONLYOFFICE_DOC_TYPES/_doc_server_file_url
@@ -562,6 +707,13 @@ class PortalMaterialViewConfigView(APIView):
             raise NotFound("File not found.")
         if not item.s3_key:
             return Response({"detail": "No file to preview."}, status=http_status.HTTP_400_BAD_REQUEST)
+
+        # One shared Library file can go to many clients — a client edit would change it
+        # for all of them, so only their own uploads are editable.
+        can_edit = str(item.uploaded_by_client_id) == str(client_id)
+        if request.query_params.get("mode") == "edit" and not can_edit:
+            raise PermissionDenied("Only files you uploaded can be edited.")
+        mode = "edit" if (request.query_params.get("mode") == "edit" and can_edit) else "view"
 
         from django.conf import settings as dj_settings
         from apps.library.views import ONLYOFFICE_DOC_TYPES, _doc_server_file_url, _doc_server_callback_url
@@ -588,14 +740,15 @@ class PortalMaterialViewConfigView(APIView):
                 "key":      key,
                 "title":    item.file_name,
                 "url":      file_url,
-                "permissions": {"edit": False, "download": True, "print": True},
+                "permissions": {"edit": mode == "edit", "download": True, "print": True},
             },
             "documentType": doc_type,
             "editorConfig": {
                 "callbackUrl": callback_url,
-                "user": {"id": f"portal-{client_id}", "name": "Client"},
-                "mode": "view",
-                "customization": {"forcesave": False},
+                "user": {"id": f"portal-{client_id}", "name": item.uploaded_by_client.full_name
+                         if can_edit and item.uploaded_by_client else "Client"},
+                "mode": mode,
+                "customization": {"forcesave": mode == "edit"},
             },
         }
         if dj_settings.ONLYOFFICE_JWT_SECRET:

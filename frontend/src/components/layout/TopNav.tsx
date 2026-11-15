@@ -7,6 +7,7 @@ const TABS = [
   { to: '/activities', label: 'Activities'},
   { to: '/invoices',   label: 'Invoices'  },
   { to: '/library',    label: 'Library'   },
+  { to: '/client-files', label: 'Client Files' },
 ]
 
 export default function TopNav() {

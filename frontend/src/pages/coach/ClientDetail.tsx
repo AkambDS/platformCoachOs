@@ -1293,7 +1293,14 @@ function FileVaultPreviewPanel({ selected, clientId, currentUser, canDelete, onC
   const inlineUrl   = data.inline_url
   const downloadUrl = data.presigned_url || data.url
   const isOwner    = currentUser?.role === 'business_owner'
-  const canEditFile = isClient && isOfficeEditable && (isOwner || data.uploaded_by === currentUser?.id)
+  // Mirrors the server (clients AssessmentViewSet.edit_config / library edit_config):
+  // client files — owner, uploader, or anyone with Clients → edit (the client's coach);
+  // shared files — only the client's own portal uploads (owner, uploader or their coach
+  // with Library → edit). Other shared Library files reach many clients, so not here.
+  const tabs = currentUser?.tab_permissions || {}
+  const canEditFile = isOfficeEditable && (isOwner || data.uploaded_by === currentUser?.id || (isClient
+    ? !!tabs.clients?.edit
+    : !!data.uploaded_by_client && !!tabs.library?.edit))
 
   return (
     <div style={{
@@ -1396,6 +1403,7 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
   const [converting, setConverting] = useState(false)
   const [showConvertPicker, setShowConvertPicker] = useState(false)
 
+  const qc = useQueryClient()
   const { data: libData } = useQuery({
     queryKey: ['library-shared-with-client', clientId],
     queryFn: () => libraryApi.items({ shared_with_client: clientId, page_size: 200 }).then(r => r.data),
@@ -1608,7 +1616,7 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
             converting={converting}
             onClose={() => setSelected(null)}
             onRequestDelete={() => selected.kind === 'client' && setConfirmFile({ id: selected.data.id, name: selected.data.file_name })}
-            onEditInBrowser={() => selected.kind === 'client' && setEditingFile(selected.data)}
+            onEditInBrowser={() => setEditingFile({ ...selected.data, _kind: selected.kind })}
             onConvertToPdf={() => setShowConvertPicker(true)}
           />
         ) : (
@@ -1627,9 +1635,11 @@ function FileVault({ clientId, fileList, refetch, showToast, canDelete, currentU
       {editingFile && (
         <OfficeEditorModal
           title={editingFile.file_name}
-          getEditConfig={(mode) => clientsApi.fileEditConfig(clientId, editingFile.id, mode).then(r => r.data)}
+          getEditConfig={(mode) => (editingFile._kind === 'client'
+            ? clientsApi.fileEditConfig(clientId, editingFile.id, mode)
+            : libraryApi.editConfig(editingFile.id, mode)).then(r => r.data)}
           onClose={() => setEditingFile(null)}
-          onSaved={() => refetch()}
+          onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ['library-shared-with-client', clientId] }) }}
         />
       )}
 
@@ -1697,7 +1707,90 @@ function SaveClientPdfModal({ defaultType, converting, onClose, onConvert }: {
 }
 
 // ── Tabs ──────────────────────────────────────────────────────────────────────
-const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices', 'Client Communication', 'Coach Availability']
+function PermToggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button type="button" role="switch" aria-checked={on} onClick={() => onChange(!on)} style={{
+      width: 42, height: 24, borderRadius: 12, border: 'none', cursor: 'pointer', position: 'relative', flexShrink: 0,
+      background: on ? 'var(--ink)' : 'var(--border)', transition: 'background .15s',
+    }}>
+      <span style={{ position: 'absolute', top: 3, left: on ? 21 : 3, width: 18, height: 18, borderRadius: '50%', background: '#fff', transition: 'left .15s' }} />
+    </button>
+  )
+}
+function PermRow({ title, hint, children }: { title: string; hint: string; children: any }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 24, padding: '16px 0', borderBottom: '1px solid #f3f0eb' }}>
+      <div>
+        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--ink)' }}>{title}</div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>{hint}</div>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+// What this client may do in their portal — owner or the client's coach (anyone who can
+// edit the client). Enforced server-side by apps.portal.views.PortalMaterialUploadView /
+// PortalMaterialDeleteView; files the client uploads land in Library → Client Uploads.
+function PortalPermissionsPanel({ client, onSaved }: { client: any; onSaved: (msg: string, type?: 'success' | 'error') => void }) {
+  const qc = useQueryClient()
+  const initial = () => ({
+    portal_upload_enabled:     client.portal_upload_enabled ?? true,
+    portal_upload_max_mb:      String(client.portal_upload_max_mb ?? 10),
+    portal_upload_max_files:   String(client.portal_upload_max_files ?? 5),
+    portal_can_delete_uploads: client.portal_can_delete_uploads ?? false,
+  })
+  const [f, setF] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setF(initial()) }, [client.id]) // eslint-disable-line
+  const dirty = JSON.stringify(f) !== JSON.stringify(initial())
+
+  const save = async () => {
+    setSaving(true)
+    try {
+      await clientsApi.patch(client.id, {
+        ...f,
+        portal_upload_max_mb: Number(f.portal_upload_max_mb),
+        portal_upload_max_files: Number(f.portal_upload_max_files),
+      })
+      await qc.invalidateQueries({ queryKey: ['client', client.id] })
+      onSaved('Portal permissions saved')
+    } catch (e) { onSaved(apiErrorMessage(e, 'Failed to save'), 'error') } finally { setSaving(false) }
+  }
+
+  const off = !f.portal_upload_enabled
+  return (
+    <div className="card" style={{ maxWidth: 720 }}>
+      <div className="card-hdr">
+        Portal Permissions
+        <button className="btn btn-dark btn-sm" onClick={save} disabled={!dirty || saving}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+      <div className="card-body" style={{ paddingTop: 0 }}>
+        {!client.portal_access && (
+          <div style={{ margin: '14px 0 2px', fontSize: 12, color: '#8a6a1f', background: '#fdf3e0', border: '1px solid #e8c874', borderRadius: 6, padding: '8px 12px' }}>
+            This client hasn't been invited to the portal yet — these settings apply once they have access.
+          </div>
+        )}
+        <PermRow title="File upload" hint="Let this client upload files from their portal's Files tab. Uploads stay private until they share one with you — then you and the owner are emailed and it shows under Client Files.">
+          <PermToggle on={f.portal_upload_enabled} onChange={v => setF(p => ({ ...p, portal_upload_enabled: v }))} />
+        </PermRow>
+        <PermRow title="Maximum file size" hint="Per file, in MB (1–100).">
+          <input className="finput" type="number" min={1} max={100} disabled={off} style={{ width: 110, marginBottom: 0 }}
+            value={f.portal_upload_max_mb} onChange={e => setF(p => ({ ...p, portal_upload_max_mb: e.target.value }))} />
+        </PermRow>
+        <PermRow title="Maximum number of files" hint={`How many files this client can have uploaded at once (0–100). Used so far: ${client.portal_uploads_used ?? 0}.`}>
+          <input className="finput" type="number" min={0} max={100} disabled={off} style={{ width: 110, marginBottom: 0 }}
+            value={f.portal_upload_max_files} onChange={e => setF(p => ({ ...p, portal_upload_max_files: e.target.value }))} />
+        </PermRow>
+        <PermRow title="Client can delete their uploads" hint="Only files they uploaded themselves — never files you shared.">
+          <PermToggle on={f.portal_can_delete_uploads} onChange={v => setF(p => ({ ...p, portal_can_delete_uploads: v }))} />
+        </PermRow>
+      </div>
+    </div>
+  )
+}
+
+const TABS = ['Overview', 'Goals', 'Activities', 'Notes', 'Files', 'Invoices', 'Client Communication', 'Coach Availability', 'Portal Permissions']
 const WEEKDAY_LABELS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
 
 const NOTE_TYPES = [
@@ -3477,6 +3570,10 @@ export default function ClientDetail() {
 
         {tab === 'Coach Availability' && (
           <CoachAvailabilityPanel clientId={id!} />
+        )}
+
+        {tab === 'Portal Permissions' && client && (
+          <PortalPermissionsPanel client={client} onSaved={showToast} />
         )}
       </div>
 

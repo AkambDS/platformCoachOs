@@ -152,6 +152,14 @@ NOTICES: dict[str, dict] = {
         placeholders=_TO_COACH + ["{client_name}", "{client_first_name}", "{workspace_name}",
                                   "{goal_title}", "{goal_action}", "{goal_status}", "{progress_text}"],
     ),
+    "client_file_upload": dict(
+        label="Client File Shared", audience="coach",
+        subject="{client_name} shared a file with you: {file_name}",
+        eyebrow="New File", heading="{client_first_name} shared a file",
+        intro="Hi {recipient_first_name},\n\n{client_name} shared \"{file_name}\" with you from their client portal.",
+        closing="Find it under Client Files in CoachOS, and on the client's Files tab.",
+        placeholders=_TO_COACH + ["{client_name}", "{client_first_name}", "{workspace_name}", "{file_name}"],
+    ),
     "payment_failed": dict(
         label="Payment Failed", audience="coach",
         subject="Payment failed — Invoice #{invoice_number}",

@@ -2,7 +2,7 @@
  * CoachOS — Client Portal
  * Standalone page — no AppShell. Uses CoachOS CSS design system.
  */
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import axios from 'axios'
 import {
   LayoutDashboard, Target, CalendarDays, StickyNote, Folder, Receipt, LogOut,
@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { useInactivityTimer } from '../../hooks/useInactivityTimer'
 import InactivityWarningModal from '../../components/InactivityWarningModal'
-import { InlineOfficeViewer } from '../../components/OfficeEditor'
+import { InlineOfficeViewer, OfficeEditorModal, EDITABLE_OFFICE_EXTS } from '../../components/OfficeEditor'
 import { useToast } from '../../components/ui'
 import { FlowStar } from '../../components/NorthStarFlow'
 import GoldenThreadFlow from '../../components/GoldenThreadFlow'
@@ -37,9 +37,10 @@ interface Invoice { id: string; number: string; status: string; total: string; a
 // field names exactly (apps/library/serializers.py) — this used to say item_type/file_url,
 // which don't exist on that serializer at all, so the "download" link and real file-type
 // badge silently never rendered (fell back to undefined → always "file"/nothing to click).
-interface Material { id: string; title: string; content_type: string; file_name?: string; presigned_url?: string; inline_url?: string; url?: string; video_url?: string }
+interface Material { id: string; title: string; content_type: string; file_name?: string; uploaded_by_client?: string | null; shared_with_coach?: boolean; presigned_url?: string; inline_url?: string; url?: string; video_url?: string }
 interface Note { id: string; text: string; note_type: string; topic?: string | null; session_date?: string | null; created_by_name: string | null; client_owned: boolean; created_at: string; updated_at: string }
-interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean; workspace_slug?: string; workspace_logo_url?: string }
+interface MeData { id: string; name: string; email: string; coach_name: string; workspace_name: string; portal_access: boolean; workspace_slug?: string; workspace_logo_url?: string
+  uploads?: { enabled: boolean; max_mb: number; max_files: number; used: number; can_delete: boolean } }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmtDate(iso: string) {
@@ -1283,12 +1284,12 @@ function materialBg(item: Material) {
   return '#f0eeec'
 }
 
-// Same list+preview split as the coach-side Library (pages/coach/Library.tsx), but
-// view/download only — no "Edit live in browser" anywhere, and the OnlyOffice config
-// this calls (GET /api/portal/materials/{id}/view-config/) is hard-coded to mode=view
-// server-side (apps/portal/views.py), not just a UI omission, so a client genuinely
-// cannot write back into a coach's shared file even by hand-crafting a request.
-function MaterialPreviewPanel({ item }: { item: Material }) {
+// Same list+preview split as the coach-side Library (pages/coach/Library.tsx). Files
+// the coach shared are view/download only; the client's OWN uploads also get "Edit"
+// (OnlyOffice). Both rules are enforced server-side in PortalMaterialViewConfigView
+// (?mode=edit is refused for anything the client didn't upload), not just in this UI.
+function MaterialPreviewPanel({ item, canEdit, onEdited }: { item: Material; canEdit?: boolean; onEdited?: () => void }) {
+  const [editing, setEditing] = useState(false)
   const ext = (item.file_name || '').split('.').pop()?.toLowerCase() || ''
   const isImage  = ['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(ext)
   const isPdf    = item.content_type === 'pdf' || ext === 'pdf'
@@ -1296,6 +1297,9 @@ function MaterialPreviewPanel({ item }: { item: Material }) {
   const isOffice = ['xls', 'xlsx', 'csv', 'doc', 'docx', 'odt', 'rtf', 'ppt', 'pptx'].includes(ext)
   const hasFile  = !!item.presigned_url
   const openUrl  = item.presigned_url || item.url || item.video_url
+  const editable = !!canEdit && hasFile && EDITABLE_OFFICE_EXTS.includes(ext)
+  const viewConfig = (mode: 'view' | 'edit') =>
+    api.get(`/api/portal/materials/${item.id}/view-config/`, { params: { mode } }).then(r => r.data)
 
   return (
     <div style={{ background: '#fff', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
@@ -1307,7 +1311,18 @@ function MaterialPreviewPanel({ item }: { item: Material }) {
           <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.title}</div>
           {item.file_name && <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>{item.file_name}</div>}
         </div>
+        {editable && (
+          <button className="btn btn-dark btn-sm" onClick={() => setEditing(true)}>✎ Edit</button>
+        )}
       </div>
+      {editing && (
+        <OfficeEditorModal
+          title={item.title}
+          getEditConfig={viewConfig}
+          onClose={() => setEditing(false)}
+          onSaved={() => { setEditing(false); onEdited?.() }}
+        />
+      )}
 
       <div>
         {hasFile && isPdf && item.inline_url && (
@@ -1323,7 +1338,7 @@ function MaterialPreviewPanel({ item }: { item: Material }) {
           <InlineOfficeViewer
             key={`${item.id}-${item.title}`}
             itemKey={`portal-${item.id}`}
-            getEditConfig={() => api.get(`/api/portal/materials/${item.id}/view-config/`).then(r => r.data)}
+            getEditConfig={() => viewConfig('view')}
           />
         )}
         {item.video_url && !isVideo && (
@@ -1356,16 +1371,100 @@ function MaterialPreviewPanel({ item }: { item: Material }) {
   )
 }
 
-function FilesTab({ materials }: { materials: Material[] }) {
+function FilesTab({ materials, setMaterials, me, setMe, showToast }: {
+  materials: Material[]
+  setMaterials: React.Dispatch<React.SetStateAction<Material[]>>
+  me: MeData | null
+  setMe: React.Dispatch<React.SetStateAction<MeData | null>>
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void
+}) {
   const [selectedId, setSelectedId] = useState<string | null>(materials[0]?.id ?? null)
   const selected = materials.find(m => m.id === selectedId) || null
+  const [uploading, setUploading] = useState(false)
+  const fileInput = useRef<HTMLInputElement>(null)
+  // Limits set by the coach on the client page → Portal Permissions.
+  const up = me?.uploads
+  const isMine = (m: Material) => !!me && m.uploaded_by_client === me.id
+  const atLimit = !!up && up.used >= up.max_files
+
+  const setUsed = (delta: number) =>
+    setMe(prev => prev && prev.uploads ? { ...prev, uploads: { ...prev.uploads, used: prev.uploads.used + delta } } : prev)
+
+  async function handleUpload(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file || !up) return
+    if (file.size > up.max_mb * 1024 * 1024) { showToast(`File is too large — the limit is ${up.max_mb} MB.`, 'error'); return }
+    setUploading(true)
+    try {
+      const fd = new FormData()
+      fd.append('file', file)
+      const { data } = await api.post('/api/portal/materials/upload/', fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      setMaterials(prev => [data, ...prev])
+      setSelectedId(data.id)
+      setUsed(1)
+      showToast('File uploaded — it’s private until you share it with your coach')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Upload failed — please try again.', 'error')
+    } finally { setUploading(false) }
+  }
+
+  // Own uploads are private until shared; sharing shows the file to the coach and the
+  // workspace owner (and emails them). Un-sharing hides it from them again.
+  async function handleShare(m: Material, shared: boolean) {
+    if (!shared && !window.confirm(`Stop sharing "${m.title}"? Your coach will no longer see it.`)) return
+    try {
+      const { data } = await api.post(`/api/portal/materials/${m.id}/share/`, { shared })
+      setMaterials(prev => prev.map(x => x.id === m.id ? { ...x, ...data } : x))
+      showToast(shared ? 'Shared with your coach — they have been notified' : 'No longer shared with your coach')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Could not update sharing.', 'error')
+    }
+  }
+
+  async function handleDelete(m: Material) {
+    if (!window.confirm(`Delete "${m.title}"? This can't be undone.`)) return
+    try {
+      await api.delete(`/api/portal/materials/${m.id}/`)
+      setMaterials(prev => prev.filter(x => x.id !== m.id))
+      if (selectedId === m.id) setSelectedId(null)
+      setUsed(-1)
+      showToast('File deleted')
+    } catch (err: any) {
+      showToast(err?.response?.data?.detail || 'Could not delete the file.', 'error')
+    }
+  }
+
+  const header = (
+    <div style={{ padding: '24px 0 20px', display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
+      <h1 className="page-title">Files</h1>
+      {up?.enabled && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 12, color: 'var(--muted)' }}>
+            {up.used} of {up.max_files} uploads used · up to {up.max_mb} MB each
+          </span>
+          <input ref={fileInput} type="file" hidden onChange={handleUpload}
+            accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.odt,.ods,.odp,.rtf,.txt,.csv,.png,.jpg,.jpeg,.gif,.webp,.heic,.mp3,.m4a,.wav,.mp4,.mov,.webm" />
+          <button className="btn btn-dark btn-sm" disabled={uploading || atLimit}
+            title={atLimit ? 'Upload limit reached — ask your coach if you need more' : undefined}
+            onClick={() => fileInput.current?.click()}>
+            {uploading ? 'Uploading…' : '↑ Upload file'}
+          </button>
+        </div>
+      )}
+    </div>
+  )
 
   if (!materials.length) return (
-    <div className="empty"><div className="empty-icon">📁</div><h3>No files shared yet</h3><p>Resources shared by your coach will appear here.</p></div>
+    <div>
+      {header}
+      <div className="empty"><div className="empty-icon">📁</div><h3>No files yet</h3>
+        <p>Resources shared by your coach{up?.enabled ? ', and files you upload,' : ''} will appear here.</p></div>
+    </div>
   )
   return (
     <div>
-      <div style={{ padding: '24px 0 20px' }}><h1 className="page-title">Shared Files</h1></div>
+      {header}
       <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
         <div className="card" style={{ width: 300, flexShrink: 0 }}>
           <div className="card-body" style={{ padding: 8 }}>
@@ -1378,18 +1477,48 @@ function FilesTab({ materials }: { materials: Material[] }) {
                 <div style={{ background: materialBg(item), borderRadius: 6, padding: 6, display: 'flex', flexShrink: 0 }}>
                   {materialIcon(item, 15)}
                 </div>
-                <div style={{ minWidth: 0 }}>
+                <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontWeight: selectedId === item.id ? 600 : 500, fontSize: 13, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {item.title}
                   </div>
-                  <div style={{ fontSize: 10.5, color: 'var(--muted)', textTransform: 'capitalize' }}>{item.content_type || 'file'}</div>
+                  <div style={{ fontSize: 10.5, color: 'var(--muted)', textTransform: 'capitalize' }}>
+                    {item.content_type || 'file'}{isMine(item) ? ' · uploaded by you' : ''}
+                  </div>
+                  {isMine(item) && (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <span style={{
+                        fontSize: 10, fontWeight: 600, padding: '1px 7px', borderRadius: 9,
+                        background: item.shared_with_coach ? '#e4efe1' : '#f0eeec',
+                        color: item.shared_with_coach ? '#24452b' : '#6e6560',
+                      }}>{item.shared_with_coach ? 'Shared with coach' : 'Private'}</span>
+                      <button onClick={e => { e.stopPropagation(); handleShare(item, !item.shared_with_coach) }}
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 10.5,
+                                 color: 'var(--gold)', fontWeight: 600, textDecoration: 'underline' }}>
+                        {item.shared_with_coach ? 'Stop sharing' : 'Share with coach'}
+                      </button>
+                    </div>
+                  )}
                 </div>
+                {isMine(item) && up?.can_delete && (
+                  <button title="Delete file" onClick={e => { e.stopPropagation(); handleDelete(item) }}
+                    style={{ background: 'none', border: 'none', color: '#b5afa6', cursor: 'pointer', fontSize: 13, padding: 4 }}
+                    onMouseEnter={e => (e.currentTarget.style.color = '#c0392b')}
+                    onMouseLeave={e => (e.currentTarget.style.color = '#b5afa6')}>✕</button>
+                )}
               </div>
             ))}
           </div>
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
-          {selected && <MaterialPreviewPanel key={`${selected.id}-${selected.title}`} item={selected} />}
+          {selected && (
+            <MaterialPreviewPanel key={`${selected.id}-${selected.title}-${(selected as any).version ?? ''}`} item={selected}
+              canEdit={isMine(selected)}
+              onEdited={async () => {
+                // Reload so the preview shows the saved version (new file + version number).
+                try { const r = await api.get('/api/portal/materials/'); setMaterials(r.data || []) } catch { /* keep list */ }
+                showToast('Changes saved')
+              }} />
+          )}
         </div>
       </div>
     </div>
@@ -1796,7 +1925,7 @@ export default function ClientPortal() {
               {activeTab === 'Goals'       && <GoalsTab goals={goals} setGoals={setGoals} commitments={commitments} showToast={showToast} onProgressSaved={(goalId, entry) => setGoals(prev => prev.map(g => g.id === goalId ? { ...g, progress_entries: [entry, ...g.progress_entries], progress_count: g.progress_count + 1 } : g))} />}
               {activeTab === 'Activities'  && <ActivitiesTab activities={activities} onUpdate={(id, p) => setActivities(prev => prev.map(a => a.id === id ? { ...a, ...p } : a))} onRefresh={refetchActivities} />}
               {activeTab === 'Notes'       && <NotesTab notes={notes} setNotes={setNotes} showToast={showToast} />}
-              {activeTab === 'Files'       && <FilesTab materials={materials} />}
+              {activeTab === 'Files'       && <FilesTab materials={materials} setMaterials={setMaterials} me={me} setMe={setMe} showToast={showToast} />}
               {activeTab === 'Invoices'    && <InvoicesTab invoices={invoices} />}
             </>
           )}

@@ -2081,6 +2081,42 @@ def send_client_goal_update(client_id: str, goal_id: str, event: str, details: d
         _report_send_failure("send_client_goal_update", e, workspace=locals().get("workspace"))
 
 
+@shared_task(name="tasks.email.send_client_file_uploaded")
+def send_client_file_uploaded(item_id: str):
+    """Email the workspace owner and the client's coach when the client shares one of
+    their uploaded files with them (apps.portal.views.PortalMaterialShareView — Settings →
+    Emails "Client File Shared"). Skipped if it was un-shared before this ran."""
+    from apps.library.models import KnowledgeItem
+    from tasks.email_notices import send_notice, app_url
+    try:
+        item = KnowledgeItem.objects.select_related(
+            "uploaded_by_client", "uploaded_by_client__workspace", "uploaded_by_client__coach").get(id=item_id)
+        client = item.uploaded_by_client
+        if not client or not item.shared_with_coach:
+            return
+        workspace = client.workspace
+        size = ""
+        try:
+            from django.core.files.storage import default_storage
+            size = f"{default_storage.size(item.s3_key) / (1024 * 1024):.1f} MB"
+        except Exception:
+            pass
+        rows = [("Client", client.full_name), ("File", item.file_name)] + ([("Size", size)] if size else [])
+        for user in _goal_update_recipients(client):
+            send_notice(
+                workspace, "client_file_upload", [user.email],
+                dict(recipient_name=user.full_name, recipient_first_name=user.first_name,
+                     client_name=client.full_name, client_first_name=client.first_name,
+                     file_name=item.file_name),
+                rows=rows, cta=("Open the client in CoachOS", app_url(f"/clients/{client.id}")),
+                reply_to=[client.email] if client.email else None,
+                client=client, related_id=item_id,
+            )
+    except Exception as e:
+        logger.error(f"send_client_file_uploaded failed: {e}")
+        _report_send_failure("send_client_file_uploaded", e, workspace=locals().get("workspace"))
+
+
 @shared_task(name="tasks.email.send_goal_shared_email")
 def send_goal_shared_email(goal_id: str):
     """Notifies the client that their coach shared a new goal — triggered from

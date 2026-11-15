@@ -62,6 +62,13 @@ class KnowledgeItem(WorkspaceModel):
     view_count     = models.PositiveIntegerField(default=0)
     download_count = models.PositiveIntegerField(default=0)
     uploaded_by    = models.ForeignKey(User, on_delete=models.SET_NULL, null=True)
+    # Set when the client uploaded it from their portal (uploaded_by is then empty).
+    uploaded_by_client = models.ForeignKey("clients.Client", on_delete=models.CASCADE, null=True,
+                                           blank=True, related_name="portal_uploads")
+    # A client's upload is private to them until they press "Share with coach" in the
+    # portal; then their coach and the workspace owner can see it (and are emailed).
+    shared_with_coach    = models.BooleanField(default=False)
+    shared_with_coach_at = models.DateTimeField(null=True, blank=True)
     created_at     = models.DateTimeField(auto_now_add=True)
     updated_at     = models.DateTimeField(auto_now=True)
 

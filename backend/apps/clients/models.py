@@ -2,6 +2,7 @@
 import uuid
 from django.contrib.postgres.fields import ArrayField
 from django.db import models
+from django.core.validators import MinValueValidator, MaxValueValidator
 from apps.accounts.models import WorkspaceModel, User, Workspace
 
 
@@ -105,6 +106,14 @@ class Client(WorkspaceModel):
     # owner-managed). Writes are workspace-scoped by WorkspaceScopedSerializerMixin.
     affiliations = models.ManyToManyField("activities.AffiliationConfig", blank=True,
                                           related_name="clients")
+    # Client portal permissions (Client page → Portal Permissions; owner or the client's
+    # coach). Files the client uploads become Library items (KnowledgeItem.uploaded_by_client).
+    portal_upload_enabled     = models.BooleanField(default=True)
+    portal_upload_max_mb      = models.PositiveSmallIntegerField(
+        default=10, validators=[MinValueValidator(1), MaxValueValidator(100)])   # 100 = Library's cap
+    portal_upload_max_files   = models.PositiveSmallIntegerField(
+        default=5, validators=[MinValueValidator(0), MaxValueValidator(100)])
+    portal_can_delete_uploads = models.BooleanField(default=False)
     # Address
     primary_address  = models.JSONField(default=dict, blank=True)
     billing_address  = models.JSONField(default=dict, blank=True)

@@ -28,6 +28,7 @@ import EmailCommunication from "./pages/coach/EmailCommunication"
 import Reports        from "./pages/coach/Reports"
 import Settings       from "./pages/coach/Settings"
 import Library        from "./pages/coach/Library"
+import ClientFiles    from "./pages/coach/ClientFiles"
 import Team            from "./pages/coach/Team"
 import FeedbackList   from "./pages/coach/FeedbackList"
 import FeedbackDetail from "./pages/coach/FeedbackDetail"
@@ -137,6 +138,7 @@ export default function App() {
           <Route path="/email-communication" element={<PrivateRoute><RoleRoute allow={["business_owner"]}><EmailCommunication /></RoleRoute></PrivateRoute>} />
           <Route path="/reports"       element={<PrivateRoute><TabRoute tab="reports"><Reports /></TabRoute></PrivateRoute>} />
           <Route path="/library"         element={<PrivateRoute><TabRoute tab="library"><Library /></TabRoute></PrivateRoute>} />
+          <Route path="/client-files"    element={<PrivateRoute><TabRoute tab="library"><ClientFiles /></TabRoute></PrivateRoute>} />
           <Route path="/team"            element={<PrivateRoute><RoleRoute allow={["business_owner"]}><Team /></RoleRoute></PrivateRoute>} />
           <Route path="/settings"        element={<PrivateRoute><Settings /></PrivateRoute>} />
           <Route path="/portal"          element={<PrivateRoute><Stub name="Client Portal" /></PrivateRoute>} />

@@ -101,10 +101,27 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             return [IsAssistantOrAbove(), require_tab("library", "edit")()]
         return [IsAssistantOrAbove(), require_tab("library", "view")()]
 
+    # A client's shared upload stays the client's file: coaches can view, edit its content
+    # live (edit_config) and delete it, but not re-share it, swap the file or spin copies
+    # into their own Library.
+    CLIENT_FILE_LOCKED_ACTIONS = ("update", "partial_update", "replace_file", "convert_to_pdf")
+
+    def get_object(self):
+        obj = super().get_object()
+        if obj.uploaded_by_client_id and self.action in self.CLIENT_FILE_LOCKED_ACTIONS:
+            from rest_framework.exceptions import PermissionDenied
+            raise PermissionDenied("This file belongs to a client — it can be viewed, edited live or deleted, "
+                                   "but its sharing and file can't be changed here.")
+        return obj
+
     def get_queryset(self):
         from django.db.models import Q
         user = self.request.user
         qs = KnowledgeItem.objects.filter(workspace=user.workspace)
+        # A client's portal upload stays private to the client until they "Share with
+        # coach" — hidden from everyone here (owner included, every action incl. detail/
+        # edit/download), not just from lists.
+        qs = qs.exclude(Q(uploaded_by_client__isnull=False) & Q(shared_with_coach=False))
 
         shared_with_client = self.request.query_params.get("shared_with_client")
         if shared_with_client:
@@ -123,8 +140,22 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             qs = qs.filter(
                 Q(visibility__in=["internal", "client_visible"]) |
                 Q(visibility="private", uploaded_by=user) |
-                Q(visibility="specific", shared_user_ids__contains=[str(user.id)])
+                Q(visibility="specific", shared_user_ids__contains=[str(user.id)]) |
+                # Portal uploads from this coach's clients — follows the client's CURRENT
+                # coach, so a reassigned client's files go with them.
+                Q(uploaded_by_client__coach=user)
             )
+        # Files clients upload in their portal are the client's, not Library material:
+        # Library → All Files never lists them. They're listed by the Client Files page
+        # (?client_uploads=1, optional &client=<id>) and on each client's Files tab
+        # (?shared_with_client=<id>). Detail actions (edit/download/delete) still resolve
+        # them by id, under the same role filter above.
+        if self.request.query_params.get("client_uploads"):
+            qs = qs.filter(uploaded_by_client__isnull=False).select_related("uploaded_by_client")
+            if self.request.query_params.get("client"):
+                qs = qs.filter(uploaded_by_client_id=self.request.query_params["client"])
+        elif self.action == "list" and not shared_with_client:
+            qs = qs.filter(uploaded_by_client__isnull=True)
         q      = self.request.query_params.get("q")
         ctype  = self.request.query_params.get("content_type")
         vis    = self.request.query_params.get("visibility")
@@ -353,9 +384,16 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         if not item.s3_key:
             return Response({"detail": "No file to preview."}, status=status.HTTP_400_BAD_REQUEST)
 
+        from apps.accounts.permissions import has_tab_access
         is_owner    = request.user.role == "business_owner"
         is_uploader = item.uploaded_by_id == request.user.id
-        can_edit    = is_owner or is_uploader
+        # A client's portal upload is editable by that client's coach too (with Library →
+        # edit). Other shared Library files stay owner/uploader-only: one file can be
+        # shared with many clients, so an edit changes it for all of them.
+        is_clients_coach = bool(item.uploaded_by_client_id
+                                and item.uploaded_by_client.coach_id == request.user.id
+                                and has_tab_access(request.user, "library", "edit"))
+        can_edit    = is_owner or is_uploader or is_clients_coach
 
         requested_mode = request.query_params.get("mode", "view")
         if requested_mode == "edit" and not can_edit:
