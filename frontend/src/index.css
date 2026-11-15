@@ -379,16 +379,24 @@ body {
 .tl-time { font-size: 11px; color: var(--muted); margin-top: 2px; }
 
 /* ── Toast ── */
+/* Top-centre: bottom-right sat under the floating Feedback button (z-index 1000),
+   which hid every error message. Above modals too, so errors from a modal show. */
 .toast {
-  position: fixed; bottom: 24px; right: 24px;
+  position: fixed; top: 20px; left: 50%; transform: translateX(-50%);
+  max-width: min(640px, calc(100vw - 32px));
+  display: flex; align-items: flex-start; gap: 12px;
   background: var(--navy); color: var(--paper);
-  padding: 12px 20px; font-size: 13px;
+  padding: 12px 14px 12px 20px; font-size: 13px; line-height: 1.45;
   border-left: 3px solid var(--gold);
-  z-index: 999; animation: slideUp .25s ease;
+  box-shadow: 0 6px 20px rgba(0,0,0,.2);
+  z-index: 3000; animation: slideDown .25s ease;
 }
+.toast span { flex: 1; overflow-wrap: anywhere; }
 .toast.success { border-left-color: var(--success); }
-.toast.error   { border-left-color: #dc2626; }
-@keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.toast.error   { border-left-color: #dc2626; background: #7f1d1d; }
+.toast-close { background: none; border: none; color: inherit; opacity: .7; cursor: pointer; font-size: 18px; line-height: 1; padding: 0 2px; }
+.toast-close:hover { opacity: 1; }
+@keyframes slideDown { from { transform: translate(-50%, -12px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 
 /* ── Empty State ── */
 .empty {

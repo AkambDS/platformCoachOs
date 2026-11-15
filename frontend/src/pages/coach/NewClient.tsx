@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { clientsApi, settingsApi, authApi, pipelineApi } from '../../api/client'
 import AppShell from '../../components/layout/AppShell'
 import { useToast } from '../../components/ui'
+import { apiErrorMessage } from '../../lib/apiError'
 
 const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
 
@@ -100,17 +101,7 @@ export default function NewClient() {
       showToast('Client created')
       navigate(`/clients/${res.data.id}`)
     } catch (e: any) {
-      const data = e.response?.data
-      if (data) {
-        // Show first field-level error found, or fall back to detail
-        const fieldError = Object.entries(data)
-          .filter(([k]) => k !== 'detail')
-          .map(([k, v]) => `${k}: ${Array.isArray(v) ? v[0] : v}`)
-          .join(', ')
-        setError(fieldError || data.detail || 'Failed to create client')
-      } else {
-        setError('Failed to create client')
-      }
+      setError(apiErrorMessage(e, 'Failed to create client'))
       setSaving(false)
     }
   }

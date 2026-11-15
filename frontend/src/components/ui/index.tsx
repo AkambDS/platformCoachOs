@@ -3,9 +3,16 @@ import { ReactNode, useEffect, useState } from 'react'
 // ── Toast ──────────────────────────────────────────────────────────────────────
 interface ToastProps { message: string; type?: 'success' | 'error' | 'info'; onDone: () => void }
 
+// Errors stay up longer (and can be closed) — a 3s error toast is gone before anyone
+// reads which field was wrong.
 export function Toast({ message, type = 'info', onDone }: ToastProps) {
-  useEffect(() => { const t = setTimeout(onDone, 3000); return () => clearTimeout(t) }, [onDone])
-  return <div className={`toast ${type}`}>{message}</div>
+  useEffect(() => { const t = setTimeout(onDone, type === 'error' ? 10000 : 3000); return () => clearTimeout(t) }, [onDone, type])
+  return (
+    <div className={`toast ${type}`} role={type === 'error' ? 'alert' : 'status'}>
+      <span>{message}</span>
+      <button className="toast-close" onClick={onDone} aria-label="Close">×</button>
+    </div>
+  )
 }
 
 // ── useToast ───────────────────────────────────────────────────────────────────

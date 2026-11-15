@@ -9,6 +9,7 @@ import { InvoiceTables, parseDate as parseInvoiceDate } from '../../components/I
 import { EDITABLE_OFFICE_EXTS, OfficeEditorModal, InlineOfficeViewer } from '../../components/OfficeEditor'
 import SignaturePad from '../../components/SignaturePad'
 import { useAuthStore } from '../../store/auth'
+import { apiErrorMessage } from '../../lib/apiError'
 
 const GOAL_STATUSES  = ['active','completed','paused']
 const PHONE_TYPES = ['Mobile', 'Work', 'Home', 'Other']
@@ -42,6 +43,19 @@ type Client = {
   notes?: string
   tags?: string[]
   [key: string]: any
+}
+
+// Website / LinkedIn as a link opening in a new tab. Only http(s) — a legacy stored value
+// like "javascript:…" must never become a clickable href.
+function extLink(url?: string) {
+  if (!url) return '—'
+  if (!/^https?:\/\//i.test(url)) return url
+  return (
+    <a href={url} target="_blank" rel="noopener noreferrer"
+      style={{ color: 'var(--navy)', textDecoration: 'underline', overflowWrap: 'anywhere' }}>
+      {url.replace(/^https?:\/\/(www\.)?/i, '').replace(/\/$/, '')}
+    </a>
+  )
 }
 
 function initials(name: string) {
@@ -2585,16 +2599,7 @@ export default function ClientDetail() {
       setEditMode(false)
       showToast('Client updated')
     } catch (err: any) {
-      const data = err.response?.data
-      if (data) {
-        const msg = Object.entries(data)
-          .filter(([k]) => k !== 'detail')
-          .map(([, v]) => (Array.isArray(v) ? v[0] : v))
-          .join(' ') || data.detail || 'Failed to save'
-        showToast(String(msg), 'error')
-      } else {
-        showToast('Failed to save', 'error')
-      }
+      showToast(apiErrorMessage(err, 'Failed to save'), 'error')
     }
   }
 
@@ -3057,8 +3062,8 @@ export default function ClientDetail() {
                           ...(client.lead_source === 'referral' && (client as any).referral_name
                             ? [{ label: 'Referred By', value: (client as any).referral_name }] : []),
                           { label: 'Birth Date', value: client.birth_date ? fmtDate(client.birth_date) : '—' },
-                          { label: 'Website', value: (client as any).website || '—' },
-                          { label: 'LinkedIn', value: (client as any).linkedin_url || '—' },
+                          { label: 'Website', value: extLink((client as any).website) },
+                          { label: 'LinkedIn', value: extLink((client as any).linkedin_url) },
                           { label: 'Coach',   value: (client as any).coach_name || '—' },
                           { label: 'Portal',  value: client.portal_access ? 'Enabled' : 'Not invited' },
                         ]

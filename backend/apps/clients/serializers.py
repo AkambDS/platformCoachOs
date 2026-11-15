@@ -130,6 +130,43 @@ class ClientDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelSe
         # which are workspace-owner-only — never via a plain client create/edit.
         read_only_fields = ["id", "workspace", "created_at", "updated_at", "portal_access"]
 
+    URL_FIELDS = ("website", "linkedin_url")
+
+    def to_internal_value(self, data):
+        # People type "www.linkedin.com/in/x" or "linkedin.com/in/x" — URLField rejects
+        # anything without a scheme ("Enter a valid URL."), and that runs before any
+        # validate_<field>, so add https:// here. The edit form re-sends the whole record,
+        # so this also unblocks saves for a client whose stored value was scheme-less.
+        if any(isinstance(data.get(f), str) for f in self.URL_FIELDS):
+            data = data.copy()
+            for f in self.URL_FIELDS:
+                v = data.get(f)
+                if isinstance(v, str):
+                    v = v.strip()
+                    if v and "://" not in v:
+                        v = "https://" + v.lstrip("/")
+                    data[f] = v
+        return super().to_internal_value(data)
+
+    def validate_linkedin_url(self, value):
+        # URLField only checks the shape, so "ww.linkedin.com" or "linkdin.com" pass. Any
+        # *.linkedin.com host (uk., in., a typo'd "ww.") serves the same profile at
+        # www.linkedin.com, so normalise to that; anything else isn't a LinkedIn link.
+        # Unchanged stored value: leave it (same rationale as validate_email — the
+        # full-record resave mustn't block an unrelated edit over pre-existing data).
+        if not value or (self.instance and self.instance.linkedin_url == value):
+            return value
+        from urllib.parse import urlsplit, urlunsplit
+        parts = urlsplit(value)
+        host = (parts.hostname or "").lower()
+        if host != "linkedin.com" and not host.endswith(".linkedin.com"):
+            raise serializers.ValidationError(
+                "Must be a linkedin.com link, e.g. https://www.linkedin.com/in/name/")
+        if parts.path.strip("/") == "":
+            raise serializers.ValidationError(
+                "Add the profile part, e.g. https://www.linkedin.com/in/name/")
+        return urlunsplit(("https", "www.linkedin.com", parts.path, parts.query, ""))
+
     def validate_email(self, value):
         if not value:
             return value
