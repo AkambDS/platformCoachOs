@@ -1130,7 +1130,7 @@ def send_invoice_email(invoice_id: str):
             invoice.save(update_fields=["stripe_payment_link"])
 
         owner_email, owner_name = _owner_info(workspace)
-        due_str   = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+        due_str   = invoice.due_text()
 
         _pay_link = invoice.stripe_payment_link or ""
         _pay_button = (

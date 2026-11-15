@@ -10,6 +10,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 | **B** | Clients list: real Status column, "Recently viewed" sort, case-insensitive name sort, spacing |
 | **C** | Affiliations move from sessions to clients |
 | **D** | Session status: one "Mark as" menu (Confirmed/Late/Completed/Missed/Rescheduled) |
+| **E** | Monthly subscription invoices: "Due upon receipt" option |
 
 ---
 
@@ -112,3 +113,20 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (6 migrati
 
 ## Tests
 `test_activity_validation.py::test_mark_as_status_rules`.
+
+---
+
+# Part E — Invoices: "Due upon receipt" for monthly subscriptions
+
+## Change
+- New Invoice → Monthly Subscription: **Due date** radio — "On billing date (…)" or
+  "Upon receipt".
+- Shown as "Due: Upon Receipt" in the PDF preview, the invoice page / Download PDF, and the
+  client portal; the email reads "payment due on receipt".
+- New field `Invoice.due_upon_receipt`; the billing date stays in `due_date`, because the
+  monthly scheduler counts the next send date from it (an empty due date would make the
+  series re-send). Generated monthly invoices inherit the choice. Editable after sending.
+- **Migration `invoicing/0013`.**
+
+## Tests
+`test_invoice_due_upon_receipt.py` (2 tests).

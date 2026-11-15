@@ -630,6 +630,7 @@ class PortalInvoicesView(APIView):
                 "total":               str(inv.total),
                 "amount_paid":         str(inv.amount_paid) if inv.amount_paid else "0.00",
                 "due_date":            inv.due_date.isoformat() if inv.due_date else None,
+                "due_upon_receipt":    inv.due_upon_receipt,
                 "stripe_payment_link": inv.stripe_payment_link or "",
                 "created_at":          inv.created_at.isoformat(),
                 "items": [

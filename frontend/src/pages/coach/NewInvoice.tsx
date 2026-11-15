@@ -40,14 +40,14 @@ function firstBillingDate(startDateStr: string, billingDay: number) {
 
 // ── Mini PDF preview rendered inline ─────────────────────────────────────────
 
-function PdfPreview({ client, items, subtotal, discount, tax, total, dueDate, notes, workspaceName, logoUrl }: {
+function PdfPreview({ client, items, subtotal, discount, tax, total, dueDate, uponReceipt, notes, workspaceName, logoUrl }: {
   client: any
   items: { description: string; quantity: string; unit_price: string }[]
   subtotal: number; discount: number; tax: number; total: number
-  dueDate: string; notes: string
+  dueDate: string; uponReceipt?: boolean; notes: string
   workspaceName: string; logoUrl: string
 }) {
-  const due = dueDate ? parseDate(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+  const due = uponReceipt ? 'Upon Receipt' : dueDate ? parseDate(dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
   const clientName = client ? `${client.first_name} ${client.last_name}` : '—'
   const clientEmail = client?.email || ''
   const clientCompany = client?.company || ''
@@ -75,7 +75,7 @@ function PdfPreview({ client, items, subtotal, discount, tax, total, dueDate, no
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '.12em', color: '#9e9890' }}>Invoice</div>
           <div style={{ fontFamily: 'Georgia, serif', fontSize: 14, fontWeight: 600 }}>INV-XXXX</div>
-          {dueDate && <div style={{ color: '#9e9890', fontSize: 9, marginTop: 2 }}>Due: {due}</div>}
+          {(dueDate || uponReceipt) && <div style={{ color: '#9e9890', fontSize: 9, marginTop: 2 }}>Due: {due}</div>}
         </div>
       </div>
 
@@ -273,10 +273,11 @@ function CatalogDescInput({ value, onChange, onSelectCatalog, catalog }: {
 
 // ── Send preview modal ────────────────────────────────────────────────────────
 
-function SendPreviewModal({ client, amount, dueDate, onClose, onConfirm, sending }: {
+function SendPreviewModal({ client, amount, dueDate, uponReceipt, onClose, onConfirm, sending }: {
   client: any
   amount: string
   dueDate: string
+  uponReceipt?: boolean
   onClose: () => void
   onConfirm: () => void
   sending: boolean
@@ -288,7 +289,9 @@ function SendPreviewModal({ client, amount, dueDate, onClose, onConfirm, sending
     setLoading(true)
     const params: Record<string, string> = { type: 'invoice', _t: String(Date.now()) }
     if (amount) params.amount = amount
-    if (dueDate) {
+    // Same wording the real email uses (Invoice.due_text): "payment due on receipt".
+    if (uponReceipt) params.due_date = 'receipt'
+    else if (dueDate) {
       try {
         params.due_date = parseDate(dueDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
       } catch { params.due_date = dueDate }
@@ -382,6 +385,7 @@ export default function NewInvoice() {
     subscription_start: today(),
     subscription_end: '',
     subscription_auto_send: true,
+    due_upon_receipt: false,
   })
   const [items, setItems] = useState([{ description: '', quantity: '1', unit_price: '' }])
   const [saving, setSaving] = useState(false)
@@ -413,6 +417,7 @@ export default function NewInvoice() {
       subscription_start: existingInv.subscription_start || today(),
       subscription_end: existingInv.subscription_end || '',
       subscription_auto_send: existingInv.subscription_auto_send ?? true,
+      due_upon_receipt: !!existingInv.due_upon_receipt,
     })
     if (existingInv.items?.length) {
       setItems(existingInv.items.map((it: any) => ({
@@ -467,12 +472,17 @@ export default function NewInvoice() {
     [tab, form.subscription_start, form.billing_day, form.due_date]
   )
 
+  // Radio under DUE DATE for subscriptions; one-time invoices keep the date picker
+  // (leave it empty there and the invoice already reads "Upon Receipt").
+  const dueUponReceipt = tab === 'subscription' && form.due_upon_receipt
+
   const payload = useMemo(() => ({
     client: form.client,
     invoice_type: tab === 'subscription' ? 'subscription' : 'one_time',
     currency: form.currency,
     issue_date: form.issue_date || null,
     due_date: computedDueDate || null,
+    due_upon_receipt: dueUponReceipt,
     notes: form.notes,
     discount_type: form.discount_type,
     discount_value: Number(form.discount_value),
@@ -675,12 +685,20 @@ export default function NewInvoice() {
               <div className="fgroup" style={{ marginBottom: 0 }}>
                 <label className="flabel">DUE DATE</label>
                 {tab === 'subscription' ? (
-                  <div
-                    className="finput"
-                    style={{ display: 'flex', alignItems: 'center', color: 'var(--muted)', background: 'var(--paper)', cursor: 'default' }}
-                    title="Set automatically from Start Date + Billing Day in Subscription Settings"
-                  >
-                    {computedDueDate ? parseDate(computedDueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, paddingTop: 6 }}>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="radio" name="sub_due" checked={!form.due_upon_receipt}
+                        onChange={() => set('due_upon_receipt', false)} style={{ accentColor: 'var(--ink)' }} />
+                      On billing date
+                      <span style={{ color: 'var(--muted)' }}>
+                        ({computedDueDate ? parseDate(computedDueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'})
+                      </span>
+                    </label>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
+                      <input type="radio" name="sub_due" checked={form.due_upon_receipt}
+                        onChange={() => set('due_upon_receipt', true)} style={{ accentColor: 'var(--ink)' }} />
+                      Upon receipt
+                    </label>
                   </div>
                 ) : (
                   <input className="finput" type="date" value={form.due_date} onChange={e => set('due_date', e.target.value)} />
@@ -689,7 +707,9 @@ export default function NewInvoice() {
             </div>
             {tab === 'subscription' && (
               <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 6 }}>
-                Due date is set automatically from Start Date + Billing Day below.
+                {form.due_upon_receipt
+                  ? 'Each invoice will read "Due: Upon Receipt" — it is still sent on the billing day below.'
+                  : 'Billing date is set automatically from Start Date + Billing Day below.'}
               </div>
             )}
 
@@ -965,6 +985,7 @@ export default function NewInvoice() {
               tax={taxAmt}
               total={total}
               dueDate={computedDueDate}
+              uponReceipt={dueUponReceipt}
               notes={form.notes}
               workspaceName={workspaceName}
               logoUrl={logoUrl}
@@ -979,6 +1000,7 @@ export default function NewInvoice() {
           client={selectedClient}
           amount={total.toFixed(2)}
           dueDate={computedDueDate}
+          uponReceipt={dueUponReceipt}
           sending={saving}
           onClose={() => setShowSendPreview(false)}
           onConfirm={() => { setShowSendPreview(false); handleSend() }}

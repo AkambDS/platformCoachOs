@@ -19,7 +19,7 @@ class InvoiceListSerializer(serializers.ModelSerializer):
     class Meta:
         model  = Invoice
         fields = ["id", "number", "status", "invoice_type", "billing_cycle", "next_invoice_date",
-                  "subscription_auto_send", "total", "amount_paid", "refund_amount", "due_date",
+                  "subscription_auto_send", "total", "amount_paid", "refund_amount", "due_date", "due_upon_receipt",
                   "sent_at", "archived", "client_name", "client_company", "created_at", "email_html"]
 
     def get_email_html(self, obj):
@@ -70,7 +70,7 @@ class InvoiceDetailSerializer(WorkspaceScopedSerializerMixin, serializers.ModelS
     # schedule itself — billing cycle/day/end/auto-send — since a coach adjusting when
     # future invoices go out doesn't touch what's already been billed.
     EDITABLE_AFTER_SEND = {
-        "due_date", "notes", "email_template_id",
+        "due_date", "due_upon_receipt", "notes", "email_template_id",
         "billing_cycle", "billing_day", "subscription_end", "subscription_auto_send",
     }
 
@@ -132,7 +132,7 @@ def _build_email_html(invoice: Invoice) -> str:
             backend_base = f"https://{host}" if host else "http://localhost:8000"
         logo_url = f"{backend_base}/api/settings/logo/{workspace.id}/" if workspace.logo_data else ""
 
-        due_str  = invoice.due_date.strftime("%B %d, %Y") if invoice.due_date else ""
+        due_str  = invoice.due_text()
         tmpl     = _get_invoice_template(invoice)
 
         _pay_link = invoice.stripe_payment_link or ""

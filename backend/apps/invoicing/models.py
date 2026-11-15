@@ -55,6 +55,9 @@ class Invoice(WorkspaceModel):
     amount_paid       = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     notes             = models.TextField(blank=True)
     due_date          = models.DateField(null=True, blank=True)
+    # Show "Due upon receipt" instead of the date (New Invoice → subscription radio).
+    # due_date is still kept: it's the billing date compute_next_invoice_date counts from.
+    due_upon_receipt  = models.BooleanField(default=False)
     sent_at           = models.DateTimeField(null=True, blank=True)
     paid_at           = models.DateTimeField(null=True, blank=True)
     # Stripe link
@@ -123,6 +126,12 @@ class Invoice(WorkspaceModel):
         tax = after_discount * self.tax_percent / 100
         self.total = after_discount + tax
         return self.total
+
+    def due_text(self):
+        """Due date as emails word it — reads "payment due on receipt" / "Due: receipt"."""
+        if self.due_upon_receipt:
+            return "receipt"
+        return self.due_date.strftime("%B %d, %Y") if self.due_date else ""
 
     def compute_next_invoice_date(self):
         """Date the next invoice in this subscription series should be generated and

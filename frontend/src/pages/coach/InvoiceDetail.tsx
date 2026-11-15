@@ -110,7 +110,7 @@ function InvoiceDoc({ inv, workspace }: { inv: any; workspace: any }) {
           {inv.issue_date && (
             <div style={{ fontSize: 12, color: '#6e6560', marginTop: 4 }}>Issued: {fmtDateShort(inv.issue_date)}</div>
           )}
-          <div style={{ fontSize: 12, color: '#6e6560' }}>Due: {inv.due_date ? fmtDateShort(inv.due_date) : 'Upon Receipt'}</div>
+          <div style={{ fontSize: 12, color: '#6e6560' }}>Due: {inv.due_upon_receipt || !inv.due_date ? 'Upon Receipt' : fmtDateShort(inv.due_date)}</div>
           {/* Status stamp — hidden in PDF/print */}
           <div className="invoice-status-stamp" style={{
             display: 'inline-block',
@@ -953,7 +953,7 @@ ${el.innerHTML}
               </div>
               {inv.due_date && (
                 <span style={{ color: isOverdue ? '#e67e22' : 'var(--muted)', fontWeight: isOverdue ? 600 : 400 }}>
-                  {isOverdue ? '⚠ Overdue · ' : ''}{fmtDate(inv.due_date)}
+                  {isOverdue ? '⚠ Overdue · ' : ''}{inv.due_upon_receipt ? 'Due upon receipt' : fmtDate(inv.due_date)}
                 </span>
               )}
             </div>

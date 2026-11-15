@@ -32,7 +32,7 @@ interface Goal { id: string; title: string; description: string; target_date: st
 interface Commitment { id: string; text: string; created_at: string }
 interface Activity { id: string; title: string; activity_type: string; status: string; start_at: string; end_at: string | null; location: string; meeting_link: string; coach_name: string }
 interface InvoiceItem { description: string; quantity: string; unit_price: string; line_total: string }
-interface Invoice { id: string; number: string; status: string; total: string; amount_paid: string; due_date: string | null; stripe_payment_link: string; created_at: string; items: InvoiceItem[] }
+interface Invoice { id: string; number: string; status: string; total: string; amount_paid: string; due_date: string | null; due_upon_receipt?: boolean; stripe_payment_link: string; created_at: string; items: InvoiceItem[] }
 // content_type/presigned_url/inline_url/file_name match KnowledgeItemSerializer's actual
 // field names exactly (apps/library/serializers.py) — this used to say item_type/file_url,
 // which don't exist on that serializer at all, so the "download" link and real file-type
@@ -412,7 +412,8 @@ function OverviewTab({ me, goals, activities, invoices }: { me: MeData | null; g
             <div>
               {outstandingThisMonth.map((inv, i) => {
                 const status = clientStatus(inv)
-                const dueLabel = inv.due_date ? `${status === 'overdue' ? 'Was due' : 'Due'} ${fmtDate(inv.due_date)}` : null
+                const dueLabel = inv.due_upon_receipt && status !== 'overdue' ? 'Due upon receipt'
+                  : inv.due_date ? `${status === 'overdue' ? 'Was due' : 'Due'} ${fmtDate(inv.due_date)}` : null
                 return (
                   <div key={inv.id} style={{ padding: '14px 20px', borderBottom: i < outstandingThisMonth.length - 1 ? '1px solid var(--border)' : 'none' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
@@ -1409,6 +1410,7 @@ function InvoiceCard({ inv, expanded, onToggle }: { inv: Invoice; expanded: bool
   const dueLabel =
     status === 'paid' ? null :
     status === 'overdue' ? `Was due ${fmtDate(inv.due_date!)}` :
+    inv.due_upon_receipt ? 'Due upon receipt' :
     inv.due_date ? `Due ${fmtDate(inv.due_date)}` : null
 
   return (
