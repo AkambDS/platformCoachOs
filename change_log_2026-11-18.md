@@ -8,6 +8,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (2 migrati
 | **A** | Site-health job runs in production only (no more false "Site unreachable" alerts from a laptop) |
 | **B** | Stripe one-time payments: fixes P1–P8, payment emails to the owner, Stripe problems shown to the owner |
 | **C** | Demo workspace: every integration switched off (Google, Zoom, Stripe, document editing, allauth pages) |
+| **D** | "Payment Received" email: "Open invoice" button removed (it pointed at the wrong address in prod) |
 
 ---
 
@@ -84,6 +85,33 @@ their own Google/Zoom account to the demo user.
 ## Tests
 No automated tests for this part yet; verified by hand locally (see CLAUDE.md §9).
 
+# Part D — "Payment Received" email: no "Open invoice" button
+
+## What was wrong
+The owner's "Payment Received" email (Part B) had an **Open invoice** button linking to
+`<FRONTEND_URL>/invoices/<id>`. In prod, `nginx/nginx.conf` sends **every** `/invoices/…`
+address to Django (the client pay links live at `/invoices/pay/…`), so the link reached
+Django instead of the app's invoice page and failed. Locally there's no nginx, so it worked.
+
+## Fix
+- The button is removed (`tasks/email.py` → `send_payment_received_email`). The email already
+  lists the invoice number, amount, date, invoice total, balance due and client.
+- New `NO_BUTTON_NOTICES` in `tasks/email_notices.py`; the Settings → Emails preview follows it,
+  so the preview matches the real email (it used to add a sample button to every owner/coach
+  email).
+
+## Tests
+`apps/invoicing/tests.py::test_payment_received_email_has_no_button` (real email has no button
+or invoice link). Invoicing + Stripe settings tests: 56 passing.
+
+## Still open (not changed)
+- The **"Invoice Overpaid"** email has the same **Open invoice** button, so it has the same
+  problem in prod (so does "Payment Failed", which isn't sent today).
+- Probably also: reloading an invoice page in prod (`/invoices/<id>`), which should hit the
+  same nginx rule.
+- Suggested fix: narrow the nginx block to `location /invoices/pay/` (Django has no other
+  `/invoices/` pages).
+
 ---
 
 ## Deploy
@@ -97,7 +125,7 @@ No automated tests for this part yet; verified by hand locally (see CLAUDE.md §
 4. Nothing to add to `.env` (`SITE_HEALTH_CHECK_ENABLED` and `PAYMENT_RECEIVED_EMAIL_ENABLED`
    default correctly for prod).
 
-## Tests (local, all passing — 113)
+## Tests (local, all passing — 114)
 ```
 docker compose exec -T api pytest -q apps/invoicing/tests.py apps/settings_app/tests.py \
   apps/portal/tests.py test_portal_uploads.py test_tenant_isolation.py test_client_affiliations.py \

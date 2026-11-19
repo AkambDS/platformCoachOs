@@ -386,7 +386,7 @@ def email_preview(request):
                                    build_client_communication_email, build_invite_email, build_pipeline_alert_email)
     from tasks.email import _logo_src, _owner_info, _resolve_generic_template
     from tasks.email_html import build_cancellation_email
-    from tasks.email_notices import NOTICES, render_notice
+    from tasks.email_notices import NOTICES, NO_BUTTON_NOTICES, render_notice
 
     email_type = params.get("type", "confirmation")
     workspace  = Workspace.objects.get(pk=request.user.workspace_id)  # fresh DB read
@@ -800,6 +800,8 @@ def email_preview(request):
                            ("Where", "123 Main St"), ("Client", "Jane Smith (jane@example.com)")])
         cta = None if NOTICES[email_type]["audience"] == "client" and email_type not in ("goal_shared", "note_shared") \
             else ("Open in CoachOS" if NOTICES[email_type]["audience"] == "coach" else "View in your portal", "#")
+        if email_type in NO_BUTTON_NOTICES:
+            cta = None
         _, html, _ = render_notice(
             workspace, email_type, values, rows=sample_rows, cta=cta, logo_url=logo_url,
             owner_email=owner_email, owner_name=owner_name,

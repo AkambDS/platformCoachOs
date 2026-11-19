@@ -26,6 +26,9 @@ _SESSION = ["{client_name}", "{client_first_name}", "{client_email}", "{coach_na
 _TO_COACH = ["{recipient_name}", "{recipient_first_name}"]
 
 # audience: who receives it — "client" or "coach" (coach/owner of the workspace).
+# Notices sent without an action button (the Settings → Emails preview follows this too).
+NO_BUTTON_NOTICES = {"payment_received"}
+
 NOTICES: dict[str, dict] = {
     # ── Sent to the client ────────────────────────────────────────────────────
     "cancellation": dict(

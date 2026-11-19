@@ -1385,7 +1385,7 @@ def send_payment_received_email(payment_id: str):
     (apps.invoicing.public_views — Stripe webhook). Platform-wide switch:
     PAYMENT_RECEIVED_EMAIL_ENABLED (on by default), like SESSION_REMINDER_HOURS."""
     from apps.invoicing.models import Payment
-    from tasks.email_notices import send_notice, app_url
+    from tasks.email_notices import send_notice
     if not getattr(settings, "PAYMENT_RECEIVED_EMAIL_ENABLED", True):
         return
     workspace = None
@@ -1409,7 +1409,8 @@ def send_payment_received_email(payment_id: str):
                   ("Paid on", payment.paid_at.strftime("%B %d, %Y")), ("Method", "Card (Stripe)"),
                   ("Invoice total", f"${invoice.total:,.2f}"), ("Balance due", f"${balance:,.2f}"),
                   ("Client", client.full_name)],
-            cta=("Open invoice", app_url(f"/invoices/{invoice.id}")),
+            # No button: the email already has every detail, and the old "Open invoice"
+            # link pointed at the wrong address.
             client=client, related_id=str(invoice.id),
         )
     except Exception as e:

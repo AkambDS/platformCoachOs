@@ -370,6 +370,24 @@ def test_overpayment_is_recorded_and_owner_alerted(workspace, client_record, bus
     assert all("$300.00" in m.subject for m in alerts)
 
 
+def test_payment_received_email_has_no_button(workspace, client_record, business_owner):
+    """The owner's "Payment Received" email carries no action button (the old "Open
+    invoice" link pointed at the wrong address) — in the real email and in the Settings
+    → Emails preview."""
+    from django.core import mail
+    from tasks.email_notices import NO_BUTTON_NOTICES
+    _stripe_workspace(workspace)
+    invoice = _invoice(workspace, client_record)
+    mail.outbox.clear()
+    _post_webhook(workspace, _checkout_event(invoice))
+    owner_mail = [m for m in mail.outbox if m.to == ["owner@test.com"] and "paid" in m.subject]
+    assert owner_mail, [m.subject for m in mail.outbox]
+    html = owner_mail[0].alternatives[0][0]
+    assert "Open invoice" not in html and "/invoices/" not in html
+    assert "Open invoice" not in owner_mail[0].body
+    assert "payment_received" in NO_BUTTON_NOTICES
+
+
 # ── P4: only a checkout that actually took money is recorded as a payment ─────────
 #
 # Old behaviour: any finished checkout carrying invoice metadata was recorded — including
