@@ -363,6 +363,10 @@ CELERY_BEAT_SCHEDULE = {
 # on; local/dev leave it off so a sleeping laptop doesn't email "Site unreachable".
 SITE_HEALTH_CHECK_ENABLED = env.bool("SITE_HEALTH_CHECK_ENABLED", default=False)
 
+# "Payment Received" email to the workspace owner for every card payment
+# (tasks.email.send_payment_received_email). Platform-wide; set to False in .env to stop it.
+PAYMENT_RECEIVED_EMAIL_ENABLED = env.bool("PAYMENT_RECEIVED_EMAIL_ENABLED", default=True)
+
 # ── Stripe (platform-level — dj-stripe, CoachOS's own billing) ─────────────
 STRIPE_LIVE_MODE          = env.bool("STRIPE_LIVE_MODE", default=False)
 STRIPE_TEST_SECRET_KEY    = env("STRIPE_TEST_SECRET_KEY", default="")

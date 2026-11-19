@@ -1,4 +1,5 @@
 import base64
+import logging
 from rest_framework.generics import RetrieveUpdateAPIView
 from rest_framework.decorators import api_view, permission_classes, parser_classes
 from rest_framework.parsers import MultiPartParser
@@ -18,6 +19,8 @@ from apps.pipeline.models import PipelineStageConfig
 from apps.activities.models import ActivityTypeConfig, BUILTIN_TYPES, AffiliationConfig
 from apps.clients.models import ClientStatusConfig, ClientTagConfig, CommunicationTagConfig, LeadSourceConfig
 from apps.accounts.permissions import IsBusinessOwner, IsWorkspaceMember
+
+logger = logging.getLogger(__name__)
 
 
 class BrandingSettingsView(RetrieveUpdateAPIView):
@@ -425,6 +428,11 @@ def email_preview(request):
         goal_title="Lead weekly team check-ins", target_date="August 30, 2026",
         note_topic="Session Recap", document_title="Coaching Services Agreement",
         signed_at="June 5, 2026 at 10:42 AM", portal_url="#",
+        invoice_total="150.00", amount_paid="300.00", overpaid_amount="150.00",
+        balance_due="0.00", payment_state="fully paid", balance_note="This invoice is now paid in full.",
+        problem_title="Stripe payments aren't being recorded: the webhook secret doesn't match",
+        problem_detail="Payment updates from Stripe are being rejected because the saved webhook signing secret doesn't match your Stripe endpoint.",
+        problem_fix="Re-do Step 2 in Settings → Integrations → Stripe and paste the endpoint's signing secret.",
     )
     if email_type == "client_communication":
         # Real client/coach name (not the generic Jane Smith / Coach Mike placeholders) —
@@ -776,6 +784,12 @@ def email_preview(request):
             "goal_shared":     [("Goal", values["goal_title"]), ("Target date", values["target_date"])],
             "note_shared":     [("Topic", values["note_topic"]), ("Session date", "June 5, 2026")],
             "payment_failed":  [("Invoice", "#INV-0042"), ("Amount", "$150.00"), ("Client", "Jane Smith")],
+            "payment_received": [("Invoice", "#INV-0042"), ("Amount", "$150.00"), ("Paid on", "June 30, 2026"),
+                                 ("Method", "Card (Stripe)"), ("Invoice total", "$150.00"), ("Balance due", "$0.00"),
+                                 ("Client", "Jane Smith")],
+            "stripe_problem":   [("Problem", "Stripe payments aren't being recorded"), ("First seen", "2026-06-30 09:15 UTC")],
+            "invoice_overpaid": [("Invoice", "#INV-0042"), ("Invoice total", "$150.00"), ("Paid", "$300.00"),
+                                 ("Overpaid", "$150.00"), ("Client", "Jane Smith")],
             "contract_signed": [("Document", values["document_title"]), ("Client", "Jane Smith"), ("Signed", values["signed_at"])],
             "decline_reschedule": [],
             "reschedule_request": [("What", "Discovery Session"), ("Current", values["session_time"]),
@@ -1233,34 +1247,67 @@ def _stripe_key_meta(secret_key: str) -> dict:
     return {"mode": mode, "last4": secret_key[-4:] if len(secret_key) >= 4 else ""}
 
 
+def _stripe_account_label(account) -> str:
+    """The name the owner sees for their Stripe account (dashboard name, business name or email)."""
+    dashboard = (account.get("settings") or {}).get("dashboard") or {}
+    profile   = account.get("business_profile") or {}
+    return dashboard.get("display_name") or profile.get("name") or account.get("email") or ""
+
+
+def _stripe_status(workspace, cfg) -> dict:
+    from django.conf import settings as dj_settings
+    backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/") or "http://localhost:8000"
+    return {
+        "connected":          bool(cfg.get("secret_key_encrypted")),
+        "mode":               cfg.get("mode", ""),
+        "last4":              cfg.get("last4", ""),
+        "account_id":         cfg.get("account_id", ""),
+        "account_name":       cfg.get("account_name", ""),
+        "publishable_key":    cfg.get("publishable_key", ""),
+        "webhook_configured": bool(cfg.get("webhook_secret_encrypted")),
+        "webhook_url":        f"{backend_base}/api/invoices/stripe-webhook/{workspace.id}/",
+        # Red banner in Settings → Integrations (apps/invoicing/stripe_problems.py)
+        "problems":           cfg.get("problems") or {},
+    }
+
+
 @api_view(["GET", "PATCH"])
 @permission_classes([IsWorkspaceMember])
 def stripe_settings(request):
     """
-    GET   /api/settings/stripe/ — connection status + the webhook URL to configure.
-          Never returns the actual secret/webhook keys, only derived display metadata.
+    GET   /api/settings/stripe/ — connection status, the Stripe account the key belongs to,
+          and the webhook URL to configure. Never returns the actual secret/webhook keys,
+          only derived display metadata.
     PATCH /api/settings/stripe/ — set/replace this workspace's Stripe secret key
           and/or webhook signing secret. Business-owner only (enforced below, not via
           decorator, so GET stays available to any workspace member).
     Body (PATCH): { secret_key?, publishable_key?, webhook_secret?, disconnect? }
+
+    A new secret key is checked with Stripe (Account.retrieve) before it's saved, so a
+    mistyped or revoked key is refused here rather than discovered when a client tries
+    to pay, and the Stripe account id it belongs to is stored (one-time-pay.md, P6).
     """
-    from django.conf import settings as dj_settings
-    from apps.accounts.crypto import encrypt_secret
+    import stripe
+    from django.utils import timezone
+    from apps.accounts.crypto import decrypt_secret, encrypt_secret
 
     workspace    = request.user.workspace
     integrations = workspace.integrations or {}
     cfg          = integrations.get("stripe", {})
 
     if request.method == "GET":
-        backend_base = getattr(dj_settings, "BACKEND_URL", "").rstrip("/") or "http://localhost:8000"
-        return Response({
-            "connected":          bool(cfg.get("secret_key_encrypted")),
-            "mode":               cfg.get("mode", ""),
-            "last4":              cfg.get("last4", ""),
-            "publishable_key":    cfg.get("publishable_key", ""),
-            "webhook_configured": bool(cfg.get("webhook_secret_encrypted")),
-            "webhook_url":        f"{backend_base}/api/invoices/stripe-webhook/{workspace.id}/",
-        })
+        # Keys saved before the account was recorded: look it up once, quietly — the page
+        # must still load if Stripe is slow or the key has since been revoked.
+        if cfg.get("secret_key_encrypted") and not cfg.get("account_id"):
+            try:
+                account = stripe.Account.retrieve(api_key=decrypt_secret(cfg["secret_key_encrypted"]))
+                cfg["account_id"], cfg["account_name"] = account["id"], _stripe_account_label(account)
+                integrations["stripe"] = cfg
+                workspace.integrations = integrations
+                workspace.save(update_fields=["integrations"])
+            except Exception as e:
+                logger.warning(f"Stripe account lookup failed for workspace {workspace.id}: {e}")
+        return Response(_stripe_status(workspace, cfg))
 
     if request.user.role not in ("business_owner", "platform_admin"):
         return Response({"detail": "Only the workspace owner can manage payment settings."}, status=status.HTTP_403_FORBIDDEN)
@@ -1270,35 +1317,68 @@ def stripe_settings(request):
         integrations["stripe"] = {}
         workspace.integrations = integrations
         workspace.save(update_fields=["integrations"])
-        return Response({"connected": False, "mode": "", "last4": "", "webhook_configured": False})
+        return Response({**_stripe_status(workspace, {}), "webhook_url": ""})
 
-    secret_key = (data.get("secret_key") or "").strip()
+    secret_key     = (data.get("secret_key") or "").strip()
+    webhook_secret = (data.get("webhook_secret") or "").strip()
+    if webhook_secret and not webhook_secret.startswith("whsec_"):
+        return Response(
+            {"detail": "That doesn't look like a webhook signing secret — it should start with whsec_. "
+                       "Find it in Stripe Dashboard → Developers → Webhooks → your endpoint → Signing secret."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    webhook_reset = False
     if secret_key:
         if not (secret_key.startswith("sk_test_") or secret_key.startswith("sk_live_")):
             return Response(
                 {"detail": "That doesn't look like a Stripe secret key — it should start with sk_test_ or sk_live_."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+        try:
+            account = stripe.Account.retrieve(api_key=secret_key)
+        except (stripe.error.AuthenticationError, stripe.error.PermissionError):
+            return Response(
+                {"detail": "Stripe didn't accept this key, so it wasn't saved. Copy the Secret key again from "
+                           "Stripe Dashboard → Developers → API keys (it may have been rolled or deleted)."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except stripe.error.StripeError as e:
+            logger.warning(f"Stripe key check failed for workspace {workspace.id}: {e}")
+            return Response(
+                {"detail": "Couldn't reach Stripe to check the key, so nothing was saved. Please try again in a minute."},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
         meta = _stripe_key_meta(secret_key)
-        from django.utils import timezone
+        # A webhook signing secret belongs to one endpoint in one Stripe account and one
+        # mode (test endpoints and live endpoints are separate). Moving to a different
+        # account or mode leaves the saved secret unable to verify anything — every
+        # payment would silently stop being recorded — so drop it and ask for the new one.
+        moved = (cfg.get("account_id") and cfg["account_id"] != account["id"]) or \
+                (cfg.get("mode") and cfg["mode"] != meta["mode"])
+        if moved and cfg.get("webhook_secret_encrypted") and not webhook_secret:
+            cfg.pop("webhook_secret_encrypted")
+            webhook_reset = True
         cfg["secret_key_encrypted"] = encrypt_secret(secret_key)
         cfg["mode"]         = meta["mode"]
         cfg["last4"]        = meta["last4"]
+        cfg["account_id"]   = account["id"]
+        cfg["account_name"] = _stripe_account_label(account)
         cfg["connected_at"] = timezone.now().isoformat()
 
     if "publishable_key" in data:
         cfg["publishable_key"] = (data.get("publishable_key") or "").strip()
 
-    webhook_secret = (data.get("webhook_secret") or "").strip()
     if webhook_secret:
         cfg["webhook_secret_encrypted"] = encrypt_secret(webhook_secret)
+
+    # The owner just re-did the Stripe setup, so earlier problems no longer describe it.
+    # If it's still wrong, the next payment flags it again.
+    if secret_key or webhook_secret:
+        cfg.pop("problems", None)
 
     integrations["stripe"] = cfg
     workspace.integrations = integrations
     workspace.save(update_fields=["integrations"])
-    return Response({
-        "connected":          bool(cfg.get("secret_key_encrypted")),
-        "mode":               cfg.get("mode", ""),
-        "last4":              cfg.get("last4", ""),
-        "webhook_configured": bool(cfg.get("webhook_secret_encrypted")),
-    })
+    return Response({**_stripe_status(workspace, cfg), "webhook_reset": webhook_reset})

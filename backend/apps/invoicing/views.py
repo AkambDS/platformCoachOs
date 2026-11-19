@@ -4,8 +4,10 @@ from decimal import Decimal
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from django.db import IntegrityError, transaction
 from django.utils import timezone
 from .models import Invoice, Payment, ServiceCatalogItem
+from .money import is_chargeable, smallest_unit, to_minor
 from .serializers import InvoiceListSerializer, InvoiceDetailSerializer, PaymentSerializer
 from apps.accounts.permissions import IsCoachOrAbove, IsAssistantOrAbove, require_tab
 
@@ -111,26 +113,32 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         serializer = PaymentSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=400)
-        payment = serializer.save(
-            invoice=invoice,
-            workspace=invoice.workspace,
-            recorded_by=request.user,
-        )
-        invoice.amount_paid += payment.amount
-        was_paid = invoice.status == Invoice.Status.PAID
-        invoice.status = (Invoice.Status.PAID
-                          if invoice.amount_paid >= invoice.total
-                          else Invoice.Status.PARTIALLY_PAID)
-        if invoice.status == Invoice.Status.PAID:
-            invoice.paid_at = timezone.now()
-        invoice.save()
-        # Send receipt email when invoice is fully settled
-        if not was_paid and invoice.status == Invoice.Status.PAID:
-            try:
-                from tasks.email import send_payment_receipt_email
-                send_payment_receipt_email(str(invoice.id))
-            except Exception:
-                pass
+        # Same row lock as the Stripe webhook (public_views._handle_checkout_completed):
+        # without it, a webhook landing at the same moment works from the same old
+        # amount_paid and one of the two payments is lost from the total.
+        try:
+            with transaction.atomic():
+                invoice = Invoice.objects.select_for_update().get(pk=invoice.pk)
+                payment = serializer.save(
+                    invoice=invoice,
+                    workspace=invoice.workspace,
+                    recorded_by=request.user,
+                )
+                invoice.amount_paid += payment.amount
+                invoice.status = (Invoice.Status.PAID
+                                  if invoice.amount_paid >= invoice.total
+                                  else Invoice.Status.PARTIALLY_PAID)
+                if invoice.status == Invoice.Status.PAID:
+                    invoice.paid_at = timezone.now()
+                invoice.save()
+        except IntegrityError:
+            return Response({"stripe_payment_id": ["This Stripe payment is already recorded."]}, status=400)
+        # Receipt for every payment, partial or full (it shows what's still due).
+        try:
+            from tasks.email import send_payment_receipt_email
+            send_payment_receipt_email(str(invoice.id), str(payment.id))
+        except Exception:
+            pass
         return Response(InvoiceDetailSerializer(invoice).data)
 
     @action(detail=True, methods=["post"], url_path="void")
@@ -163,6 +171,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         reason = request.data.get("reason", "")
         if amount <= 0:
             return Response({"detail": "Refund amount must be positive."}, status=400)
+        if not is_chargeable(amount, invoice.currency):
+            rule = "must be a whole number" if smallest_unit(invoice.currency) == 1 else "can have at most 2 decimal places"
+            return Response({"detail": f"A {invoice.currency} refund amount {rule}."}, status=400)
         remaining_refundable = invoice.amount_paid - invoice.refund_amount
         if amount > remaining_refundable:
             return Response(
@@ -193,7 +204,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 refund = stripe.Refund.create(
                     api_key=decrypt_secret(secret_key_enc),
                     payment_intent=stripe_payment.stripe_payment_id,
-                    amount=int(amount * 100),
+                    amount=to_minor(amount, invoice.currency),
                     metadata={"invoice_id": str(invoice.id), "workspace_id": str(invoice.workspace_id)},
                 )
             except stripe.error.StripeError as e:

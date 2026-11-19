@@ -18,6 +18,8 @@ from django.conf import settings
 from django.http import HttpResponse, HttpResponseRedirect
 from django.views import View
 
+from . import stripe_problems
+from .money import from_minor, smallest_unit, to_minor
 from .tokens import verify_invoice_pay_token
 
 logger = logging.getLogger(__name__)
@@ -65,6 +67,60 @@ def _invalid_response():
       </div>"""), status=400)
 
 
+def _processing_response(workspace_name, invoice_number):
+    return HttpResponse(_shell(workspace_name, f"""
+      <div class="card">
+        <div class="icon">✅</div>
+        <h1>Payment received</h1>
+        <p class="sub">Your payment for invoice #{invoice_number} is being processed.
+          You'll receive a receipt by email shortly.</p>
+      </div>"""))
+
+
+class _CheckoutAlreadyPaid(Exception):
+    """The invoice's last Checkout session was paid, but its webhook hasn't been recorded yet."""
+
+
+def _reusable_checkout(stripe, invoice, secret_key, amount, currency):
+    """Before starting a new Checkout for this invoice, settle the previous one so the client
+    can never have two payable sessions at once (one-time-pay.md, P3):
+      * still open, same amount  → return it; the client continues on the same session
+      * still open, amount changed (e.g. a manual payment was recorded) → expire it, so it
+        can't be paid at the old amount, and let the caller create a new one
+      * already paid, payment not recorded yet (webhook on its way) → _CheckoutAlreadyPaid
+      * expired, or paid and already recorded, or gone from this Stripe account → None
+    """
+    from .models import Payment
+    session_id = invoice.stripe_checkout_session_id
+    if not session_id:
+        return None
+    try:
+        previous = stripe.checkout.Session.retrieve(session_id, api_key=secret_key)
+    except stripe.error.InvalidRequestError:
+        return None     # not in this Stripe account (keys changed) — it can't be paid here either
+
+    def paid_but_unrecorded(session):
+        return session.status == "complete" and not Payment.objects.filter(
+            workspace_id=invoice.workspace_id, stripe_payment_id=session.payment_intent or session.id,
+        ).exists()
+
+    if previous.status == "complete":
+        if paid_but_unrecorded(previous):
+            raise _CheckoutAlreadyPaid
+        return None
+    if previous.status != "open":
+        return None
+    if previous.amount_total == amount and previous.currency == currency:
+        return previous
+    try:
+        stripe.checkout.Session.expire(session_id, api_key=secret_key)
+    except stripe.error.InvalidRequestError:
+        # Only an open session can be expired — the client finished paying it just now.
+        if paid_but_unrecorded(stripe.checkout.Session.retrieve(session_id, api_key=secret_key)):
+            raise _CheckoutAlreadyPaid
+    return None
+
+
 class InvoicePayView(View):
     """GET /invoices/pay/<token>/ — creates a fresh Stripe Checkout Session for this
     invoice's workspace and redirects the client straight to Stripe's hosted page."""
@@ -72,6 +128,7 @@ class InvoicePayView(View):
     def get(self, request, token):
         from .models import Invoice
         from apps.accounts.crypto import decrypt_secret
+        from django.db import transaction
 
         try:
             invoice_id = verify_invoice_pay_token(token)
@@ -80,6 +137,8 @@ class InvoicePayView(View):
             return _invalid_response()
 
         workspace = invoice.workspace
+        # Not request.path: the token in it lets anyone pay this invoice, and ErrorLog is emailed.
+        pay_endpoint = f"/invoices/pay/<token>/ (invoice {invoice.number})"
 
         if invoice.status not in _PAYABLE_STATUSES:
             return HttpResponse(_shell(workspace.name, f"""
@@ -103,49 +162,72 @@ class InvoicePayView(View):
 
         try:
             secret_key = decrypt_secret(secret_key_enc)
-        except ValueError:
+        except ValueError as e:
             logger.error(f"Could not decrypt Stripe key for workspace {workspace.id}")
+            stripe_problems.record(e, workspace, "pay_decrypt", endpoint=pay_endpoint)
             return HttpResponse(_shell(workspace.name, """
               <div class="card"><div class="icon">⚠️</div><h1>Payment temporarily unavailable</h1>
               <p class="sub">Please contact your coach or try again shortly.</p></div>"""), status=500)
 
-        balance = invoice.total - invoice.amount_paid
-        if balance <= 0:
-            return HttpResponse(_shell(workspace.name, f"""
-              <div class="card"><div class="icon">✅</div><h1>Already paid</h1>
-              <p class="sub">Invoice #{invoice.number} has no remaining balance.</p></div>"""))
-
         backend_base = getattr(settings, "BACKEND_URL", "").rstrip("/") or "http://localhost:8000"
         success_url = f"{backend_base}/invoices/pay/{token}/success/"
         cancel_url  = f"{backend_base}/invoices/pay/{token}/"
-
-        try:
-            import stripe
-            session = stripe.checkout.Session.create(
-                api_key=secret_key,
-                mode="payment",
-                payment_method_types=["card"],
-                line_items=[{
-                    "price_data": {
-                        "currency": invoice.currency.lower(),
-                        "product_data": {"name": f"Invoice {invoice.number} — {workspace.name}"},
-                        "unit_amount": int(balance * 100),
-                    },
-                    "quantity": 1,
-                }],
-                customer_email=invoice.client.email or None,
-                success_url=success_url,
-                cancel_url=cancel_url,
-                metadata={"invoice_id": str(invoice.id), "workspace_id": str(workspace.id)},
-                payment_intent_data={"metadata": {"invoice_id": str(invoice.id), "workspace_id": str(workspace.id)}},
-            )
-        except Exception as e:
-            logger.error(f"Stripe Checkout Session creation failed for invoice {invoice.id}: {e}")
-            return HttpResponse(_shell(workspace.name, """
+        unavailable = HttpResponse(_shell(workspace.name, """
               <div class="card"><div class="icon">⚠️</div><h1>Payment temporarily unavailable</h1>
               <p class="sub">Something went wrong starting checkout. Please try again shortly or contact
               your coach.</p></div>"""), status=502)
 
+        import stripe
+        # Locked so two clicks at the same moment (link open in two tabs, or email + portal)
+        # can't both start a checkout: the second waits, then reuses the first one's session.
+        with transaction.atomic():
+            invoice = Invoice.objects.select_for_update().get(id=invoice.id)
+            balance = invoice.total - invoice.amount_paid
+            if balance <= 0:
+                return HttpResponse(_shell(workspace.name, f"""
+                  <div class="card"><div class="icon">✅</div><h1>Already paid</h1>
+                  <p class="sub">Invoice #{invoice.number} has no remaining balance.</p></div>"""))
+            amount, currency = to_minor(balance, invoice.currency), invoice.currency.lower()
+
+            try:
+                previous = _reusable_checkout(stripe, invoice, secret_key, amount, currency)
+            except _CheckoutAlreadyPaid:
+                return _processing_response(workspace.name, invoice.number)
+            except stripe.error.StripeError as e:
+                logger.error(f"Stripe Checkout Session lookup failed for invoice {invoice.id}: {e}")
+                stripe_problems.record(e, workspace, "pay_stripe", endpoint=pay_endpoint, invoice=invoice)
+                return unavailable
+            if previous:
+                stripe_problems.clear(workspace, "pay_")
+                return HttpResponseRedirect(previous.url)
+
+            try:
+                session = stripe.checkout.Session.create(
+                    api_key=secret_key,
+                    mode="payment",
+                    payment_method_types=["card"],
+                    line_items=[{
+                        "price_data": {
+                            "currency": currency,
+                            "product_data": {"name": f"Invoice {invoice.number} — {workspace.name}"},
+                            "unit_amount": amount,
+                        },
+                        "quantity": 1,
+                    }],
+                    customer_email=invoice.client.email or None,
+                    success_url=success_url,
+                    cancel_url=cancel_url,
+                    metadata={"invoice_id": str(invoice.id), "workspace_id": str(workspace.id)},
+                    payment_intent_data={"metadata": {"invoice_id": str(invoice.id), "workspace_id": str(workspace.id)}},
+                )
+            except Exception as e:
+                logger.error(f"Stripe Checkout Session creation failed for invoice {invoice.id}: {e}")
+                stripe_problems.record(e, workspace, "pay_stripe", endpoint=pay_endpoint, invoice=invoice)
+                return unavailable
+            invoice.stripe_checkout_session_id = session.id
+            invoice.save(update_fields=["stripe_checkout_session_id"])
+
+        stripe_problems.clear(workspace, "pay_")
         return HttpResponseRedirect(session.url)
 
 
@@ -186,29 +268,51 @@ class StripeWebhookView(View):
         except Workspace.DoesNotExist:
             return HttpResponse(status=404)
 
+        # Each failure below means a client's payment isn't being recorded, so each one
+        # goes to ErrorLog (once an hour per workspace and kind), not just the container log.
+        endpoint = request.path
         cfg = (workspace.integrations or {}).get("stripe", {})
         webhook_secret_enc = cfg.get("webhook_secret_encrypted")
         if not webhook_secret_enc:
+            stripe_problems.record(
+                RuntimeError("Stripe sent a webhook but no webhook signing secret is saved in Settings → "
+                             "Integrations → Stripe, so payments can't be verified or recorded."),
+                workspace, "webhook_no_secret", endpoint=endpoint)
             return HttpResponse(status=400)
 
         try:
             webhook_secret = decrypt_secret(webhook_secret_enc)
+        except ValueError as e:
+            logger.error(f"Could not decrypt Stripe webhook secret for workspace {workspace_id}")
+            stripe_problems.record(e, workspace, "webhook_decrypt", endpoint=endpoint)
+            return HttpResponse(status=500)     # Stripe retries once the key is fixed
+
+        try:
             event = stripe.Webhook.construct_event(
                 request.body, request.headers.get("Stripe-Signature", ""), webhook_secret,
             )
         except (ValueError, stripe.error.SignatureVerificationError) as e:
             logger.warning(f"Stripe webhook signature verification failed for workspace {workspace_id}: {e}")
+            # Usually the saved signing secret is from a different endpoint, account or mode.
+            stripe_problems.record(e, workspace, "webhook_signature", endpoint=endpoint)
             return HttpResponse(status=400)
 
-        if event["type"] == "checkout.session.completed":
-            self._handle_checkout_completed(event["data"]["object"], workspace_id)
-        elif event["type"] == "charge.refunded":
-            self._handle_charge_refunded(event["data"]["object"], workspace_id)
+        try:
+            if event["type"] == "checkout.session.completed":
+                self._handle_checkout_completed(event["data"]["object"], workspace_id)
+            elif event["type"] == "charge.refunded":
+                self._handle_charge_refunded(event["data"]["object"], workspace_id)
+        except Exception as e:
+            logger.exception(f"Stripe webhook {event['type']} failed for workspace {workspace_id}")
+            stripe_problems.record(e, workspace, "webhook_error", endpoint=endpoint)
+            return HttpResponse(status=500)     # Stripe retries the event
 
+        stripe_problems.clear(workspace, "webhook_")
         return HttpResponse(status=200)
 
     def _handle_checkout_completed(self, session, workspace_id):
         from .models import Invoice, Payment
+        from django.db import IntegrityError, transaction
         from django.utils import timezone
 
         metadata   = session.get("metadata") or {}
@@ -221,37 +325,72 @@ class StripeWebhookView(View):
             logger.warning(f"Stripe webhook metadata/workspace mismatch: {metadata} vs {workspace_id}")
             return
 
-        try:
-            invoice = Invoice.objects.select_related("workspace").get(id=invoice_id, workspace_id=workspace_id)
-        except Invoice.DoesNotExist:
-            logger.warning(f"Stripe webhook referenced unknown invoice {invoice_id} for workspace {workspace_id}")
+        # Only a checkout that actually took money is a payment. Stripe sends this same
+        # event for a card-save checkout (mode "setup", nothing charged — auto-pay), for a
+        # checkout with nothing to pay ("no_payment_required"), and for a bank debit that
+        # hasn't cleared yet ("unpaid"). Recording those would put a $0 or not-yet-real
+        # payment on the invoice (one-time-pay.md, P4).
+        if session.get("mode") != "payment" or session.get("payment_status") != "paid":
+            logger.info(f"Stripe checkout {session.get('id')} for invoice {invoice_id} not recorded: "
+                        f"mode={session.get('mode')} payment_status={session.get('payment_status')}")
             return
 
         payment_intent_id = session.get("payment_intent") or session.get("id", "")
-        # Idempotent against Stripe's at-least-once webhook retries.
-        if Payment.objects.filter(invoice=invoice, stripe_payment_id=payment_intent_id).exists():
+        if (session.get("amount_total") or 0) <= 0:
+            logger.warning(f"Stripe checkout {session.get('id')} for invoice {invoice_id} paid "
+                           f"{session.get('amount_total')}, not recorded")
             return
 
-        amount_total = Decimal(str((session.get("amount_total") or 0) / 100))
-        Payment.objects.create(
-            invoice=invoice, workspace=invoice.workspace,
-            amount=amount_total, method=Payment.Method.STRIPE,
-            stripe_payment_id=payment_intent_id, paid_at=timezone.now(),
-        )
-        invoice.amount_paid += amount_total
-        was_paid = invoice.status == Invoice.Status.PAID
-        invoice.status = (Invoice.Status.PAID if invoice.amount_paid >= invoice.total
-                           else Invoice.Status.PARTIALLY_PAID)
-        if invoice.status == Invoice.Status.PAID:
-            invoice.paid_at = timezone.now()
-        invoice.save()
+        # Stripe delivers at-least-once and can send the same event twice at the same
+        # moment. Locking the invoice row makes a twin delivery (or a manual "Record
+        # payment" on the same invoice) wait here until this one commits, so its
+        # "already recorded?" check sees this Payment and its amount_paid starts from
+        # the committed value. The unique constraint on (workspace, stripe_payment_id)
+        # is the backstop if anything gets past that.
+        try:
+            with transaction.atomic():
+                try:
+                    invoice = Invoice.objects.select_for_update().get(id=invoice_id, workspace_id=workspace_id)
+                except Invoice.DoesNotExist:
+                    logger.warning(f"Stripe webhook referenced unknown invoice {invoice_id} for workspace {workspace_id}")
+                    return
+                if Payment.objects.filter(workspace_id=workspace_id, stripe_payment_id=payment_intent_id).exists():
+                    return
 
-        if not was_paid and invoice.status == Invoice.Status.PAID:
-            try:
-                from tasks.email import send_payment_receipt_email
-                send_payment_receipt_email(str(invoice.id))
-            except Exception as e:
-                logger.error(f"Payment receipt email failed for invoice {invoice.id}: {e}")
+                amount_total = from_minor(session["amount_total"], session.get("currency") or invoice.currency)
+                payment = Payment.objects.create(
+                    invoice=invoice, workspace_id=workspace_id,
+                    amount=amount_total, method=Payment.Method.STRIPE,
+                    stripe_payment_id=payment_intent_id, paid_at=timezone.now(),
+                )
+                invoice.amount_paid += amount_total
+                invoice.status = (Invoice.Status.PAID if invoice.amount_paid >= invoice.total
+                                   else Invoice.Status.PARTIALLY_PAID)
+                if invoice.status == Invoice.Status.PAID:
+                    invoice.paid_at = timezone.now()
+                invoice.save()
+        except IntegrityError:
+            logger.info(f"Stripe payment {payment_intent_id} already recorded for workspace {workspace_id}")
+            return
+
+        # The money has moved, so it's always recorded — but more than the invoice total
+        # means the client paid twice (e.g. a checkout left open from before the P3 fix,
+        # or a card payment on top of a manual one). Tell the owner so they can refund it.
+        # Below one smallest unit is rounding (e.g. a ¥5,000.40 balance charged as ¥5,000), not
+        # a second payment.
+        overpaid = invoice.amount_paid - invoice.total
+        if overpaid >= smallest_unit(invoice.currency):
+            logger.warning(f"Invoice {invoice.id} overpaid by {overpaid} (Stripe payment {payment_intent_id})")
+            from tasks.email import send_invoice_overpaid_email
+            send_invoice_overpaid_email.delay(str(invoice.id), str(overpaid))
+
+        # Every card payment, partial or full: receipt to the client, "Payment received" to the owner.
+        from tasks.email import send_payment_receipt_email, send_payment_received_email
+        try:
+            send_payment_receipt_email(str(invoice.id), str(payment.id))
+        except Exception as e:
+            logger.error(f"Payment receipt email failed for invoice {invoice.id}: {e}")
+        send_payment_received_email.delay(str(payment.id))
 
     def _handle_charge_refunded(self, charge, workspace_id):
         """Reconciles a refund issued directly from the coach's own Stripe Dashboard
@@ -285,7 +424,7 @@ class StripeWebhookView(View):
             if r["id"] in already_seen:
                 continue
             new_ids.add(r["id"])
-            new_amount += Decimal(str(r["amount"] / 100))
+            new_amount += from_minor(r["amount"], r.get("currency") or charge.get("currency") or invoice.currency)
 
         if new_amount <= 0:
             return

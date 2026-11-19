@@ -1275,7 +1275,9 @@ def send_invoice_email(invoice_id: str):
         raise
 
 
-def send_payment_receipt_email(invoice_id: str):
+def send_payment_receipt_email(invoice_id: str, payment_id: str = None):
+    """Receipt to the client for one payment — partial or full. `amount` is this payment;
+    a partial payment also shows the total paid so far and the balance still due."""
     from apps.invoicing.models import Invoice
     from tasks.email_html import build_payment_receipt_email
     try:
@@ -1284,9 +1286,13 @@ def send_payment_receipt_email(invoice_id: str):
         owner_email, owner_name = _owner_info(workspace)
 
         from django.utils import timezone
-        last_payment = invoice.payments.order_by("-paid_at").first()
-        payment_date = (last_payment.paid_at if last_payment else timezone.now()).strftime("%B %d, %Y")
-        amount_paid  = f"{invoice.amount_paid:,.2f}"
+        payment = (invoice.payments.filter(id=payment_id).first() if payment_id
+                   else invoice.payments.order_by("-paid_at").first())
+        payment_date = (payment.paid_at if payment else timezone.now()).strftime("%B %d, %Y")
+        amount_paid  = f"{(payment.amount if payment else invoice.amount_paid):,.2f}"
+        balance      = max(invoice.total - invoice.amount_paid, 0)
+        balance_due  = f"{balance:,.2f}" if balance > 0 else ""
+        total_paid   = f"{invoice.amount_paid:,.2f}" if balance > 0 else ""
 
         tmpl = _resolve_generic_template(workspace, "payment_receipt")
         tmpl_vars = dict(
@@ -1294,6 +1300,10 @@ def send_payment_receipt_email(invoice_id: str):
             client_email=invoice.client.email or "", client_address=_format_address(invoice.client.primary_address),
             workspace_name=workspace.name,
             invoice_number=invoice.number, amount=amount_paid, payment_date=payment_date,
+            balance_due=balance_due or "0.00",
+            # One line for full payments, the running total + what's left for partial ones.
+            balance_note=(f"Total paid so far: ${total_paid}\nBalance due: ${balance_due}" if balance_due
+                          else "This invoice is now paid in full."),
             owner_email=owner_email, owner_name=owner_name or owner_email,
         )
         custom_intro   = _apply_tmpl(tmpl.get("intro", ""),   **tmpl_vars)
@@ -1310,6 +1320,8 @@ def send_payment_receipt_email(invoice_id: str):
                 logo_url=_logo_src(workspace),
                 amount_paid=amount_paid,
                 payment_date=payment_date,
+                total_paid=total_paid,
+                balance_due=balance_due,
                 owner_email=owner_email,
                 owner_name=owner_name,
                 custom_intro=custom_intro,
@@ -1359,6 +1371,104 @@ def send_payment_failed_email(invoice_id: str):
         )
     except Exception as e:
         logger.error(f"send_payment_failed_email failed: {e}")
+
+
+def _workspace_owner(workspace):
+    from apps.accounts.models import User
+    owner = workspace.users.filter(role=User.Role.BUSINESS_OWNER).first()
+    return owner if owner and owner.email else None
+
+
+@shared_task(name="tasks.email.send_payment_received_email")
+def send_payment_received_email(payment_id: str):
+    """Tell the workspace owner a client paid by card — every payment, partial or full
+    (apps.invoicing.public_views — Stripe webhook). Platform-wide switch:
+    PAYMENT_RECEIVED_EMAIL_ENABLED (on by default), like SESSION_REMINDER_HOURS."""
+    from apps.invoicing.models import Payment
+    from tasks.email_notices import send_notice, app_url
+    if not getattr(settings, "PAYMENT_RECEIVED_EMAIL_ENABLED", True):
+        return
+    workspace = None
+    try:
+        payment = Payment.objects.select_related("invoice__client", "invoice__workspace").get(id=payment_id)
+        invoice, client = payment.invoice, payment.invoice.client
+        workspace = invoice.workspace
+        owner = _workspace_owner(workspace)
+        if not owner:
+            return
+        balance = max(invoice.total - invoice.amount_paid, 0)
+        state = "fully paid" if balance <= 0 else f"partially paid, ${balance:,.2f} still due"
+        send_notice(
+            workspace, "payment_received", [owner.email],
+            dict(recipient_name=owner.full_name, recipient_first_name=owner.first_name or owner.full_name,
+                 client_name=client.full_name, client_first_name=client.first_name,
+                 invoice_number=invoice.number, amount=f"{payment.amount:,.2f}",
+                 invoice_total=f"{invoice.total:,.2f}", amount_paid=f"{invoice.amount_paid:,.2f}",
+                 balance_due=f"{balance:,.2f}", payment_state=state),
+            rows=[("Invoice", f"#{invoice.number}"), ("Amount", f"${payment.amount:,.2f}"),
+                  ("Paid on", payment.paid_at.strftime("%B %d, %Y")), ("Method", "Card (Stripe)"),
+                  ("Invoice total", f"${invoice.total:,.2f}"), ("Balance due", f"${balance:,.2f}"),
+                  ("Client", client.full_name)],
+            cta=("Open invoice", app_url(f"/invoices/{invoice.id}")),
+            client=client, related_id=str(invoice.id),
+        )
+    except Exception as e:
+        logger.error(f"send_payment_received_email failed: {e}")
+        _report_send_failure("send_payment_received_email", e, workspace=workspace)
+
+
+@shared_task(name="tasks.email.send_stripe_problem_email")
+def send_stripe_problem_email(workspace_id: str, kind: str):
+    """Tell the workspace owner their Stripe payments have a problem and how to fix it
+    (apps.invoicing.stripe_problems — at most once a day per kind). The platform admins
+    get the ErrorLog alert separately."""
+    from apps.accounts.models import Workspace
+    from tasks.email_notices import send_notice, app_url
+    workspace = None
+    try:
+        workspace = Workspace.objects.get(id=workspace_id)
+        problem = (((workspace.integrations or {}).get("stripe") or {}).get("problems") or {}).get(kind)
+        owner = _workspace_owner(workspace)
+        if not problem or not owner:
+            return          # already fixed by the time this ran, or nobody to tell
+        send_notice(
+            workspace, "stripe_problem", [owner.email],
+            dict(recipient_name=owner.full_name, recipient_first_name=owner.first_name or owner.full_name,
+                 problem_title=problem["title"], problem_detail=problem["detail"], problem_fix=problem["fix"]),
+            rows=[("Problem", problem["title"]), ("First seen", problem.get("since", "")[:16].replace("T", " ") + " UTC")],
+            cta=("Open Stripe settings", app_url("/settings?tab=integrations")),
+        )
+    except Exception as e:
+        logger.error(f"send_stripe_problem_email failed: {e}")
+        _report_send_failure("send_stripe_problem_email", e, workspace=workspace)
+
+
+@shared_task(name="tasks.email.send_invoice_overpaid_email")
+def send_invoice_overpaid_email(invoice_id: str, overpaid: str):
+    """Tell the owner and coaches that an invoice was paid more than its total, so they can
+    refund the extra (apps.invoicing.public_views — Stripe webhook; one-time-pay.md, P3)."""
+    from apps.invoicing.models import Invoice
+    from tasks.email_notices import send_notice, app_url
+    invoice = None
+    try:
+        invoice = Invoice.objects.select_related("client__workspace", "client__coach", "coach").get(id=invoice_id)
+        client = invoice.client
+        for user in _owner_and_coaches(client, invoice.coach):
+            send_notice(
+                invoice.workspace, "invoice_overpaid", [user.email],
+                dict(recipient_name=user.full_name, recipient_first_name=user.first_name or user.full_name,
+                     client_name=client.full_name, client_first_name=client.first_name,
+                     invoice_number=invoice.number, invoice_total=str(invoice.total),
+                     amount_paid=str(invoice.amount_paid), overpaid_amount=overpaid),
+                rows=[("Invoice", f"#{invoice.number}"), ("Invoice total", f"${invoice.total}"),
+                      ("Paid", f"${invoice.amount_paid}"), ("Overpaid", f"${overpaid}"),
+                      ("Client", client.full_name)],
+                cta=("Open invoice", app_url(f"/invoices/{invoice.id}")),
+                client=client, related_id=invoice_id,
+            )
+    except Exception as e:
+        logger.error(f"send_invoice_overpaid_email failed: {e}")
+        _report_send_failure("send_invoice_overpaid_email", e, workspace=invoice.workspace if invoice else None)
 
 
 def send_feedback_submitted_email(ticket_id: str):
@@ -2027,9 +2137,15 @@ def _goal_update_recipients(client, goal=None):
     """Who hears about a client's goal activity: the workspace owner, the client's
     assigned coach, and the coach who set the goal — each once, same workspace only,
     never the platform admin."""
+    return _owner_and_coaches(client, getattr(goal, "created_by", None))
+
+
+def _owner_and_coaches(client, *also):
+    """The workspace owner, the client's assigned coach and any `also` users — each once,
+    same workspace only, never the platform admin."""
     from apps.accounts.models import User
     people = [client.workspace.users.filter(role=User.Role.BUSINESS_OWNER).first(),
-              client.coach, getattr(goal, "created_by", None)]
+              client.coach, *also]
     seen, out = set(), []
     for u in people:
         if (u and u.email and u.workspace_id == client.workspace_id

@@ -75,7 +75,7 @@ _STARTER_TEXT = {
     "payment_receipt": (
         "Receipt: payment for invoice {invoice_number}",
         "Hi {client_first_name},\n\nThank you — we've received your payment.\n\n"
-        "Invoice: {invoice_number}\nAmount paid: ${amount}\nPaid on: {payment_date}",
+        "Invoice: {invoice_number}\nAmount paid: ${amount}\nPaid on: {payment_date}\n\n{balance_note}",
         "Questions about this payment? Just reply to this email.\n\n" + _THANKS,
     ),
     "portal_invite": (

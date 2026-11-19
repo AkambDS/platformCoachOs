@@ -766,6 +766,7 @@ def build_invoice_email(invoice, workspace_name: str, logo_url: str,
 
 def build_payment_receipt_email(invoice, workspace_name: str, logo_url: str,
                                 amount_paid: str, payment_date: str,
+                                total_paid: str = "", balance_due: str = "",
                                 owner_email: str = "", owner_name: str = "",
                                 custom_intro: str = "", custom_closing: str = "",
                                 style: dict = None) -> str:
@@ -783,6 +784,8 @@ def build_payment_receipt_email(invoice, workspace_name: str, logo_url: str,
             ("Invoice #", _html.escape(str(invoice.number))),
             ("Amount Paid", f'<strong style="color:{value_color};font-size:18px;">${amount_paid}</strong>'),
             ("Paid On", payment_date),
+            # Partial payment: what's been paid in total and what's still due.
+            *([("Total Paid So Far", f"${total_paid}"), ("Balance Due", f"${balance_due}")] if balance_due else []),
         ],
         workspace_name=workspace_name,
         values=dict(workspace_name=workspace_name, amount=amount_paid, invoice_number=invoice.number,

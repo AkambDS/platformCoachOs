@@ -1900,6 +1900,9 @@ const USE_CASE_WHEN: Record<string, string> = {
   client_goal_update:      'When a client adds a goal, logs progress or updates a goal in their portal',
   client_file_upload:      'When a client shares a file with you from their portal',
   payment_failed:          'When a client’s card payment fails',
+  invoice_overpaid:        'When an invoice is paid more than its total (e.g. paid twice)',
+  payment_received:        'Your copy when a client pays an invoice by card (partial or full)',
+  stripe_problem:          'When online payments have a problem (e.g. the Stripe webhook secret doesn’t match), at most once a day',
   contract_signed:         'When a client signs a contract',
   team_invite:             'When you invite someone to your workspace',
 }
@@ -1942,7 +1945,7 @@ const PLACEHOLDER_HINTS: Record<string, string[]> = {
   reminder_24h:         ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   reminder_1h:          ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{coach_name}', '{workspace_name}', '{session_title}', '{session_time}', '{time_label}'],
   invoice:              ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{due_date}'],
-  payment_receipt:      ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{payment_date}', '{owner_name}', '{owner_email}'],
+  payment_receipt:      ['{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{invoice_number}', '{amount}', '{payment_date}', '{balance_due}', '{balance_note}', '{owner_name}', '{owner_email}'],
   client_communication: ['{client_name}', '{client_first_name}', '{coach_name}', '{workspace_name}', '{workspace_owner}', '{client_email}', '{client_address}'],
   team_invite:          ['{invited_by_name}', '{workspace_name}', '{role}', '{accept_url}', '{owner_name}', '{owner_email}'],
   pipeline:             ['{owner_name}', '{client_name}', '{client_first_name}', '{client_email}', '{client_address}', '{workspace_name}', '{stage_label}', '{days_in_stage}', '{follow_up_days}', '{deal_value}', '{stage_entered}'],
@@ -2895,7 +2898,8 @@ function IntegrationTile({ icon, name, connected, hint, active, onClick, href, o
 // ── Stripe panel — each workspace connects its OWN account, "bring your own key".
 // Status is owned by the parent (IntegrationsTab) so the tile row's "Connected"
 // pill and this expanded panel always agree and share one fetch.
-type StripeStatus = { connected: boolean; mode: string; last4: string; webhook_configured: boolean; webhook_url: string }
+type StripeProblem = { title: string; detail: string; fix: string; since?: string; at?: string }
+type StripeStatus = { connected: boolean; mode: string; last4: string; account_id?: string; account_name?: string; webhook_configured: boolean; webhook_url: string; problems?: Record<string, StripeProblem> }
 function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setStatus: React.Dispatch<React.SetStateAction<StripeStatus>> }) {
   const { show } = useToast()
   const [secretKey, setSecretKey] = useState('')
@@ -2909,7 +2913,13 @@ function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setSt
       const r = await settingsApi.saveStripeSettings({ secret_key: secretKey.trim() })
       setStatus(s => ({ ...s, ...r.data }))
       setSecretKey('')
-      show('Stripe key saved', 'success')
+      // The key is checked with Stripe before it's saved. A different account or test/live
+      // mode needs its own webhook endpoint, so the old signing secret was cleared.
+      if (r.data.webhook_reset) {
+        show('Key saved — this is a different Stripe account or mode, so set up the webhook again (Step 2) and paste its new signing secret', 'error')
+      } else {
+        show(`Stripe key saved${r.data.account_name ? ` — ${r.data.account_name}` : ''}`, 'success')
+      }
     } catch (err: any) {
       show(err?.response?.data?.detail || 'Failed to save Stripe key', 'error')
     } finally { setSaving(false) }
@@ -2923,7 +2933,9 @@ function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setSt
       setStatus(s => ({ ...s, ...r.data }))
       setWebhookSecret('')
       show('Webhook secret saved', 'success')
-    } catch { show('Failed to save webhook secret', 'error') } finally { setSaving(false) }
+    } catch (err: any) {
+      show(err?.response?.data?.detail || 'Failed to save webhook secret', 'error')
+    } finally { setSaving(false) }
   }
 
   async function disconnect() {
@@ -2948,6 +2960,12 @@ function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setSt
           <span className="pill pill-green" style={{ fontSize: 10 }}>
             Connected {status.mode && `(${status.mode} mode, ••${status.last4})`}
           </span>
+          {status.account_id && (
+            <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 6 }}>
+              Stripe account: {status.account_name || '—'}{' '}
+              <span style={{ fontFamily: 'monospace', fontSize: 11 }}>({status.account_id})</span>
+            </div>
+          )}
         </div>
       )}
       <p style={{ fontSize: 13, color: 'var(--muted)', marginBottom: 20, lineHeight: 1.6 }}>
@@ -3018,7 +3036,7 @@ function IntegrationsTab() {
   const { user } = useAuthStore()
   const isOwner = user?.role === 'business_owner'
   const { show } = useToast()
-  const [stripeStatus, setStripeStatus] = useState({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
+  const [stripeStatus, setStripeStatus] = useState<StripeStatus>({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
   const [zoomTesting, setZoomTesting] = useState(false)
   // Accordion: which tile's credentials panel is open below the row. Only Stripe has
   // one — Google Calendar and Zoom both connect via a plain OAuth link (Zoom's old
@@ -3084,6 +3102,19 @@ function IntegrationsTab() {
       <div style={{ marginBottom: 24 }}>
         <h2 data-tour="settings-integrations" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
         <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow. Hover a tile for details.</p>
+        {/* Stripe problems the backend saw (apps/invoicing/stripe_problems.py) — stays until
+            the same thing succeeds again or the Stripe settings are re-saved. */}
+        {Object.values(stripeStatus.problems || {}).map(p => (
+          <div key={p.title} role="alert" style={{
+            marginTop: 12, padding: '12px 14px', borderRadius: 6, fontSize: 13, lineHeight: 1.55,
+            background: '#fdecec', border: '1px solid #f1b7b7', color: '#8a1c1c',
+          }}>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>⚠ {p.title}</div>
+            <div>{p.detail}</div>
+            <div style={{ marginTop: 6 }}><strong>How to fix it:</strong> {p.fix}</div>
+            {p.at && <div style={{ fontSize: 11, marginTop: 6, opacity: .8 }}>Last seen {new Date(p.at).toLocaleString()}</div>}
+          </div>
+        ))}
       </div>
 
       <div style={{ display: 'flex', gap: 16, marginBottom: 20 }}>
@@ -3169,7 +3200,11 @@ export default function Settings() {
   ]
   const TABS = ALL_TABS.filter(t => !t.ownerOnly || isOwner)
 
-  const [tab, setTab] = useState(isOwner ? 'Workspace' : 'Profile')
+  // ?tab=integrations opens that tab directly (e.g. the "Stripe Payment Problem" email's button).
+  const [tab, setTab] = useState(() => {
+    const wanted = new URLSearchParams(window.location.search).get('tab')?.toLowerCase()
+    return TABS.find(t => t.key.toLowerCase() === wanted)?.key ?? (isOwner ? 'Workspace' : 'Profile')
+  })
 
   return (
     <AppShell>

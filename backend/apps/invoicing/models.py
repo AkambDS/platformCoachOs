@@ -68,6 +68,10 @@ class Invoice(WorkspaceModel):
     # chars), causing every save() here to fail with a DB "value too long" error.
     stripe_payment_link   = models.URLField(blank=True, max_length=500)
     stripe_subscription_id = models.CharField(max_length=100, blank=True)
+    # The Checkout session the pay link last opened. The next click reuses it while it's
+    # still open, so a client with the link open in two tabs is on ONE session and can
+    # only pay once (InvoicePayView).
+    stripe_checkout_session_id = models.CharField(max_length=255, blank=True)
     # Dates
     issue_date        = models.DateField(null=True, blank=True)
     # Subscription billing
@@ -201,3 +205,13 @@ class Payment(WorkspaceModel):
     class Meta:
         db_table = "invoicing_payment"
         ordering = ["-paid_at"]
+        # One Payment per Stripe payment, enforced by the DB — the webhook's own
+        # "already recorded?" check can't see a twin delivery that's mid-insert.
+        # Manual cash/bank/cheque payments have no Stripe id and aren't constrained.
+        constraints = [
+            models.UniqueConstraint(
+                fields=["workspace", "stripe_payment_id"],
+                condition=~models.Q(stripe_payment_id=""),
+                name="unique_stripe_payment_per_workspace",
+            ),
+        ]
