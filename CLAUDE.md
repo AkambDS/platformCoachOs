@@ -313,6 +313,16 @@ access (§8), since this environment doesn't have that access.
   persistent banner ("You're viewing a shared, read-only demo workspace…")
   whenever `workspace.slug === 'coachos-demo'`, so visitors see this
   up front rather than only discovering it via a failed save.
+- **All integrations off for the demo (2026-11-18):** the read-only middleware only sees
+  mutating `/api/` calls with the demo JWT, so integrations had gaps — verified locally that a
+  visitor could open a Django session via the Google/Zoom connect GET bridge and change the
+  shared demo password at allauth's `/accounts/password/change/`. Now: `is_demo_workspace_id()`
+  (`config/middleware.py`) gates the Google/Zoom connect bridges (redirect to
+  `/settings?integrations=demo_disabled`), the middleware refuses + logs out any demo session on
+  `/accounts/`, OnlyOffice `?mode=edit` returns 403 and its save callbacks ignore demo files
+  (library + client assessments), and the public `/invoices/pay/` page shows "Payments are off".
+  Settings → Integrations shows each tile as "Off in demo". Email was already covered by
+  `DemoSafeEmailBackend` (prod) + the middleware.
 - **Known trade-off:** visitors can't mutate data anymore, but the workspace
   is still shared — if data ever needs a reset (e.g. someone floods it with
   garbage via read-only-safe fields, or you just want it pristine again),

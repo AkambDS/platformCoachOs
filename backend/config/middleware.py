@@ -81,6 +81,18 @@ def _get_demo_workspace_id():
     return workspace_id
 
 
+def is_demo_workspace_id(workspace_id) -> bool:
+    """True if workspace_id is the shared public demo workspace. Used to switch off every
+    third-party integration for it (Google Calendar, Zoom, Stripe, OnlyOffice editing) —
+    paths the read-only block below can't see because they're GETs, run outside /api/,
+    or arrive from a third party without the demo user's JWT."""
+    demo_id = _get_demo_workspace_id()
+    return bool(workspace_id and demo_id and str(workspace_id) == str(demo_id))
+
+
+DEMO_INTEGRATIONS_DISABLED_DETAIL = "Integrations are turned off in the read-only demo workspace."
+
+
 class DemoWorkspaceReadOnlyMiddleware:
     """
     Read-only enforcement for the shared public "Log In as Demo User" workspace
@@ -102,6 +114,18 @@ class DemoWorkspaceReadOnlyMiddleware:
         self.get_response = get_response
 
     def __call__(self, request):
+        # allauth's own pages (/accounts/ — OAuth connect/callback, password change/set,
+        # email management, linked accounts) authenticate by Django session, not JWT, so
+        # the /api/ check below never sees them. A demo-user session there could change
+        # the shared demo password or link a visitor's Google/Zoom account, so refuse it
+        # outright and drop the session.
+        if request.path.startswith("/accounts/"):
+            user = getattr(request, "user", None)
+            if user is not None and user.is_authenticated and is_demo_workspace_id(getattr(user, "workspace_id", None)):
+                from django.contrib.auth import logout
+                logout(request)
+                return JsonResponse({"detail": DEMO_INTEGRATIONS_DISABLED_DETAIL}, status=403)
+
         if (
             request.method not in _SAFE_METHODS
             and request.path.startswith("/api/")

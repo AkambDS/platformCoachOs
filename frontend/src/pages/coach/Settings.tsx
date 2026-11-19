@@ -4,6 +4,7 @@ import { api, authApi, settingsApi, invoicesApi, auditApi } from '../../api/clie
 import AppShell from '../../components/layout/AppShell'
 import { PageHeader, Modal, useToast } from '../../components/ui'
 import { useAuthStore } from '../../store/auth'
+import { DEMO_WORKSPACE_SLUG } from '../../constants/demo'
 import { BUILTIN_TEXT } from '../../constants/emailStarters'
 import { useEmailUseCases, type EmailStarter } from '../../hooks/useEmailUseCases'
 import { User, Shield, Building2, Mail, Plus, Pencil, Trash2, Kanban, CalendarDays, ClipboardList, Copy } from 'lucide-react'
@@ -2850,10 +2851,13 @@ function StripeIcon() {
 // ── Integration tile — icon + name + status, description lives in the native
 // hover tooltip (title attr) instead of always-visible body copy, matching how
 // hints are done elsewhere in this app (see ClientDetail.tsx's title= usage).
-function IntegrationTile({ icon, name, connected, hint, active, onClick, href, onDisconnect }: {
+function IntegrationTile({ icon, name, connected, hint, active, onClick, href, onDisconnect, disabled }: {
   icon: React.ReactNode; name: string; connected: boolean; hint: string
   active?: boolean; onClick?: () => void; href?: string; onDisconnect?: () => void
+  disabled?: boolean
 }) {
+  // Demo workspace: every integration is off server-side, so the tile is inert.
+  if (disabled) { href = undefined; onClick = undefined; onDisconnect = undefined }
   const Tag: any = href ? 'a' : 'div'
   return (
     // href is same-tab on purpose (Google Calendar's OAuth connect redirects back into
@@ -2874,8 +2878,8 @@ function IntegrationTile({ icon, name, connected, hint, active, onClick, href, o
     >
       <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 10 }}>{icon}</div>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink)', marginBottom: 6 }}>{name}</div>
-      <span className={`pill ${connected ? 'pill-green' : 'pill-grey'}`} style={{ fontSize: 10 }}>
-        {connected ? 'Connected' : 'Not connected'}
+      <span className={`pill ${connected && !disabled ? 'pill-green' : 'pill-grey'}`} style={{ fontSize: 10 }}>
+        {disabled ? 'Off in demo' : connected ? 'Connected' : 'Not connected'}
       </span>
       {connected && onDisconnect && (
         <div style={{ marginTop: 8 }}>
@@ -3033,8 +3037,9 @@ function StripePaymentsCard({ status, setStatus }: { status: StripeStatus; setSt
 
 // ── Integrations Tab ──────────────────────────────────────────────────────────
 function IntegrationsTab() {
-  const { user } = useAuthStore()
+  const { user, workspace } = useAuthStore() as any
   const isOwner = user?.role === 'business_owner'
+  const isDemo = workspace?.slug === DEMO_WORKSPACE_SLUG
   const { show } = useToast()
   const [stripeStatus, setStripeStatus] = useState<StripeStatus>({ connected: false, mode: '', last4: '', webhook_configured: false, webhook_url: '' })
   const [zoomTesting, setZoomTesting] = useState(false)
@@ -3078,10 +3083,14 @@ function IntegrationsTab() {
       show('Zoom connected')
       window.history.replaceState({}, '', window.location.pathname)
     }
+    if (params.get('integrations') === 'demo_disabled') {
+      show('Integrations are turned off in the read-only demo workspace.', 'error')
+      window.history.replaceState({}, '', window.location.pathname)
+    }
   }, [])
 
   useEffect(() => {
-    if (!isOwner) return
+    if (!isOwner || isDemo) return
     settingsApi.getStripeSettings().then(r => setStripeStatus(r.data)).catch(() => {})
   }, [isOwner])
 
@@ -3102,6 +3111,12 @@ function IntegrationsTab() {
       <div style={{ marginBottom: 24 }}>
         <h2 data-tour="settings-integrations" style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, fontWeight: 400, marginBottom: 6 }}>Integrations</h2>
         <p style={{ fontSize: 13, color: 'var(--muted)' }}>Connect third-party services to enhance your workflow. Hover a tile for details.</p>
+        {isDemo && (
+          <p style={{ fontSize: 13, color: 'var(--ink)', background: 'var(--cream)', padding: '10px 12px', borderRadius: 6, marginTop: 12 }}>
+            Integrations are turned off in this read-only demo. In your own workspace you'd connect Google Calendar,
+            Zoom and your own Stripe account here.
+          </p>
+        )}
         {/* Stripe problems the backend saw (apps/invoicing/stripe_problems.py) — stays until
             the same thing succeeds again or the Stripe settings are re-saved. */}
         {Object.values(stripeStatus.problems || {}).map(p => (
@@ -3127,6 +3142,7 @@ function IntegrationsTab() {
             : 'Connect your own Google Calendar to sync scheduled sessions and track client accept/decline responses.'}
           href={googleCalendarConnected ? undefined : '/api/auth/google-calendar/connect/'}
           onDisconnect={googleCalendarConnected ? disconnectGoogleCalendar : undefined}
+          disabled={isDemo}
         />
         {zoomOAuthEnabled ? (
           <IntegrationTile
@@ -3137,6 +3153,7 @@ function IntegrationsTab() {
               ? 'Connected — scheduling a session with Zoom as the location auto-creates the meeting under your own Zoom account.'
               : 'Connect your own Zoom account — no API keys needed. Each person schedules under their own Zoom identity, same as Calendly.'}
             href={zoomConnected ? undefined : '/api/auth/zoom/connect/'}
+            disabled={isDemo}
           />
         ) : (
           // Old path: one Server-to-Server Zoom app, shared by every workspace,
@@ -3152,6 +3169,7 @@ function IntegrationsTab() {
               ? (zoomTesting ? 'Sending a test meeting request…' : 'Connected — scheduling a session with Zoom as the location auto-creates the meeting link. Click to send a test.')
               : 'Zoom is not configured on this server yet — contact your admin.'}
             onClick={zoomConnected && !zoomTesting ? testZoom : undefined}
+            disabled={isDemo}
           />
         )}
         {isOwner && (
@@ -3162,11 +3180,12 @@ function IntegrationsTab() {
             hint="Connect your own Stripe account so client invoice payments go straight to you, not through CoachOS."
             active={expanded === 'stripe'}
             onClick={() => toggle('stripe')}
+            disabled={isDemo}
           />
         )}
       </div>
 
-      {isOwner && expanded === 'stripe' && (
+      {isOwner && !isDemo && expanded === 'stripe' && (
         <div className="card">
           <div className="card-hdr">Stripe — Accept Online Card Payments</div>
           <div className="card-body">

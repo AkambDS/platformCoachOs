@@ -733,6 +733,20 @@ def password_reset_confirm(request):
     return Response({"detail": "Password updated. You can now sign in with your new password."})
 
 
+def _demo_integrations_redirect(request):
+    """Integrations are off for the shared demo workspace. The connect bridges below are
+    full-page GET navigations (so the demo read-only middleware never sees them) and
+    would otherwise open a Django session for the demo user and link a visitor's own
+    Google/Zoom account to it. Send them back to Settings instead."""
+    from django.conf import settings
+    from django.shortcuts import redirect
+    from config.middleware import is_demo_workspace_id
+
+    if is_demo_workspace_id(request.user.workspace_id):
+        return redirect(f"{settings.FRONTEND_URL}/settings?integrations=demo_disabled")
+    return None
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def google_calendar_connect(request):
@@ -749,6 +763,9 @@ def google_calendar_connect(request):
     from django.contrib.auth import login as django_login
     from django.shortcuts import redirect
 
+    redirect_demo = _demo_integrations_redirect(request)
+    if redirect_demo:
+        return redirect_demo
     django_login(request, request.user, backend="django.contrib.auth.backends.ModelBackend")
     return redirect("/accounts/google/login/?process=connect")
 
@@ -806,5 +823,8 @@ def zoom_connect(request):
     from django.contrib.auth import login as django_login
     from django.shortcuts import redirect
 
+    redirect_demo = _demo_integrations_redirect(request)
+    if redirect_demo:
+        return redirect_demo
     django_login(request, request.user, backend="django.contrib.auth.backends.ModelBackend")
     return redirect("/accounts/zoom/login/?process=connect")

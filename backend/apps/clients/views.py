@@ -809,6 +809,9 @@ class AssessmentViewSet(viewsets.ModelViewSet):
         can_edit    = is_owner or is_uploader or has_tab_access(request.user, "clients", "edit")
 
         requested_mode = request.query_params.get("mode", "view")
+        from config.middleware import is_demo_workspace_id, DEMO_INTEGRATIONS_DISABLED_DETAIL
+        if requested_mode == "edit" and is_demo_workspace_id(obj.workspace_id):
+            return Response({"detail": DEMO_INTEGRATIONS_DISABLED_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         if requested_mode == "edit" and not can_edit:
             return Response({"detail": "You don't have permission to edit this client's files."},
                              status=status.HTTP_403_FORBIDDEN)
@@ -980,6 +983,11 @@ class AssessmentViewSet(viewsets.ModelViewSet):
             obj = Assessment.objects.get(pk=pk, client_id=client_pk)
         except Assessment.DoesNotExist:
             return Response({"error": 1})
+
+        # Same as apps.library.views.onlyoffice_callback: never save into the demo workspace.
+        from config.middleware import is_demo_workspace_id
+        if is_demo_workspace_id(obj.workspace_id):
+            return Response({"error": 0})
 
         # status 2 = ready for saving (editor closed), 6 = force-save while still open
         if body.get("status") in (2, 6):

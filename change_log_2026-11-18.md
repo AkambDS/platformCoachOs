@@ -7,6 +7,7 @@ order. **Nothing here is deployed yet** — see **Deploy** at the end (2 migrati
 |---|---|
 | **A** | Site-health job runs in production only (no more false "Site unreachable" alerts from a laptop) |
 | **B** | Stripe one-time payments: fixes P1–P8, payment emails to the owner, Stripe problems shown to the owner |
+| **C** | Demo workspace: every integration switched off (Google, Zoom, Stripe, document editing, allauth pages) |
 
 ---
 
@@ -56,3 +57,58 @@ Full design, each bug with before/after, and deploy/rollback steps: **`one-time-
 ## Still open
 P9–P11 (disconnect without warning, refund webhook metadata, refund save without the lock) —
 see `one-time-pay.md` §4 "Still open".
+
+---
+
+# Part C — Demo workspace: all integrations off
+
+## What was wrong
+The read-only middleware only blocks mutating `/api/` calls made with the demo JWT. Verified
+locally: a visitor could open a Django session through the Google/Zoom "connect" GET bridge,
+then change the **shared demo password** at allauth's `/accounts/password/change/`, or link
+their own Google/Zoom account to the demo user.
+
+## Fix
+- `config/middleware.py`: `is_demo_workspace_id()` + one message; the middleware refuses any
+  demo-user session on `/accounts/` (403) and logs it out.
+- Google Calendar / Zoom connect bridges (`accounts/views.py`) send a demo user back to
+  `/settings?integrations=demo_disabled`.
+- OnlyOffice: `?mode=edit` returns 403 for demo files, and the save callbacks ignore them
+  (Library and client files).
+- Public pay page `/invoices/pay/…` shows "Payments are off in the demo".
+- Settings → Integrations: each tile shows "Off in demo" and can't be clicked; a note explains
+  why; the Stripe card stays closed.
+- Email was already covered (`DemoSafeEmailBackend` in prod + the middleware). CLAUDE.md §9
+  updated.
+
+## Tests
+No automated tests for this part yet; verified by hand locally (see CLAUDE.md §9).
+
+---
+
+## Deploy
+1. **Before (read-only, on EC2):** check prod has no duplicate Stripe payments, or migration
+   `0014` fails — command in `one-time-pay.md` §5 ("Before deploy"). Expect `DUPLICATES: none`.
+2. `make deploy-plan`, then `make deploy-safe`. It lists **2 migrations** and asks for an
+   **RDS snapshot**: `invoicing/0014` (unique index on payments), `invoicing/0015` (empty text
+   column on invoices). Both are small and change no existing data.
+3. Backend **and** frontend rebuild; the Celery worker must run the new code (new email
+   tasks) — `make deploy-safe` does this and its health check fails otherwise.
+4. Nothing to add to `.env` (`SITE_HEALTH_CHECK_ENABLED` and `PAYMENT_RECEIVED_EMAIL_ENABLED`
+   default correctly for prod).
+
+## Tests (local, all passing — 113)
+```
+docker compose exec -T api pytest -q apps/invoicing/tests.py apps/settings_app/tests.py \
+  apps/portal/tests.py test_portal_uploads.py test_tenant_isolation.py test_client_affiliations.py \
+  test_client_list_sort.py test_client_url_fields.py test_activity_validation.py \
+  test_activity_month_view.py test_invoice_due_upon_receipt.py test_reminder_windows.py \
+  test_deploy_regression.py
+```
+
+## Post-deploy checks
+1. `make health` → HEALTHY.
+2. Migrations and the unique index: commands in `one-time-pay.md` §5 ("After deploy").
+3. Stripe connections: `one-time-pay.md` §5 command — a workspace with
+   `webhook secret: False` has never had payments recorded automatically; tell its owner.
+4. Demo: log in as the demo user → Settings → Integrations shows "Off in demo".

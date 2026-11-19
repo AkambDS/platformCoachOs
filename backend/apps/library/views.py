@@ -396,6 +396,9 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
         can_edit    = is_owner or is_uploader or is_clients_coach
 
         requested_mode = request.query_params.get("mode", "view")
+        from config.middleware import is_demo_workspace_id, DEMO_INTEGRATIONS_DISABLED_DETAIL
+        if requested_mode == "edit" and is_demo_workspace_id(item.workspace_id):
+            return Response({"detail": DEMO_INTEGRATIONS_DISABLED_DETAIL}, status=status.HTTP_403_FORBIDDEN)
         if requested_mode == "edit" and not can_edit:
             return Response({"detail": "Only the uploader or workspace owner can edit this file."},
                              status=status.HTTP_403_FORBIDDEN)
@@ -455,6 +458,12 @@ class KnowledgeItemViewSet(viewsets.ModelViewSet):
             item = KnowledgeItem.objects.get(pk=pk)
         except KnowledgeItem.DoesNotExist:
             return Response({"error": 1})
+
+        # The doc server calls this without the demo user's JWT, so the demo read-only
+        # middleware can't stop it — never save edits into the shared demo workspace.
+        from config.middleware import is_demo_workspace_id
+        if is_demo_workspace_id(item.workspace_id):
+            return Response({"error": 0})
 
         # status 2 = ready for saving (editor closed), 6 = force-save while still open
         if body.get("status") in (2, 6):

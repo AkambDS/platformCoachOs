@@ -140,6 +140,15 @@ class InvoicePayView(View):
         # Not request.path: the token in it lets anyone pay this invoice, and ErrorLog is emailed.
         pay_endpoint = f"/invoices/pay/<token>/ (invoice {invoice.number})"
 
+        from config.middleware import is_demo_workspace_id
+        if is_demo_workspace_id(workspace.id):
+            return HttpResponse(_shell(workspace.name, """
+              <div class="card">
+                <div class="icon">ℹ️</div>
+                <h1>Payments are off in the demo</h1>
+                <p class="sub">This is a read-only demo workspace, so online payments are disabled.</p>
+              </div>"""))
+
         if invoice.status not in _PAYABLE_STATUSES:
             return HttpResponse(_shell(workspace.name, f"""
               <div class="card">
