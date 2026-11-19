@@ -19,6 +19,9 @@ X_FRAME_OPTIONS             = "DENY" # X-Frame-Options: DENY
 
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])
 
+# ── Site health monitor (tasks/health.py) — production only ───────────────
+SITE_HEALTH_CHECK_ENABLED = env.bool("SITE_HEALTH_CHECK_ENABLED", default=True)
+
 # ── Email: AWS SES via SMTP ───────────────────────────────────────────────
 # DemoSafeEmailBackend wraps the real SMTP backend and silently drops any message
 # addressed only to the coachos-demo workspace's own users/clients — see its

@@ -359,6 +359,9 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": crontab(minute="*/30"),
     },
 }
+# The site-health job above only does anything where this is on — production.py turns it
+# on; local/dev leave it off so a sleeping laptop doesn't email "Site unreachable".
+SITE_HEALTH_CHECK_ENABLED = env.bool("SITE_HEALTH_CHECK_ENABLED", default=False)
 
 # ── Stripe (platform-level — dj-stripe, CoachOS's own billing) ─────────────
 STRIPE_LIVE_MODE          = env.bool("STRIPE_LIVE_MODE", default=False)

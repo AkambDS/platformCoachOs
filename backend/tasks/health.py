@@ -71,7 +71,14 @@ def check_site_health():
     itself is a fine alert cadence). SSL-expiring-soon alerts are de-duped to once per
     day via cache — otherwise a cert stuck in the 14-day warning window would trigger a
     fresh email every single run for two weeks straight.
+
+    Production only (SITE_HEALTH_CHECK_ENABLED): it always checks the production URL, so
+    on a laptop it just raises false alarms whenever the machine sleeps or loses its
+    network. Checked here rather than by dropping the beat entry, because beat's
+    DatabaseScheduler keeps an already-saved job running after it leaves the settings.
     """
+    if not getattr(settings, "SITE_HEALTH_CHECK_ENABLED", False):
+        return
     reachable, reach_error = _check_reachable()
     if not reachable:
         _send_alert(
